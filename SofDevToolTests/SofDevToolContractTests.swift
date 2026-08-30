@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import SofDevTool
@@ -9,7 +10,9 @@ import Testing
 struct RegistryTests {
     @Test func catalogHasStableUniqueMetadata() {
         let definitions = UtilityRegistry.standard.definitions
-        #expect(definitions.map(\.id) == ["json", "base64", "identifiers", "random-string"])
+        #expect(
+            definitions.map(\.id)
+                == ["json", "base64", "identifiers", "random-string", "text-diff"])
         #expect(Set(definitions.map(\.id)).count == definitions.count)
         #expect(definitions.allSatisfy { !$0.name.isEmpty && !$0.aliases.isEmpty })
         #expect(definitions.allSatisfy { UtilityCategory.allCases.contains($0.category) })
@@ -20,7 +23,75 @@ struct RegistryTests {
         #expect(registry.search("sortable").map(\.id) == ["identifiers"])
         #expect(registry.search("encode utf8").map(\.id) == ["base64"])
         #expect(registry.search("generate").map(\.id) == ["identifiers", "random-string"])
+        #expect(registry.search("compare unified").map(\.id) == ["text-diff"])
         #expect(registry.search("not-present").isEmpty)
+    }
+}
+
+@Suite("Text Diff Utility")
+@MainActor
+struct TextDiffTests {
+    @Test func preprocessingOwnsIgnoreCaseAndWhitespaceSemantics() {
+        var options = TextDiffOptions()
+        options.ignoresCase = true
+        options.ignoresWhitespace = true
+
+        let prepared = TextDiffEngine.prepare(
+            old: "let café = \"Straße\"\nalpha beta",
+            new: "LET CAFÉ=\"STRASSE\"\nalphabeta",
+            options: options
+        )
+
+        #expect(prepared.old == "letcafé=\"strasse\"\nalphabeta")
+        #expect(prepared.new == "letcafé=\"strasse\"\nalphabeta")
+    }
+
+    @Test func preprocessingPreservesLineStructureAndUnicodeWithoutIgnoreOptions() {
+        let prepared = TextDiffEngine.prepare(
+            old: "café 👩🏽‍💻\n\nvalue",
+            new: "CAFÉ 👩🏽‍🚀\n\nvalue",
+            options: TextDiffOptions()
+        )
+
+        #expect(prepared.old == "café 👩🏽‍💻\n\nvalue")
+        #expect(prepared.new == "CAFÉ 👩🏽‍🚀\n\nvalue")
+    }
+
+    @Test func complexEmojiUsesDisclosedWholeLineFallback() {
+        #expect(
+            TextDiffRenderPolicy.requiresWholeLineHighlighting(
+                old: "developer 👩🏽‍💻", new: "astronaut 👩🏽‍🚀"))
+        #expect(TextDiffRenderPolicy.requiresWholeLineHighlighting(old: "flag 🇮🇹", new: "flag 🇪🇺"))
+        #expect(TextDiffRenderPolicy.requiresWholeLineHighlighting(old: "key 1️⃣", new: "key 2️⃣"))
+        #expect(!TextDiffRenderPolicy.requiresWholeLineHighlighting(old: "ok ✅", new: "go 🚀"))
+        #expect(!TextDiffRenderPolicy.requiresWholeLineHighlighting(old: "alpha", new: "beta"))
+    }
+
+    @Test func rendererSeamCarriesOnlyApplicationOwnedTypesAndEvents() {
+        let renderer = RecordingTextDiffRenderer()
+        let request = TextDiffRenderRequest(
+            id: UUID(), oldText: "café", newText: "CAFÉ", filename: "Sample.swift",
+            displayMode: .unified)
+        var receivedEvent: TextDiffRendererEvent?
+
+        _ = renderer.render(request: request) { receivedEvent = $0 }
+
+        #expect(renderer.requests == [request])
+        #expect(receivedEvent == .ready)
+    }
+}
+
+@MainActor
+private final class RecordingTextDiffRenderer: TextDiffRenderer {
+    var requests: [TextDiffRenderRequest] = []
+
+    func render(
+        request: TextDiffRenderRequest,
+        onEvent: @escaping (TextDiffRendererEvent) -> Void
+    ) -> AnyView {
+        requests.append(request)
+        onEvent(.ready)
+        return AnyView(EmptyView())
     }
 }
 

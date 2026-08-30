@@ -61,5 +61,11 @@ struct UtilityRegistry {
             aliases: ["secure", "token", "characters", "entropy"], symbol: "dice",
             historyEnabledByDefault: true
         ) { AnyView(RandomStringWorkspace(context: $0)) },
+        UtilityDefinition(
+            id: "text-diff", name: "Text Diff", category: .compareTest,
+            aliases: ["compare", "difference", "unified", "split"],
+            symbol: "arrow.left.arrow.right",
+            historyEnabledByDefault: true
+        ) { AnyView(TextDiffWorkspace(context: $0)) },
     ])
 }
