@@ -1,0 +1,19 @@
+#!/bin/zsh
+set -euo pipefail
+cd "${0:A:h}/.."
+full=0
+if [[ "${1:-}" == "--full" ]]; then full=1; elif [[ $# -gt 0 ]]; then echo "usage: scripts/verify [--full]" >&2; exit 2; fi
+mkdir -p .artifacts/DerivedData .artifacts/TestResults
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+unit_result=".artifacts/TestResults/Unit-${run_id}.xcresult"
+ui_result=".artifacts/TestResults/UI-${run_id}.xcresult"
+ui_derived=".artifacts/UIDerivedData-${run_id}"
+xcrun swift format lint --strict --configuration .swift-format --recursive SofDevTool SofDevToolTests SofDevToolUITests
+common=(-project SofDevTool.xcodeproj -scheme SofDevTool -destination 'platform=macOS,arch=arm64' -derivedDataPath .artifacts/DerivedData CODE_SIGNING_ALLOWED=NO MACOSX_DEPLOYMENT_TARGET=14.0)
+set -x
+xcodebuild "${common[@]}" -configuration Debug build
+xcodebuild "${common[@]}" -configuration Debug test -skip-testing:SofDevToolUITests -resultBundlePath "$unit_result"
+if (( full )); then
+  xcodebuild "${common[@]}" -configuration Release build
+  xcodebuild -project SofDevTool.xcodeproj -scheme SofDevTool -destination 'platform=macOS,arch=arm64' -derivedDataPath "$ui_derived" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- MACOSX_DEPLOYMENT_TARGET=14.0 ARCHS=arm64 -configuration Debug test -only-testing:SofDevToolUITests -resultBundlePath "$ui_result"
+fi
