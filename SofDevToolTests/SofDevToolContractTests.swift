@@ -5,6 +5,57 @@ import Testing
 
 @testable import SofDevTool
 
+@Suite("Application Theme", .serialized)
+@MainActor
+struct ApplicationThemeTests {
+    @Test func freshPreferencesUseGraphiteAndSelectionPersistsAcrossModels() throws {
+        let suite = "SofDevToolTests.theme.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let first = AppModel(defaults: defaults)
+        #expect(first.theme == .graphite)
+
+        first.theme = .frappe
+        #expect(defaults.string(forKey: AppTheme.defaultsKey) == "frappe")
+        #expect(AppModel(defaults: defaults).theme == .frappe)
+    }
+
+    @Test func unknownPersistedIdentityFallsBackToGraphite() throws {
+        let suite = "SofDevToolTests.theme.invalid.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("mocha", forKey: AppTheme.defaultsKey)
+
+        #expect(AppModel(defaults: defaults).theme == .graphite)
+    }
+
+    @Test func semanticPalettesPinApprovedCanonicalValues() {
+        let graphite = AppTheme.graphite.palette
+        #expect(graphite.windowBackground.hex == 0x09_0B_10)
+        #expect(graphite.secondaryPane.hex == 0x11_15_1C)
+        #expect(graphite.raisedSurface.hex == 0x17_1C_25)
+        #expect(graphite.editorSurface.hex == 0x0D_11_18)
+        #expect(graphite.primaryText.hex == 0xF3_F5_F8)
+        #expect(graphite.appAccent.hex == 0x7C_83_FF)
+        #expect(graphite.success.hex == 0x4B_D1_8B)
+        #expect(graphite.warning.hex == 0xFF_B4_54)
+        #expect(graphite.error.hex == 0xFF_6B_7A)
+
+        let frappe = AppTheme.frappe.palette
+        #expect(frappe.windowBackground.hex == 0x30_34_46)
+        #expect(frappe.secondaryPane.hex == 0x29_2C_3C)
+        #expect(frappe.raisedSurface.hex == 0x41_45_59)
+        #expect(frappe.editorSurface.hex == 0x23_26_34)
+        #expect(frappe.primaryText.hex == 0xC6_D0_F5)
+        #expect(frappe.appAccent.hex == 0xCA_9E_E6)
+        #expect(frappe.secondaryAccent.hex == 0x81_C8_BE)
+        #expect(frappe.success.hex == 0xA6_D1_89)
+        #expect(frappe.warning.hex == 0xE5_C8_90)
+        #expect(frappe.error.hex == 0xE7_82_84)
+    }
+}
+
 @Suite("Utility Registry", .serialized)
 @MainActor
 struct RegistryTests {
@@ -19,7 +70,11 @@ struct RegistryTests {
                     "text-diff",
                 ])
         #expect(Set(definitions.map(\.id)).count == definitions.count)
-        #expect(definitions.allSatisfy { !$0.name.isEmpty && !$0.aliases.isEmpty })
+        #expect(
+            definitions.allSatisfy {
+                !$0.name.isEmpty && !$0.summary.isEmpty && $0.summary.count <= 72
+                    && !$0.aliases.isEmpty
+            })
         #expect(definitions.allSatisfy { UtilityCategory.allCases.contains($0.category) })
     }
 
@@ -36,6 +91,7 @@ struct RegistryTests {
         #expect(registry.search("legacy md5").map(\.id) == ["hashes"])
         #expect(registry.search("icu capture").map(\.id) == ["regex"])
         #expect(registry.search("fictional csv").map(\.id) == ["sample-data"])
+        #expect(registry.search("readable token segments").map(\.id) == ["jwt-decoder"])
         #expect(registry.definition(id: "jwt-decoder")?.historyEnabledByDefault == false)
         #expect(registry.search("not-present").isEmpty)
     }

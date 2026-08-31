@@ -9,6 +9,9 @@ final class AppModel: ObservableObject {
     @Published var favorites: Set<String>
     @Published var recents: [String]
     @Published var historyWarning: String?
+    @Published var theme: AppTheme {
+        didSet { defaults.set(theme.rawValue, forKey: AppTheme.defaultsKey) }
+    }
 
     let registry = UtilityRegistry.standard
     let history: HistoryRepository
@@ -18,13 +21,36 @@ final class AppModel: ObservableObject {
 
     private var workspaces: [String: AnyView] = [:]
     private let defaults: UserDefaults
+    var preferenceDefaults: UserDefaults { defaults }
 
-    init(defaults: UserDefaults = .standard, history: HistoryRepository? = nil) {
+    init(defaults: UserDefaults? = nil, history: HistoryRepository? = nil) {
+        let defaults = defaults ?? Self.runtimeDefaults()
         self.defaults = defaults
         selectedUtilityID = defaults.string(forKey: "selectedUtilityID") ?? "json"
         favorites = Set(defaults.stringArray(forKey: "favoriteUtilityIDs") ?? [])
         recents = defaults.stringArray(forKey: "recentUtilityIDs") ?? []
-        self.history = history ?? HistoryRepository()
+        theme = AppTheme(rawValue: defaults.string(forKey: AppTheme.defaultsKey) ?? "") ?? .graphite
+        self.history = history ?? Self.runtimeHistory(defaults: defaults)
+    }
+
+    private static func runtimeDefaults() -> UserDefaults {
+        guard
+            let suiteName = ProcessInfo.processInfo.environment["SOFDEVTOOL_DEFAULTS_SUITE"],
+            !suiteName.isEmpty,
+            let defaults = UserDefaults(suiteName: suiteName)
+        else { return .standard }
+        return defaults
+    }
+
+    private static func runtimeHistory(defaults: UserDefaults) -> HistoryRepository {
+        guard
+            let suiteName = ProcessInfo.processInfo.environment["SOFDEVTOOL_DEFAULTS_SUITE"],
+            !suiteName.isEmpty
+        else { return HistoryRepository(defaults: defaults) }
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "SofDevTool-UITests", directoryHint: .isDirectory)
+            .appending(path: suiteName, directoryHint: .isDirectory)
+        return HistoryRepository(directory: directory, defaults: defaults)
     }
 
     var visibleDefinitions: [UtilityDefinition] {

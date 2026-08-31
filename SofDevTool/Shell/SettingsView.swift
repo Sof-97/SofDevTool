@@ -10,18 +10,34 @@ struct SettingsView: View {
     @State private var isRecordingShortcut = false
     @State private var clearAllConfirmation = false
 
+    private var palette: SemanticThemePalette { model.theme.palette }
+
     var body: some View {
         TabView {
             Form {
-                LabeledContent("Utility Launcher") {
-                    Text(shortcutName).monospaced()
-                    Button(isRecordingShortcut ? "Press shortcut…" : "Record Shortcut") {
-                        beginRecordingShortcut()
+                Section("Appearance") {
+                    Picker("Theme", selection: $model.theme) {
+                        ForEach(AppTheme.allCases) { theme in
+                            Text(theme.displayName).tag(theme)
+                        }
                     }
+                    .accessibilityIdentifier("settings.theme")
+                    .accessibilityValue(model.theme.rawValue)
+                    Text("Both themes are dark and apply immediately across SofDevTool.")
+                        .font(.caption)
+                        .foregroundStyle(palette.secondaryText.color)
                 }
-                if let shortcutError { Text(shortcutError).foregroundStyle(.red) }
-                Text("The shortcut is registered only while SofDevTool is running.").foregroundStyle(
-                    .secondary)
+                Section("Utility Launcher") {
+                    LabeledContent("Shortcut") {
+                        Text(shortcutName).monospaced()
+                        Button(isRecordingShortcut ? "Press shortcut…" : "Record Shortcut") {
+                            beginRecordingShortcut()
+                        }
+                    }
+                    if let shortcutError { Text(shortcutError).foregroundStyle(palette.error.color) }
+                    Text("The shortcut is registered only while SofDevTool is running.")
+                        .foregroundStyle(palette.secondaryText.color)
+                }
             }
             .padding().tabItem { Label("General", systemImage: "gearshape") }
 
@@ -33,7 +49,8 @@ struct SettingsView: View {
                         set: { model.history.isRecordingEnabled = $0 }
                     )
                 )
-                Text("Turning recording off preserves existing entries.").foregroundStyle(.secondary)
+                Text("Turning recording off preserves existing entries.")
+                    .foregroundStyle(palette.secondaryText.color)
                 ForEach(model.registry.definitions) { definition in
                     Toggle(
                         definition.name,
@@ -56,6 +73,13 @@ struct SettingsView: View {
             .padding().tabItem { Label("History", systemImage: "clock") }
         }
         .frame(width: 560, height: 410)
+        .background(palette.windowBackground.color)
+        .foregroundStyle(palette.primaryText.color)
+        .tint(palette.appAccent.color)
+        .overlay(alignment: .topLeading) {
+            ThemeAccessibilityValue(
+                surface: "Settings", theme: model.theme, accessibilityID: "settings.theme.value")
+        }
         .onAppear { shortcutName = model.shortcutController?.configuration.displayName ?? shortcutName }
         .onDisappear { stopRecordingShortcut() }
         .alert("Clear all Utility History?", isPresented: $clearAllConfirmation) {
