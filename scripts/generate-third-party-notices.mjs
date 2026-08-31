@@ -6,6 +6,7 @@ import { basename, join, resolve } from "node:path";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const packageRoot = join(repositoryRoot, "ThirdParty/PierreDiffsSwift");
+const yamsLicensePath = join(repositoryRoot, "ThirdParty/Yams-LICENSE");
 const scriptsRoot = join(packageRoot, "scripts");
 const nodeModulesRoot = resolve(process.argv[2] ?? join(scriptsRoot, "node_modules"));
 const lockPath = join(scriptsRoot, "package-lock.json");
@@ -71,6 +72,15 @@ output.push(
 
 output.push("## Swift wrapper", "", "### PierreDiffsSwift 1.2.4 - MIT", "");
 output.push(readFileSync(join(packageRoot, "LICENSE"), "utf8").trim(), "");
+
+output.push("## YAML parser", "", "### Yams 6.2.2 and bundled libYAML - MIT", "");
+output.push(
+  "Yams is resolved exactly at version `6.2.2`, revision `a27b21e0c81c5bf42049b897a62aaf387e80f279`.",
+  "The package includes its CYaml/libYAML implementation and has no transitive Swift package dependencies.",
+  "",
+  readFileSync(yamsLicensePath, "utf8").trim(),
+  ""
+);
 
 output.push("## Bundled JavaScript inventory", "", "| Package | Version | Declared license |", "| --- | --- | --- |");
 for (const packageMetadata of packages) {

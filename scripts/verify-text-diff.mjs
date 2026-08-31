@@ -22,8 +22,16 @@ assert.match(coordinator, /new TextDecoder\(\)\.decode\(bytes\)/);
 assert.match(coordinator, /case \.bridgeReady:\s+isReady = true\s+executePendingOperations\(\)/);
 assert.match(coordinator, /case \.ready:\s+onReady\?\(\)/);
 assert.doesNotMatch(view, /developerExtrasEnabled/);
-assert.match(project, /XCLocalSwiftPackageReference/);
-assert.doesNotMatch(project, /XCRemoteSwiftPackageReference/);
+assert.match(
+  project,
+  /XCLocalSwiftPackageReference "ThirdParty\/PierreDiffsSwift"/
+);
+assert.doesNotMatch(project, /repositoryURL = .*PierreDiffsSwift/);
+assert.match(project, /repositoryURL = "https:\/\/github\.com\/jpsim\/Yams\.git"/);
+assert.match(
+  project,
+  /XCRemoteSwiftPackageReference "Yams"[\s\S]*?kind = exactVersion;[\s\S]*?version = 6\.2\.2;/
+);
 
 function swiftFiles(directory) {
   return readdirSync(directory).flatMap((name) => {

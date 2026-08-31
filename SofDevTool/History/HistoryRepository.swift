@@ -57,8 +57,14 @@ final class HistoryRepository: ObservableObject {
 
     func entries(for utilityID: String) -> [UtilityHistoryEntry] { entriesByUtility[utilityID] ?? [] }
 
-    func record(_ snapshot: UtilityOperationSnapshot, at date: Date = Date(), id: UUID = UUID()) throws {
-        guard isRecordingEnabled, isEnabled(for: snapshot.utilityID),
+    func record(
+        _ snapshot: UtilityOperationSnapshot,
+        defaultEnabled: Bool = true,
+        at date: Date = Date(),
+        id: UUID = UUID()
+    ) throws {
+        guard isRecordingEnabled,
+            isEnabled(for: snapshot.utilityID, default: defaultEnabled),
             !pausedUtilityIDs.contains(snapshot.utilityID)
         else { return }
         let entry = UtilityHistoryEntry(

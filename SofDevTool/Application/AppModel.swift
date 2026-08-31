@@ -62,7 +62,12 @@ final class AppModel: ObservableObject {
         let context = UtilityWorkspaceContext(
             clipboard: clipboard,
             record: { [weak self] snapshot in
-                do { try self?.history.record(snapshot) } catch {
+                do {
+                    try self?.history.record(
+                        snapshot,
+                        defaultEnabled: definition.historyEnabledByDefault
+                    )
+                } catch {
                     self?.historyWarning = "History could not be saved. Your current result is unchanged."
                 }
             }

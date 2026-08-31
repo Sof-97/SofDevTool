@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A00000000000000000100001 /* PierreDiffsSwift in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000100003 /* PierreDiffsSwift */; };
+		A00000000000000000110001 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000110003 /* Yams */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -45,6 +46,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A00000000000000000100001 /* PierreDiffsSwift in Frameworks */,
+				A00000000000000000110001 /* Yams in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -106,6 +108,7 @@
 			name = SofDevTool;
 			packageProductDependencies = (
 				A00000000000000000100003 /* PierreDiffsSwift */,
+				A00000000000000000110003 /* Yams */,
 			);
 			productName = SofDevTool;
 			productReference = A00000000000000000000001 /* SofDevTool.app */;
@@ -192,6 +195,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A00000000000000000100002 /* XCLocalSwiftPackageReference "ThirdParty/PierreDiffsSwift" */,
+				A00000000000000000110002 /* XCRemoteSwiftPackageReference "Yams" */,
 			);
 			productRefGroup = A00000000000000000000031 /* Products */;
 			projectDirPath = "";
@@ -444,11 +448,27 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		A00000000000000000110002 /* XCRemoteSwiftPackageReference "Yams" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jpsim/Yams.git";
+			requirement = {
+				kind = exactVersion;
+				version = 6.2.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		A00000000000000000100003 /* PierreDiffsSwift */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A00000000000000000100002 /* XCLocalSwiftPackageReference "ThirdParty/PierreDiffsSwift" */;
 			productName = PierreDiffsSwift;
+		};
+		A00000000000000000110003 /* Yams */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A00000000000000000110002 /* XCRemoteSwiftPackageReference "Yams" */;
+			productName = Yams;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

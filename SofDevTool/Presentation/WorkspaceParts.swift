@@ -37,23 +37,41 @@ struct CopyPasteActions: View {
     let paste: () -> Void
     let copy: () -> Void
     let clear: () -> Void
-    @State private var copied = false
 
     var body: some View {
         HStack {
             Button("Paste", action: paste).accessibilityIdentifier("utility.paste")
             Button("Clear", action: clear).accessibilityIdentifier("utility.clear")
             Spacer()
-            if copied { Text("Copied").font(.caption).foregroundStyle(.green).transition(.opacity) }
-            Button("Copy Result") {
-                copy()
+            ConfirmedCopyButton(
+                title: "Copy Result", isEnabled: canCopy,
+                accessibilityID: "utility.copy", action: copy)
+        }
+    }
+}
+
+struct ConfirmedCopyButton: View {
+    let title: String
+    let isEnabled: Bool
+    var accessibilityID: String?
+    let action: () -> Void
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if copied {
+                Text("Copied").font(.caption).foregroundStyle(.green).transition(.opacity)
+            }
+            Button(title) {
+                action()
                 withAnimation { copied = true }
                 Task {
                     try? await Task.sleep(for: .seconds(1))
                     withAnimation { copied = false }
                 }
             }
-            .disabled(!canCopy).accessibilityIdentifier("utility.copy")
+            .disabled(!isEnabled)
+            .accessibilityIdentifier(accessibilityID ?? "")
         }
     }
 }

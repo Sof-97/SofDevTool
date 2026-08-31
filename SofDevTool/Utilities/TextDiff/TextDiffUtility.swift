@@ -40,7 +40,7 @@ enum TextDiffEngine {
     }
 }
 
-private struct TextDiffSnapshot: Codable {
+struct TextDiffSnapshot: Codable {
     let oldText: String
     let newText: String
     let options: TextDiffOptions

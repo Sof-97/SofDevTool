@@ -48,7 +48,7 @@ struct HistoryInspector: View {
                 if let entry = entries.first(where: { $0.id == selectedEntryID }) {
                     Divider()
                     ScrollView {
-                        Text(HistoryPreview.text(for: entry)).font(.caption.monospaced()).textSelection(
+                        Text(historyPreview(for: entry)).font(.caption.monospaced()).textSelection(
                             .enabled
                         ).frame(maxWidth: .infinity, alignment: .leading).padding(10)
                     }
@@ -73,16 +73,10 @@ struct HistoryInspector: View {
             Text("This permanently deletes this Utility’s History. The current workspace is preserved.")
         }
     }
-}
 
-enum HistoryPreview {
-    static func text(for entry: UtilityHistoryEntry) -> String {
-        guard let object = try? JSONSerialization.jsonObject(with: entry.payload),
-            let pretty = try? JSONSerialization.data(
-                withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-            let text = String(data: pretty, encoding: .utf8)
-        else { return "This snapshot is unavailable to this app version." }
-        return text
+    private func historyPreview(for entry: UtilityHistoryEntry) -> String {
+        model.registry.definition(id: entry.utilityID)?.historyPreview(entry)
+            ?? UtilityHistoryPreview.unavailable
     }
 }
 
