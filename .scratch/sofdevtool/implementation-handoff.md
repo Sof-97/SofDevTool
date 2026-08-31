@@ -25,6 +25,8 @@ The complete first-release catalog is defined in [Define first-release Utility c
 - Sample Data; and
 - Random String.
 
+The post-scaffold implementation details for the remaining ten Utilities are defined in the [remaining first-release Utilities implementation specification](remaining-utilities-implementation-spec.md). That addendum owns their refined modes, resource policies, dependency decisions, and completion criteria; this handoff continues to own the shared architecture.
+
 The initial scaffold is a representative vertical slice, not the complete catalog. It must ship working JSON, Base64, Random String, and the complete Identifier Generator with UUID, ULID, and KSUID. An empty or disabled placeholder does not count as an implemented Utility.
 
 ## Scaffold completion contract
@@ -239,4 +241,3 @@ A macOS 14 deployment-target build is compatibility evidence. Initially record m
 4. Build the History repository, recorder, inspector, Settings controls, restore/deletion flows, and failure isolation. The step is complete when every scaffold History scenario passes.
 5. Implement JSON, Base64, Identifier Generator, and Random String one vertical slice at a time, including snapshots and contract-readable tests. A Utility step is complete only when its full scaffold contract maps to passing tests.
 6. Run `scripts/verify --full`, exercise the manual checklist on macOS 26, and record commands, host/toolchain versions, results, and macOS 14/15 pending status. The scaffold ticket is complete only when the evidence supports every completion claim.
-

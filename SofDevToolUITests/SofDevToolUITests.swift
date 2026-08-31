@@ -57,4 +57,32 @@ final class SofDevToolUITests: XCTestCase {
         app.buttons.matching(identifier: "toolbar.settings").firstMatch.click()
         XCTAssertTrue(app.buttons["Record Shortcut"].waitForExistence(timeout: 2))
     }
+
+    @MainActor
+    func testColorTextConversionSynchronizesTheNativePicker() throws {
+        let app = makeApp()
+        app.launch()
+        XCTAssertTrue(app.windows["SofDevTool"].waitForExistence(timeout: 5))
+
+        let search = app.textFields["catalog.search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 2))
+        search.click()
+        search.typeText("color conversion")
+        let colorConversion = app.staticTexts["catalog.utility.color-conversion"]
+        XCTAssertTrue(colorConversion.waitForExistence(timeout: 2))
+        colorConversion.click()
+
+        let picker = app.descendants(matching: .any)["color-conversion.picker"]
+        let input = app.textFields["color-conversion.input"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 2))
+        XCTAssertTrue(input.waitForExistence(timeout: 2))
+        let initialPickerValue = String(describing: picker.value)
+
+        input.click()
+        input.typeText("#ff000080")
+        app.buttons["Convert"].click()
+
+        XCTAssertTrue(app.staticTexts["#ff000080"].waitForExistence(timeout: 2))
+        XCTAssertNotEqual(String(describing: picker.value), initialPickerValue)
+    }
 }

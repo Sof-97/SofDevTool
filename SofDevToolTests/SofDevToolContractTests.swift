@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import SofDevTool
@@ -9,7 +10,14 @@ import Testing
 struct RegistryTests {
     @Test func catalogHasStableUniqueMetadata() {
         let definitions = UtilityRegistry.standard.definitions
-        #expect(definitions.map(\.id) == ["json", "base64", "identifiers", "random-string"])
+        #expect(
+            definitions.map(\.id)
+                == [
+                    "json", "yaml-json", "base64", "url-encoding", "hashes", "identifiers",
+                    "timestamps", "jwt-decoder", "regex", "case-conversion",
+                    "whitespace-conversion", "color-conversion", "sample-data", "random-string",
+                    "text-diff",
+                ])
         #expect(Set(definitions.map(\.id)).count == definitions.count)
         #expect(definitions.allSatisfy { !$0.name.isEmpty && !$0.aliases.isEmpty })
         #expect(definitions.allSatisfy { UtilityCategory.allCases.contains($0.category) })
@@ -19,8 +27,100 @@ struct RegistryTests {
         let registry = UtilityRegistry.standard
         #expect(registry.search("sortable").map(\.id) == ["identifiers"])
         #expect(registry.search("encode utf8").map(\.id) == ["base64"])
-        #expect(registry.search("generate").map(\.id) == ["identifiers", "random-string"])
+        #expect(
+            registry.search("generate").map(\.id)
+                == ["identifiers", "sample-data", "random-string"])
+        #expect(registry.search("compare unified").map(\.id) == ["text-diff"])
+        #expect(registry.search("yaml alias").map(\.id) == ["yaml-json"])
+        #expect(registry.search("percent query").map(\.id) == ["url-encoding"])
+        #expect(registry.search("legacy md5").map(\.id) == ["hashes"])
+        #expect(registry.search("icu capture").map(\.id) == ["regex"])
+        #expect(registry.search("fictional csv").map(\.id) == ["sample-data"])
+        #expect(registry.definition(id: "jwt-decoder")?.historyEnabledByDefault == false)
         #expect(registry.search("not-present").isEmpty)
+    }
+
+    @Test func historyPreviewUsesTheOwningUtilitySnapshotDecoder() throws {
+        let snapshot = URLEncodingSnapshot(
+            options: URLEncodingOptions(), input: "café", output: "caf%C3%A9")
+        let entry = UtilityHistoryEntry(
+            id: UUID(), capturedAt: .now, utilityID: "url-encoding", schemaVersion: 1,
+            payload: try JSONEncoder().encode(snapshot))
+        let definition = try #require(UtilityRegistry.standard.definition(id: "url-encoding"))
+
+        #expect(definition.historyPreview(entry).contains("caf%C3%A9"))
+
+        let mismatched = UtilityHistoryEntry(
+            id: UUID(), capturedAt: .now, utilityID: "url-encoding", schemaVersion: 1,
+            payload: Data(#"{"unrelated":true}"#.utf8))
+        #expect(definition.historyPreview(mismatched) == UtilityHistoryPreview.unavailable)
+    }
+}
+
+@Suite("Text Diff Utility")
+@MainActor
+struct TextDiffTests {
+    @Test func preprocessingOwnsIgnoreCaseAndWhitespaceSemantics() {
+        var options = TextDiffOptions()
+        options.ignoresCase = true
+        options.ignoresWhitespace = true
+
+        let prepared = TextDiffEngine.prepare(
+            old: "let café = \"Straße\"\nalpha beta",
+            new: "LET CAFÉ=\"STRASSE\"\nalphabeta",
+            options: options
+        )
+
+        #expect(prepared.old == "letcafé=\"strasse\"\nalphabeta")
+        #expect(prepared.new == "letcafé=\"strasse\"\nalphabeta")
+    }
+
+    @Test func preprocessingPreservesLineStructureAndUnicodeWithoutIgnoreOptions() {
+        let prepared = TextDiffEngine.prepare(
+            old: "café 👩🏽‍💻\n\nvalue",
+            new: "CAFÉ 👩🏽‍🚀\n\nvalue",
+            options: TextDiffOptions()
+        )
+
+        #expect(prepared.old == "café 👩🏽‍💻\n\nvalue")
+        #expect(prepared.new == "CAFÉ 👩🏽‍🚀\n\nvalue")
+    }
+
+    @Test func complexEmojiUsesDisclosedWholeLineFallback() {
+        #expect(
+            TextDiffRenderPolicy.requiresWholeLineHighlighting(
+                old: "developer 👩🏽‍💻", new: "astronaut 👩🏽‍🚀"))
+        #expect(TextDiffRenderPolicy.requiresWholeLineHighlighting(old: "flag 🇮🇹", new: "flag 🇪🇺"))
+        #expect(TextDiffRenderPolicy.requiresWholeLineHighlighting(old: "key 1️⃣", new: "key 2️⃣"))
+        #expect(!TextDiffRenderPolicy.requiresWholeLineHighlighting(old: "ok ✅", new: "go 🚀"))
+        #expect(!TextDiffRenderPolicy.requiresWholeLineHighlighting(old: "alpha", new: "beta"))
+    }
+
+    @Test func rendererSeamCarriesOnlyApplicationOwnedTypesAndEvents() {
+        let renderer = RecordingTextDiffRenderer()
+        let request = TextDiffRenderRequest(
+            id: UUID(), oldText: "café", newText: "CAFÉ", filename: "Sample.swift",
+            displayMode: .unified)
+        var receivedEvent: TextDiffRendererEvent?
+
+        _ = renderer.render(request: request) { receivedEvent = $0 }
+
+        #expect(renderer.requests == [request])
+        #expect(receivedEvent == .ready)
+    }
+}
+
+@MainActor
+private final class RecordingTextDiffRenderer: TextDiffRenderer {
+    var requests: [TextDiffRenderRequest] = []
+
+    func render(
+        request: TextDiffRenderRequest,
+        onEvent: @escaping (TextDiffRendererEvent) -> Void
+    ) -> AnyView {
+        requests.append(request)
+        onEvent(.ready)
+        return AnyView(EmptyView())
     }
 }
 
@@ -136,6 +236,136 @@ struct Base64Tests {
         #expect(throws: UtilityError.self) { try Base64Engine.transform("ab c", options: options) }
         #expect(throws: UtilityError.self) { try Base64Engine.transform("a", options: options) }
         #expect(throws: UtilityError.self) { try Base64Engine.transform("/w==", options: options) }
+    }
+}
+
+@Suite("YAML and JSON Conversion Utility")
+struct YAMLJSONConversionTests {
+    @Test func YAMLCoreScalarsConvertToCanonicalJSON() throws {
+        let input = """
+            enabled: true
+            legacy: yes
+            created: 2026-08-31
+            message: café 👩🏽‍💻
+            """
+
+        let result = try YAMLJSONEngine.convert(input, direction: .yamlToJSON)
+
+        #expect(
+            result.output
+                == """
+                {
+                  "created" : "2026-08-31",
+                  "enabled" : true,
+                  "legacy" : "yes",
+                  "message" : "café 👩🏽‍💻"
+                }
+                """)
+        #expect(result.warnings == [.lossyRoundTrip])
+    }
+
+    @Test func anchorsAliasesAndUnicodeExpandIntoJSONValues() throws {
+        let input = """
+            profile: &profile
+              name: café 👩🏽‍💻
+              active: true
+            copy: *profile
+            """
+
+        let output = try YAMLJSONEngine.convert(input, direction: .yamlToJSON).output
+
+        #expect(output.components(separatedBy: "café 👩🏽‍💻").count == 3)
+        #expect(output.contains("\"copy\""))
+        #expect(output.contains("\"profile\""))
+    }
+
+    @Test func JSONToYAMLRoundTripIsDeterministicAndKeepsStringScalars() throws {
+        let json = #"{"z":1,"a":"yes","emoji":"👩🏽‍💻","items":[null,false,1.25]}"#
+
+        let yaml = try YAMLJSONEngine.convert(json, direction: .jsonToYAML).output
+        let roundTrip = try YAMLJSONEngine.convert(yaml, direction: .yamlToJSON).output
+
+        #expect(yaml.firstMatch(of: /a:.*yes/) != nil)
+        #expect(roundTrip.firstIndex(of: "a")! < roundTrip.firstIndex(of: "z")!)
+        #expect(roundTrip.contains("\"a\" : \"yes\""))
+        #expect(roundTrip.contains("👩🏽‍💻"))
+        #expect(roundTrip.contains("1.25"))
+    }
+
+    @Test func malformedStreamsAndUnsupportedYAMLValuesAreDiagnosed() {
+        expectYAMLFailure("---\na: 1\n---\nb: 2", contains: "another document")
+        expectYAMLFailure("true: value", contains: "keys must resolve to unique strings")
+        expectYAMLFailure("value: .inf", contains: "Non-finite")
+        expectYAMLFailure("value: !widget hello", contains: "Unsupported YAML tag")
+        expectYAMLFailure("a: 1\na: 2", contains: "Duplicate YAML mapping key")
+        expectYAMLFailure("items: [1,", contains: "Invalid YAML")
+    }
+
+    @Test func CoreNumericFormsAreCanonicalAndOutOfRangeIntegersFail() throws {
+        let output = try YAMLJSONEngine.convert(
+            "decimal: 42\noctal: 0o17\nhex: 0x10\nfraction: 1.25\nexponent: 1e2\nnegativeZero: -0",
+            direction: .yamlToJSON
+        ).output
+
+        #expect(output.contains("\"decimal\" : 42"))
+        #expect(output.contains("\"octal\" : 15"))
+        #expect(output.contains("\"hex\" : 16"))
+        #expect(output.contains("\"fraction\" : 1.25"))
+        #expect(output.contains("\"exponent\" : 100"))
+        #expect(output.contains("\"negativeZero\" : 0"))
+        expectYAMLFailure(
+            "value: 18446744073709551616",
+            contains: "outside the exact JSON conversion range"
+        )
+    }
+
+    @Test func ResourcePolicyRejectsOversizeAndDeepDocumentsWithoutOutput() {
+        let tiny = YAMLJSONResourcePolicy(maximumInputBytes: 4, maximumNestingDepth: 128)
+        #expect(throws: UtilityError.self) {
+            try YAMLJSONEngine.convert("value: 1", direction: .yamlToJSON, policy: tiny)
+        }
+
+        let shallow = YAMLJSONResourcePolicy(maximumInputBytes: 1_024, maximumNestingDepth: 2)
+        #expect(throws: UtilityError.self) {
+            try YAMLJSONEngine.convert("[[[]]]", direction: .jsonToYAML, policy: shallow)
+        }
+        #expect(throws: UtilityError.self) {
+            try YAMLJSONEngine.convert(
+                "items:\n  - child:\n      value: 1", direction: .yamlToJSON, policy: shallow)
+        }
+    }
+
+    @Test func SnapshotRoundTripRestoresDirectionInputAndSettledOutput() throws {
+        let snapshot = YAMLJSONSnapshot(
+            direction: .jsonToYAML,
+            input: #"{"message":"café 👩🏽‍💻"}"#,
+            output: "message: café 👩🏽‍💻\n"
+        )
+
+        let restored = try JSONDecoder().decode(
+            YAMLJSONSnapshot.self,
+            from: JSONEncoder().encode(snapshot)
+        )
+
+        #expect(restored == snapshot)
+    }
+
+    @Test func SupersededRevisionCannotPublish() {
+        var gate = YAMLJSONRevisionGate()
+        let first = gate.begin()
+        let second = gate.begin()
+
+        #expect(!gate.accepts(first))
+        #expect(gate.accepts(second))
+    }
+
+    private func expectYAMLFailure(_ input: String, contains message: String) {
+        do {
+            _ = try YAMLJSONEngine.convert(input, direction: .yamlToJSON)
+            Issue.record("Expected YAML conversion to fail for: \(input)")
+        } catch {
+            #expect(error.localizedDescription.contains(message))
+        }
     }
 }
 

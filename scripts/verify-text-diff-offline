@@ -1,0 +1,12 @@
+#!/bin/zsh
+set -euo pipefail
+cd "${0:A:h}/.."
+mkdir -p .artifacts/caches/home/Library/Caches .artifacts/caches/xdg .artifacts/caches/clang .artifacts/caches/swiftpm .artifacts/OfflinePackageBuild
+export CFFIXED_USER_HOME="$PWD/.artifacts/caches/home"
+export XDG_CACHE_HOME="$PWD/.artifacts/caches/xdg"
+export CLANG_MODULE_CACHE_PATH="$PWD/.artifacts/caches/clang"
+export SWIFTPM_MODULECACHE_OVERRIDE="$PWD/.artifacts/caches/swiftpm"
+node scripts/verify-text-diff.mjs
+profile='(version 1) (allow default) (deny network*)'
+set -x
+sandbox-exec -p "$profile" swift build --disable-sandbox --package-path ThirdParty/PierreDiffsSwift --scratch-path .artifacts/OfflinePackageBuild
