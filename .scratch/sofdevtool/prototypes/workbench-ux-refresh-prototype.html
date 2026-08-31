@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SofDevTool — Workbench UX refresh prototype</title>
+  <!-- THROWAWAY PROTOTYPE: Three Workbench refresh variants, switchable via ?variant=A|B|C. -->
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f3f5f8;
+      --muted: #9098a8;
+      --faint: #697182;
+      --bg: #090b10;
+      --panel: #11151c;
+      --raised: #171c25;
+      --input: #0d1118;
+      --line: rgba(255,255,255,.09);
+      --strong-line: rgba(255,255,255,.16);
+      --accent: #7c83ff;
+      --accent-2: #4bd6d0;
+      --accent-soft: rgba(124,131,255,.15);
+      --good: #4bd18b;
+      --warn: #ffb454;
+      --danger: #ff6b7a;
+      --radius: 12px;
+      --shadow: 0 24px 70px rgba(0,0,0,.48);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    }
+    :root[data-theme="mocha"] {
+      --ink: #cdd6f4;
+      --muted: #a6adc8;
+      --faint: #7f849c;
+      --bg: #1e1e2e;
+      --panel: #181825;
+      --raised: #313244;
+      --input: #11111b;
+      --line: rgba(205,214,244,.10);
+      --strong-line: rgba(205,214,244,.18);
+      --accent: #cba6f7;
+      --accent-2: #94e2d5;
+      --accent-soft: rgba(203,166,247,.17);
+      --good: #a6e3a1;
+      --warn: #f9e2af;
+      --danger: #f38ba8;
+      --shadow: 0 24px 70px rgba(17,17,27,.62);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); }
+    button, input, textarea { color: inherit; font: inherit; }
+    button { cursor: pointer; }
+    .app { height: 100vh; padding-top: 28px; }
+    .titlebar { position:fixed; z-index:80; inset:0 0 auto; height:28px; display:flex; align-items:center; justify-content:center; border-bottom:1px solid var(--line); background:rgba(14,17,23,.92); backdrop-filter:blur(22px); font-size:11px; color:var(--muted); }
+    .traffic { position:absolute; left:12px; display:flex; gap:7px; }
+    .traffic i { display:block; width:12px; height:12px; border-radius:50%; }
+    .traffic i:nth-child(1){background:#ff5f57}.traffic i:nth-child(2){background:#febc2e}.traffic i:nth-child(3){background:#28c840}
+    .eyebrow { color:var(--faint); font-size:10px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; }
+    .muted { color:var(--muted); }
+    .kbd { display:inline-flex; min-width:20px; height:20px; padding:0 5px; align-items:center; justify-content:center; border:1px solid var(--strong-line); border-bottom-width:2px; border-radius:5px; color:var(--muted); background:rgba(255,255,255,.035); font-size:10px; }
+    .icon { width:30px; height:30px; padding:0; display:grid; place-items:center; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--muted); }
+    .icon:hover { background:rgba(255,255,255,.07); color:var(--ink); }
+    .button { min-height:32px; padding:0 11px; border:1px solid var(--strong-line); border-radius:8px; background:rgba(255,255,255,.045); }
+    .button:hover { background:rgba(255,255,255,.09); }
+    .primary { border-color:transparent; background:var(--accent); color:white; font-weight:650; }
+    .primary:hover { background:#9095ff; }
+    :root[data-theme="mocha"] .primary { color:#1e1e2e; }
+    :root[data-theme="mocha"] .primary:hover { background:#b4befe; }
+    :root[data-theme="mocha"] .titlebar { background:rgba(24,24,37,.94); }
+    :root[data-theme="mocha"] .glyph { color:#b4befe; background:linear-gradient(145deg,rgba(203,166,247,.20),rgba(148,226,213,.05)); }
+    :root[data-theme="mocha"] .star { color:#f9e2af; }
+    .search { height:32px; display:flex; align-items:center; gap:8px; padding:0 9px; border:1px solid var(--line); border-radius:8px; background:var(--input); color:var(--muted); }
+    .search:focus-within { border-color:color-mix(in srgb,var(--accent) 70%,white 10%); box-shadow:0 0 0 3px var(--accent-soft); }
+    .search input { width:100%; min-width:0; border:0; outline:0; background:transparent; }
+    .scope { display:inline-flex; gap:2px; padding:3px; border:1px solid var(--line); border-radius:9px; background:rgba(0,0,0,.18); }
+    .scope button { height:26px; padding:0 9px; border:0; border-radius:6px; color:var(--muted); background:transparent; font-size:12px; }
+    .scope button.active { color:var(--ink); background:var(--raised); box-shadow:0 1px 4px rgba(0,0,0,.35); }
+    .glyph { width:28px; height:28px; flex:0 0 auto; display:grid; place-items:center; border:1px solid var(--line); border-radius:8px; background:linear-gradient(145deg,rgba(124,131,255,.18),rgba(75,214,208,.04)); color:#c8caff; font:700 11px/1 "SFMono-Regular",monospace; }
+    .group-title { padding:13px 12px 5px; color:var(--faint); font-size:10px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; }
+    .utility-row { width:100%; min-height:42px; display:grid; grid-template-columns:28px minmax(0,1fr) auto; align-items:center; gap:9px; padding:6px 9px; border:0; border-radius:8px; background:transparent; text-align:left; }
+    .utility-row:hover { background:rgba(255,255,255,.05); }
+    .utility-row.selected { background:var(--accent-soft); box-shadow:inset 0 0 0 1px rgba(124,131,255,.25); }
+    .utility-row strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+    .utility-row small { display:block; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:10px; }
+    .star { color:#f3c96a; font-size:11px; }
+    .empty { height:100%; display:grid; place-items:center; padding:24px; color:var(--muted); text-align:center; }
+    .empty strong { display:block; margin-bottom:5px; color:var(--ink); }
+    .workspace { min-width:0; min-height:0; display:flex; flex-direction:column; background:var(--bg); }
+    .utility-header { min-height:72px; display:flex; align-items:center; gap:12px; padding:12px 18px; border-bottom:1px solid var(--line); }
+    .utility-header h1 { margin:1px 0 2px; font-size:18px; letter-spacing:-.02em; }
+    .utility-header p { margin:0; color:var(--muted); font-size:11px; }
+    .utility-header .actions { margin-left:auto; display:flex; align-items:center; gap:7px; }
+    .modebar { min-height:44px; display:flex; align-items:center; gap:10px; padding:6px 18px; border-bottom:1px solid var(--line); background:rgba(255,255,255,.015); }
+    .modebar .status { margin-left:auto; display:flex; align-items:center; gap:7px; color:var(--muted); font-size:11px; }
+    .dot { width:7px; height:7px; border-radius:50%; background:var(--good); box-shadow:0 0 0 3px rgba(75,209,139,.11); }
+    .editors { flex:1; min-height:0; display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line); }
+    .editor { min-width:0; min-height:0; display:flex; flex-direction:column; background:var(--bg); }
+    .editor-head { height:39px; display:flex; align-items:center; gap:8px; padding:0 13px; border-bottom:1px solid var(--line); color:var(--muted); font-size:10px; font-weight:700; letter-spacing:.08em; }
+    .editor-head .meta { margin-left:auto; color:var(--faint); font-weight:500; letter-spacing:0; }
+    textarea, pre { flex:1; min-height:0; margin:0; padding:16px; border:0; outline:0; resize:none; overflow:auto; background:var(--input); color:#dce2ec; font:12px/1.6 "SFMono-Regular",Menlo,monospace; tab-size:2; }
+    .editor textarea:focus { box-shadow:inset 0 0 0 1px rgba(124,131,255,.55); }
+    .diagnostic { margin:14px; padding:12px; border:1px solid rgba(255,107,122,.28); border-radius:9px; background:rgba(255,107,122,.08); color:#ffb0b8; font-size:12px; line-height:1.45; }
+    .workspace-foot { height:39px; display:flex; align-items:center; gap:9px; padding:0 12px; border-top:1px solid var(--line); color:var(--faint); background:var(--panel); font-size:10px; }
+    .workspace-foot .right { margin-left:auto; }
+    .history { min-width:0; display:flex; flex-direction:column; border-left:1px solid var(--line); background:var(--panel); }
+    .history-head { height:54px; display:flex; align-items:center; gap:8px; padding:0 12px; border-bottom:1px solid var(--line); }
+    .history-head strong { font-size:12px; }
+    .history-list { overflow:auto; padding:8px; }
+    .history-entry { width:100%; padding:10px; border:1px solid transparent; border-radius:8px; background:transparent; text-align:left; }
+    .history-entry:hover, .history-entry.active { border-color:var(--line); background:rgba(255,255,255,.04); }
+    .history-entry strong { display:block; font-size:11px; }
+    .history-entry small { color:var(--muted); font-size:10px; }
+    .history-preview { margin:auto 10px 10px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--input); color:var(--muted); font:10px/1.5 "SFMono-Regular",monospace; }
+
+    /* A — Precision: clear three-pane information hierarchy. */
+    .variant-a { height:calc(100vh - 28px); display:grid; grid-template-rows:48px 1fr; }
+    .a-toolbar { display:grid; grid-template-columns:260px minmax(250px,460px) 260px; align-items:center; gap:12px; padding:7px 10px; border-bottom:1px solid var(--line); background:var(--panel); }
+    .a-toolbar .scope { justify-self:start; }
+    .a-toolbar .search { width:100%; justify-self:center; }
+    .toolbar-actions { justify-self:end; display:flex; gap:4px; }
+    .a-body { min-height:0; display:grid; grid-template-columns:270px minmax(460px,1fr) 245px; }
+    .a-catalog { min-height:0; overflow:auto; border-right:1px solid var(--line); background:var(--panel); padding:4px 7px 70px; }
+
+    /* B — Focus: compressed catalog rail and generous central canvas. */
+    .variant-b { height:calc(100vh - 28px); display:grid; grid-template-columns:64px 214px minmax(480px,1fr); }
+    .b-rail { display:flex; flex-direction:column; align-items:center; gap:8px; padding:11px 8px 74px; border-right:1px solid var(--line); background:#0d1016; }
+    .brand { width:38px; height:38px; display:grid; place-items:center; margin-bottom:10px; border:1px solid rgba(124,131,255,.38); border-radius:11px; background:linear-gradient(145deg,rgba(124,131,255,.26),rgba(75,214,208,.12)); color:white; font:800 13px/1 "SFMono-Regular",monospace; }
+    .rail-button { width:40px; height:40px; display:grid; place-items:center; border:1px solid transparent; border-radius:10px; background:transparent; color:var(--muted); font-size:15px; }
+    .rail-button.active { border-color:rgba(124,131,255,.28); background:var(--accent-soft); color:#cdd0ff; }
+    .rail-spacer { flex:1; }
+    .b-catalog { min-height:0; display:flex; flex-direction:column; border-right:1px solid var(--line); background:var(--panel); }
+    .b-catalog-head { padding:12px 10px 9px; border-bottom:1px solid var(--line); }
+    .b-catalog-head h2 { margin:0 0 9px; font-size:13px; }
+    .b-list { overflow:auto; padding:5px 6px 70px; }
+    .b-main { min-width:0; min-height:0; position:relative; display:grid; grid-template-columns:minmax(0,1fr); }
+    .b-main.history-open { grid-template-columns:minmax(0,1fr) 260px; }
+    .b-main .workspace { padding:16px; background:radial-gradient(circle at 50% -20%,rgba(124,131,255,.09),transparent 44%),var(--bg); }
+    .b-main .utility-shell { min-height:0; display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--line); border-radius:14px; background:var(--bg); box-shadow:0 18px 50px rgba(0,0,0,.22); }
+    .b-main .utility-header { min-height:82px; }
+    .b-main .editors { margin:0 13px 13px; gap:10px; background:transparent; }
+    .b-main .editor { overflow:hidden; border:1px solid var(--line); border-radius:10px; }
+
+    /* C — Sessions: open workspaces are first-class and History is contextual. */
+    .variant-c { height:calc(100vh - 28px); display:grid; grid-template-rows:48px 38px 1fr; }
+    .c-toolbar { display:grid; grid-template-columns:220px minmax(250px,520px) 220px; align-items:center; gap:12px; padding:7px 10px; border-bottom:1px solid var(--line); background:var(--panel); }
+    .c-toolbar .brand-lockup { display:flex; align-items:center; gap:9px; font-size:12px; font-weight:700; }
+    .c-toolbar .mini-brand { width:27px; height:27px; display:grid; place-items:center; border-radius:7px; background:var(--accent); font:800 9px/1 "SFMono-Regular",monospace; }
+    .session-strip { display:flex; align-items:end; gap:2px; padding:0 10px; border-bottom:1px solid var(--line); background:#0d1016; }
+    .session-tab { height:32px; max-width:180px; display:flex; align-items:center; gap:7px; margin-top:5px; padding:0 10px; border:1px solid transparent; border-bottom:0; border-radius:8px 8px 0 0; background:transparent; color:var(--muted); font-size:11px; }
+    .session-tab.active { border-color:var(--line); background:var(--bg); color:var(--ink); }
+    .session-tab .dirty { width:6px; height:6px; border-radius:50%; background:var(--accent-2); }
+    .session-count { margin-left:auto; align-self:center; color:var(--faint); font-size:10px; }
+    .c-body { min-height:0; display:grid; grid-template-columns:235px minmax(460px,1fr); }
+    .c-catalog { min-height:0; overflow:auto; padding:5px 6px 70px; border-right:1px solid var(--line); background:var(--panel); }
+    .c-workarea { min-width:0; min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 285px; }
+    .c-workarea .workspace { background:var(--bg); }
+    .timeline { padding:10px 12px 70px; overflow:auto; }
+    .timeline-entry { position:relative; margin-left:8px; padding:0 0 18px 18px; border-left:1px solid var(--strong-line); }
+    .timeline-entry::before { content:""; position:absolute; left:-4px; top:3px; width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 4px var(--panel); }
+    .timeline-entry strong { display:block; font-size:11px; }
+    .timeline-entry small { display:block; margin:3px 0 7px; color:var(--muted); font-size:10px; }
+    .timeline-entry code { display:block; overflow:hidden; color:var(--faint); font:9px/1.45 "SFMono-Regular",monospace; white-space:nowrap; text-overflow:ellipsis; }
+
+    .prototype-bar { position:fixed; z-index:100; left:50%; bottom:16px; transform:translateX(-50%); display:flex; align-items:center; gap:5px; padding:6px; border:1px solid rgba(255,255,255,.18); border-radius:999px; background:#20242d; box-shadow:var(--shadow); }
+    .prototype-bar button { width:34px; height:32px; border:0; border-radius:999px; background:transparent; color:white; }
+    .prototype-bar button:hover { background:rgba(255,255,255,.11); }
+    .prototype-bar .theme-toggle { width:auto; min-width:76px; padding:0 11px; border-left:1px solid rgba(255,255,255,.14); border-radius:0 999px 999px 0; color:#dce2ec; font-size:10px; font-weight:700; }
+    :root[data-theme="mocha"] .prototype-bar { border-color:#45475a; background:#313244; }
+    :root[data-theme="mocha"] .prototype-bar .theme-toggle { color:#cba6f7; border-left-color:#585b70; }
+    .variant-label { min-width:225px; text-align:center; }
+    .variant-label small { display:block; color:#9ca4b4; font-size:9px; letter-spacing:.08em; }
+    .variant-label strong { display:block; margin-top:2px; font-size:12px; }
+    .state { position:fixed; z-index:90; right:12px; bottom:14px; width:175px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; background:rgba(17,21,28,.88); backdrop-filter:blur(14px); color:var(--faint); font:9px/1.45 "SFMono-Regular",monospace; pointer-events:none; }
+    .state b { color:var(--muted); }
+    @media(max-width:960px) {
+      .a-toolbar{grid-template-columns:230px 1fr auto}.a-body{grid-template-columns:235px 1fr}.a-body>.history{display:none}
+      .variant-b{grid-template-columns:54px 200px 1fr}.b-main.history-open{grid-template-columns:1fr}.b-main>.history{display:none}
+      .c-toolbar{grid-template-columns:150px 1fr auto}.c-workarea{grid-template-columns:1fr}.c-workarea>.history{display:none}
+      .editors{grid-template-columns:1fr}.editor:last-child{display:none}.state{display:none}
+    }
+  </style>
+</head>
+<body>
+  <header class="titlebar"><span class="traffic"><i></i><i></i><i></i></span>SofDevTool · Workbench UX refresh · THROWAWAY PROTOTYPE</header>
+  <main id="root" class="app"></main>
+  <nav class="prototype-bar" aria-label="Prototype variant switcher">
+    <button id="prev" aria-label="Previous variant">←</button>
+    <span class="variant-label"><small>PROTOTYPE VARIANT</small><strong id="variantLabel"></strong></span>
+    <button id="next" aria-label="Next variant">→</button>
+    <button id="themeToggle" class="theme-toggle" aria-label="Toggle color theme">Mocha</button>
+  </nav>
+  <aside id="state" class="state"></aside>
+  <script>
+    const utilities = [
+      {id:'json', name:'JSON', group:'Format & Convert', glyph:'{ }', detail:'Format, minify, query', favorite:true},
+      {id:'yaml', name:'YAML ↔ JSON', group:'Format & Convert', glyph:'Y', detail:'Convert YAML and JSON'},
+      {id:'base64', name:'Base64 & URL', group:'Encode & Inspect', glyph:'64', detail:'Encode and decode UTF-8', favorite:true},
+      {id:'jwt', name:'JWT Decoder', group:'Encode & Inspect', glyph:'JWT', detail:'Inspect readable segments'},
+      {id:'identifier', name:'Identifier Generator', group:'Generate', glyph:'ID', detail:'UUID, ULID, KSUID', favorite:true},
+      {id:'random', name:'Random String', group:'Generate', glyph:'Aa', detail:'Cryptographic strings'},
+      {id:'diff', name:'Text Diff', group:'Compare & Test', glyph:'±', detail:'Compare text changes', favorite:true},
+      {id:'regex', name:'Regex', group:'Compare & Test', glyph:'.*', detail:'Test and replace patterns'}
+    ];
+    const names = {A:'Precision · dense three-pane', B:'Focus · quiet canvas', C:'Sessions · persistent workspaces'};
+    const state = {variant:'A', theme:'mocha', selected:'json', query:'', history:true, error:false, copied:false, session:['json','identifier','diff']};
+    const sample = '{\n  "project": "SofDevTool",\n  "localOnly": true,\n  "utilities": 15\n}';
+    const escapeHTML = value => value.replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    const selected = () => utilities.find(item => item.id === state.selected) || utilities[0];
+    const visible = () => utilities.filter(item => `${item.name} ${item.group} ${item.detail}`.toLowerCase().includes(state.query.toLowerCase()));
+    const groups = items => [...new Set(items.map(item => item.group))];
+    const search = placeholder => `<label class="search">⌕<input data-search aria-label="Search Utilities" value="${escapeHTML(state.query)}" placeholder="${placeholder}"><span class="kbd">⌘F</span></label>`;
+    const scopes = (compact=false) => `<div class="scope"><button class="active">${compact?'▦':'Library'}</button><button>${compact?'◷':'Recent'}</button><button>${compact?'★':'Favorites'}</button></div>`;
+    const toolbarActions = () => `<div class="toolbar-actions"><button class="icon" data-history title="Toggle History">◫</button><button class="icon" title="Utility Launcher">⌘</button><button class="icon" title="Settings">⚙</button></div>`;
+    const catalog = (descriptions=true) => {
+      const items = visible();
+      if (!items.length) return `<div class="empty"><div><strong>No Utilities found</strong>Try a name, category, or operation.<br><button class="button" data-clear style="margin-top:12px">Clear search</button></div></div>`;
+      return groups(items).map(group => `<section><div class="group-title">${group}</div>${items.filter(item=>item.group===group).map(item=>`<button class="utility-row ${item.id===state.selected?'selected':''}" data-select="${item.id}"><span class="glyph">${item.glyph}</span><span><strong>${item.name}</strong>${descriptions?`<small>${item.detail}</small>`:''}</span>${item.favorite?'<span class="star">★</span>':''}</button>`).join('')}</section>`).join('');
+    };
+    const workspace = (shell=false) => {
+      const item = selected();
+      const result = state.error ? `<div class="diagnostic"><strong>Expected a string value</strong><br>Line 1, column 14 · Wrap <code>SofDevTool</code> in quotation marks. The previous result has been removed.</div>` : `<pre>${escapeHTML(sample)}</pre>`;
+      return `<section class="workspace">${shell?'<div class="utility-shell">':''}<header class="utility-header"><span class="glyph">${item.glyph}</span><div><span class="eyebrow">${item.group}</span><h1>${item.name}</h1><p>${item.detail} · Session kept in memory</p></div><div class="actions"><button class="icon" title="Favorite">${item.favorite?'★':'☆'}</button><button class="button" data-error>${state.error?'Use valid input':'Show error'}</button><button class="button primary" data-copy>${state.copied?'✓ Copied':'Copy Result'}</button></div></header><div class="modebar"><div class="scope"><button class="active">Format</button><button>Minify</button><button>Query</button></div><button class="button">Paste</button><button class="button">Clear</button><div class="status"><span class="dot"></span>${state.error?'Diagnostic active':'Valid · formatted live'}</div></div><div class="editors"><section class="editor"><header class="editor-head">INPUT <span class="meta">JSON · UTF-8</span></header><textarea spellcheck="false">${state.error?'{ "project": SofDevTool }':sample}</textarea></section><section class="editor"><header class="editor-head">${state.error?'DIAGNOSTIC':'RESULT'} <span class="meta">${state.error?'No stale output':'76 bytes'}</span></header>${result}</section></div><footer class="workspace-foot"><span>Ln 1, Col 1</span><span>Spaces: 2</span><span>UTF-8</span><span class="right">History records completed valid operations only</span></footer>${shell?'</div>':''}</section>`;
+    };
+    const history = (timeline=false) => {
+      if (!state.history) return '';
+      if (timeline) return `<aside class="history"><header class="history-head"><strong>Operation timeline</strong><button class="icon" data-history style="margin-left:auto">×</button></header><div class="timeline"><div class="timeline-entry"><strong>Formatted JSON</strong><small>Today, 14:32 · valid</small><code>{ "project": "SofDevTool"…</code></div><div class="timeline-entry"><strong>Minified JSON</strong><small>Today, 13:08 · valid</small><code>{"release":"0.1"…</code></div><div class="timeline-entry"><strong>Queried /utilities/0</strong><small>Yesterday, 18:41 · valid</small><code>"JSON"</code></div></div></aside>`;
+      return `<aside class="history"><header class="history-head"><strong>History</strong><span class="muted" style="font-size:10px">3 operations</span><button class="icon" data-history style="margin-left:auto">×</button></header><div class="history-list"><button class="history-entry active"><strong>Formatted JSON</strong><small>Today, 14:32</small></button><button class="history-entry"><strong>Minified JSON</strong><small>Today, 13:08</small></button><button class="history-entry"><strong>Queried /utilities/0</strong><small>Yesterday, 18:41</small></button></div><div class="history-preview">{\n  "project": "SofDevTool",\n  "localOnly": true\n}<br><button class="button" style="width:100%;margin-top:9px">Restore</button></div></aside>`;
+    };
+    function variantA(){
+      return `<div class="variant-a"><header class="a-toolbar">${scopes()}${search('Search Utilities…')}${toolbarActions()}</header><div class="a-body"><aside class="a-catalog">${catalog()}</aside>${workspace()}${history()}</div></div>`;
+    }
+    function variantB(){
+      return `<div class="variant-b"><nav class="b-rail"><div class="brand">SD</div><button class="rail-button active" title="Library">▦</button><button class="rail-button" title="Recent">◷</button><button class="rail-button" title="Favorites">★</button><div class="rail-spacer"></div><button class="rail-button" title="Launcher">⌘</button><button class="rail-button" title="Settings">⚙</button></nav><aside class="b-catalog"><header class="b-catalog-head"><h2>Library</h2>${search('Find a Utility…')}</header><div class="b-list">${catalog(false)}</div></aside><main class="b-main ${state.history?'history-open':''}">${workspace(true)}${history()}</main></div>`;
+    }
+    function variantC(){
+      const tabs = state.session.map(id=>utilities.find(item=>item.id===id)).filter(Boolean).map(item=>`<button class="session-tab ${item.id===state.selected?'active':''}" data-select="${item.id}"><span class="glyph" style="width:19px;height:19px;border-radius:5px;font-size:8px">${item.glyph}</span>${item.name}${item.id===state.selected?'<span class="dirty"></span>':''}</button>`).join('');
+      return `<div class="variant-c"><header class="c-toolbar"><div class="brand-lockup"><span class="mini-brand">SD</span>SofDevTool</div>${search('Jump to a Utility…')}${toolbarActions()}</header><nav class="session-strip">${tabs}<span class="session-count">3 persistent sessions · ⌘1–3 to switch</span></nav><div class="c-body"><aside class="c-catalog">${catalog(false)}</aside><main class="c-workarea">${workspace()}${history(true)}</main></div></div>`;
+    }
+    function updateURL(){
+      const url = new URL(location.href); url.searchParams.set('variant', state.variant); url.searchParams.set('theme', state.theme); window.history.replaceState({},'',url);
+    }
+    function render(){
+      document.documentElement.dataset.theme = state.theme;
+      document.getElementById('root').innerHTML = state.variant==='A' ? variantA() : state.variant==='B' ? variantB() : variantC();
+      document.getElementById('variantLabel').textContent = `${state.variant} — ${names[state.variant]}`;
+      document.getElementById('themeToggle').textContent = state.theme==='mocha' ? 'Mocha' : 'Graphite';
+      document.getElementById('state').innerHTML = `<b>VISIBLE PROTOTYPE STATE</b><br>variant: ${state.variant}<br>theme: ${state.theme}<br>utility: ${state.selected}<br>query: ${state.query||'∅'}<br>history: ${state.history}<br>diagnostic: ${state.error}`;
+      wire();
+    }
+    function wire(){
+      document.querySelectorAll('[data-search]').forEach(input=>input.addEventListener('input', event=>{state.query=event.target.value;render();const next=document.querySelector('[data-search]');next?.focus();next?.setSelectionRange(state.query.length,state.query.length)}));
+      document.querySelectorAll('[data-select]').forEach(button=>button.addEventListener('click',()=>{state.selected=button.dataset.select;state.query='';if(!state.session.includes(state.selected))state.session.push(state.selected);render()}));
+      document.querySelectorAll('[data-history]').forEach(button=>button.addEventListener('click',()=>{state.history=!state.history;render()}));
+      document.querySelectorAll('[data-error]').forEach(button=>button.addEventListener('click',()=>{state.error=!state.error;render()}));
+      document.querySelectorAll('[data-copy]').forEach(button=>button.addEventListener('click',()=>{state.copied=true;render();setTimeout(()=>{state.copied=false;render()},900)}));
+      document.querySelectorAll('[data-clear]').forEach(button=>button.addEventListener('click',()=>{state.query='';render()}));
+    }
+    function cycle(delta){
+      const variants=['A','B','C']; const index=variants.indexOf(state.variant); state.variant=variants[(index+delta+variants.length)%variants.length]; updateURL(); render();
+    }
+    document.getElementById('prev').addEventListener('click',()=>cycle(-1));
+    document.getElementById('next').addEventListener('click',()=>cycle(1));
+    document.getElementById('themeToggle').addEventListener('click',()=>{state.theme=state.theme==='mocha'?'graphite':'mocha';updateURL();render()});
+    document.addEventListener('keydown',event=>{
+      const tag=document.activeElement?.tagName; if(['INPUT','TEXTAREA'].includes(tag)||document.activeElement?.isContentEditable)return;
+      if(event.key==='ArrowLeft')cycle(-1); if(event.key==='ArrowRight')cycle(1);
+      if(event.key==='h'){state.history=!state.history;render()}
+    });
+    const requested = new URLSearchParams(location.search).get('variant')?.toUpperCase();
+    if(['A','B','C'].includes(requested)) state.variant=requested;
+    const requestedTheme = new URLSearchParams(location.search).get('theme')?.toLowerCase();
+    if(['mocha','graphite'].includes(requestedTheme)) state.theme=requestedTheme;
+    updateURL(); render();
+  </script>
+</body>
+</html>

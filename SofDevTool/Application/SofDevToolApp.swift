@@ -10,16 +10,26 @@ struct SofDevToolApp: App {
         WindowGroup("SofDevTool", id: "workbench") {
             WorkbenchView()
                 .environmentObject(model)
+                .environment(\.appTheme, model.theme)
                 .preferredColorScheme(.dark)
                 .frame(minWidth: 940, minHeight: 620)
                 .onAppear { appDelegate.configure(model: model) }
         }
         .defaultSize(width: 1180, height: 760)
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(after: .textEditing) {
+                Button("Find Utilities") {
+                    NotificationCenter.default.post(name: .focusUtilitySearch, object: nil)
+                }
+                .keyboardShortcut("f", modifiers: .command)
+            }
+        }
 
         Settings {
             SettingsView()
                 .environmentObject(model)
+                .environment(\.appTheme, model.theme)
                 .preferredColorScheme(.dark)
         }
     }
@@ -46,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard launcher == nil else { return }
         let launcher = LauncherWindowController(model: model)
         self.launcher = launcher
-        let shortcut = GlobalShortcutController { launcher.toggle() }
+        let shortcut = GlobalShortcutController(defaults: model.preferenceDefaults) { launcher.toggle() }
         self.shortcut = shortcut
         model.shortcutController = shortcut
         model.showLauncher = { launcher.toggle() }

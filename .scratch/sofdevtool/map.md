@@ -1,4 +1,5 @@
 Label: wayfinder:map
+Status: resolved
 
 ## Destination
 
@@ -40,8 +41,7 @@ A decision-complete product brief and technical architecture for SofDevTool, fol
 
 ## Not yet specified
 
-- Smart clipboard recommendations: exact content-detection rules, ambiguity handling, privacy feedback, and launcher UX should be revisited after the ordinary Utility Launcher is validated. The initial architecture must leave a clean seam, but the feature is not part of the scaffold.
-- The post-launch catalog beyond the agreed initial Utilities should be shaped by real personal usage rather than predicted now.
+None.
 
 ## Out of scope
 
@@ -50,3 +50,5 @@ A decision-complete product brief and technical architecture for SofDevTool, fol
 - A third-party plugin marketplace or runtime-loaded plugin system; new Utilities are source-code modules.
 - Replacing an IDE, terminal, Git client, database browser, API client, or full browser DevTools suite.
 - Intel Mac support.
+- Smart clipboard recommendations, including content-detection rules, ambiguity handling, privacy feedback, and launcher UX. This should be revisited in a new map after the ordinary Utility Launcher is validated.
+- The post-launch Utility catalog beyond the agreed initial set. This should be shaped by real personal usage in future maps rather than predicted in the first-release map.

@@ -59,35 +59,54 @@ private struct LauncherView: View {
     let close: () -> Void
 
     private var results: [UtilityDefinition] { model.registry.search(query) }
+    private var palette: SemanticThemePalette { model.theme.palette }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Image(systemName: "command")
+                    .foregroundStyle(palette.secondaryAccent.color)
                 TextField("Find a Utility", text: $query)
                     .textFieldStyle(.plain)
                     .font(.title2)
                     .focused($searchFocused)
                     .accessibilityIdentifier("launcher.search")
-                Text("esc").font(.caption.monospaced()).foregroundStyle(.secondary)
+                Text("esc").font(.caption.monospaced()).foregroundStyle(palette.subtleText.color)
             }
             .padding(18)
-            Divider()
+            palette.separator.color.opacity(0.42).frame(height: 1)
             List(results, selection: $selection) { definition in
-                Label(definition.name, systemImage: definition.symbol)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .tag(definition.id)
-                    .accessibilityIdentifier("launcher.utility.\(definition.id)")
-                    .onTapGesture { open(definition.id) }
+                HStack(spacing: 10) {
+                    Image(systemName: definition.symbol)
+                        .foregroundStyle(palette.secondaryAccent.color)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(definition.name).font(.callout.weight(.medium))
+                        Text(definition.summary)
+                            .font(.caption)
+                            .foregroundStyle(palette.secondaryText.color)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .tag(definition.id)
+                .accessibilityIdentifier("launcher.utility.\(definition.id)")
+                .onTapGesture { open(definition.id) }
             }
             .listStyle(.inset)
+            .scrollContentBackground(.hidden)
             .onChange(of: results.map(\.id)) { _, ids in
                 if !ids.contains(selection ?? "") { selection = ids.first }
             }
         }
-        .background(.ultraThinMaterial)
+        .background(palette.secondaryPane.color)
+        .foregroundStyle(palette.primaryText.color)
+        .tint(palette.appAccent.color)
+        .environment(\.appTheme, model.theme)
         .preferredColorScheme(.dark)
+        .overlay(alignment: .topLeading) {
+            ThemeAccessibilityValue(surface: "Launcher", theme: model.theme)
+        }
         .onAppear {
             selection = results.first?.id
             searchFocused = true

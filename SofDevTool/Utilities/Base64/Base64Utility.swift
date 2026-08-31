@@ -67,11 +67,11 @@ struct Base64Workspace: View {
             HStack {
                 Picker("Operation", selection: $options.mode) {
                     ForEach(Base64Mode.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented)
+                }.pickerStyle(.segmented).accessibilityIdentifier("base64.mode")
                 Picker("Alphabet", selection: $options.alphabet) {
                     ForEach(Base64Alphabet.allCases) { Text($0.rawValue).tag($0) }
-                }.frame(width: 150)
-                Toggle("Padding", isOn: $options.padded)
+                }.frame(width: 150).accessibilityIdentifier("base64.alphabet")
+                Toggle("Padding", isOn: $options.padded).accessibilityIdentifier("base64.padding")
             }
             HSplitView {
                 TextEditorCard(title: "UTF-8 Input", text: $input, accessibilityID: "base64.input")
