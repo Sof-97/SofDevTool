@@ -225,7 +225,10 @@ private struct UtilitySidebar: View {
                 List(
                     selection: Binding(
                         get: { model.selectedUtilityID },
-                        set: { if let id = $0 { model.open(id) } })
+                        set: {
+                            guard let id = $0, id != model.selectedUtilityID else { return }
+                            Task { @MainActor in model.open(id) }
+                        })
                 ) {
                     ForEach(UtilityCategory.allCases, id: \.self) { category in
                         let definitions = model.visibleDefinitions.filter { $0.category == category }
