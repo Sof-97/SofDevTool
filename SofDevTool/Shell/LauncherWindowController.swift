@@ -48,7 +48,9 @@ final class LauncherWindowController: NSWindowController, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
-    func windowDidResignKey(_ notification: Notification) { window?.orderOut(nil) }
+    func windowDidResignKey(_ notification: Notification) {
+        Task { @MainActor [weak self] in self?.window?.orderOut(nil) }
+    }
 }
 
 private struct LauncherView: View {

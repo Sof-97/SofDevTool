@@ -56,7 +56,7 @@ final class SofDevToolUITests: XCTestCase {
         XCTAssertTrue(app.buttons["identifier.generate"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.textFields["launcher.search"].waitForNonExistence(timeout: 2))
 
-        app.buttons.matching(identifier: "toolbar.settings").firstMatch.click()
+        openGeneralSettings(in: app)
         XCTAssertTrue(app.buttons["Record Shortcut"].waitForExistence(timeout: 2))
     }
 
@@ -94,7 +94,7 @@ final class SofDevToolUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.windows["SofDevTool"].waitForExistence(timeout: 5))
 
-        openSettings(in: app)
+        openGeneralSettings(in: app)
         selectTheme("Graphite", in: app)
         app.typeKey("w", modifierFlags: .command)
 
@@ -123,7 +123,7 @@ final class SofDevToolUITests: XCTestCase {
         app.buttons.matching(identifier: "toolbar.history").firstMatch.click()
         XCTAssertTrue(app.descendants(matching: .any)["history.inspector"].waitForNonExistence(timeout: 2))
 
-        openSettings(in: app)
+        openGeneralSettings(in: app)
         selectTheme("Catppuccin Frappé", in: app)
         XCTAssertEqual(
             app.descendants(matching: .any)["settings.theme"].value as? String,
@@ -153,8 +153,11 @@ final class SofDevToolUITests: XCTestCase {
     }
 
     @MainActor
-    private func openSettings(in app: XCUIApplication) {
+    private func openGeneralSettings(in app: XCUIApplication) {
         app.buttons.matching(identifier: "toolbar.settings").firstMatch.click()
+        let generalTab = app.buttons["General"]
+        XCTAssertTrue(generalTab.waitForExistence(timeout: 2))
+        generalTab.click()
         XCTAssertTrue(app.descendants(matching: .any)["settings.theme"].waitForExistence(timeout: 2))
     }
 
