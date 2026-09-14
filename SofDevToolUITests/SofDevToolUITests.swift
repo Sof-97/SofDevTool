@@ -17,6 +17,7 @@ final class SofDevToolUITests: XCTestCase {
         let app = makeApp()
         app.launch()
         XCTAssertTrue(app.windows["SofDevTool"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["build.channel.badge"].waitForExistence(timeout: 2))
 
         let launcherButton = app.buttons.matching(identifier: "toolbar.launcher").firstMatch
         let launcherSearch = app.textFields["launcher.search"]

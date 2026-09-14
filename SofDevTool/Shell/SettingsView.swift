@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var clearAllConfirmation = false
 
     private var palette: SemanticThemePalette { model.theme.palette }
+    private let buildIdentity = BuildIdentity.current
 
     var body: some View {
         TabView {
@@ -37,6 +38,10 @@ struct SettingsView: View {
                     if let shortcutError { Text(shortcutError).foregroundStyle(palette.error.color) }
                     Text("The shortcut is registered only while SofDevTool is running.")
                         .foregroundStyle(palette.secondaryText.color)
+                }
+                Section("Build") {
+                    LabeledContent("Version", value: buildIdentity.versionDescription)
+                    LabeledContent("Channel", value: buildIdentity.channel.rawValue)
                 }
             }
             .padding().tabItem { Label("General", systemImage: "gearshape") }

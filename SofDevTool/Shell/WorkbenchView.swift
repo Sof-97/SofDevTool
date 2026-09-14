@@ -82,6 +82,7 @@ private struct PrecisionToolbar: View {
     @FocusState private var searchFocused: Bool
 
     private var palette: SemanticThemePalette { model.theme.palette }
+    private let buildIdentity = BuildIdentity.current
 
     var body: some View {
         HStack(spacing: 12) {
@@ -117,6 +118,20 @@ private struct PrecisionToolbar: View {
             Spacer(minLength: 0)
 
             HStack(spacing: 3) {
+                if buildIdentity.isDevelopment {
+                    Text(buildIdentity.channel.rawValue.uppercased())
+                        .font(.caption2.monospaced().weight(.bold))
+                        .tracking(0.6)
+                        .foregroundStyle(palette.editorSurface.color)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(palette.warning.color, in: Capsule())
+                        .accessibilityLabel("Debug build")
+                        .accessibilityIdentifier("build.channel.badge")
+                        .help("SofDevTool Debug build")
+                        .padding(.trailing, 5)
+                }
+
                 Button {
                     historyExpanded.toggle()
                 } label: {
