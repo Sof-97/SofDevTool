@@ -5,6 +5,30 @@ import Testing
 
 @testable import SofDevTool
 
+@Suite("Build Identity")
+struct BuildIdentityTests {
+    @Test func reportsConfiguredVersionBuildAndChannel() {
+        let identity = BuildIdentity(
+            channel: .debug,
+            infoDictionary: [
+                "CFBundleShortVersionString": "1.2.3",
+                "CFBundleVersion": "42",
+            ]
+        )
+
+        #expect(identity.channel == .debug)
+        #expect(identity.isDevelopment)
+        #expect(identity.versionDescription == "1.2.3 (42)")
+    }
+
+    @Test func missingBundleMetadataIsExplicit() {
+        let identity = BuildIdentity(channel: .release, infoDictionary: [:])
+
+        #expect(!identity.isDevelopment)
+        #expect(identity.versionDescription == "Unknown (Unknown)")
+    }
+}
+
 @Suite("Application Theme", .serialized)
 @MainActor
 struct ApplicationThemeTests {
