@@ -18,8 +18,8 @@
 
 | Ticket / role | Thread | Checkout | Branch | Base | Candidate / integrated | State |
 | --- | --- | --- | --- | --- | --- | --- |
-| 01 implementation | `thr_tpymn94mfd` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/worker-01` | `feat/rust-01-json` | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | Pending | claimed |
-| Independent Astra reviewer | `thr_v6himghfju` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/reviewer` | stable bootstrap snapshot | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | Pending | preparing criteria; no acceptance |
+| 01 implementation | `thr_tpymn94mfd` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/worker-01` | `feat/rust-01-json` | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | `5147c46e981dcd9e3080eee1b0e6283104dcb49f` / not integrated | claimed; correcting review findings |
+| Independent Astra reviewer | `thr_v6himghfju` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/reviewer` (reviews use immutable checkpoints below) | read-only | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | `5147c46e981dcd9e3080eee1b0e6283104dcb49f` | changes required; awaiting corrected SHA |
 
 Desktop lease: worker 01 for focused editor scenarios. Other threads must coordinate before native interaction.
 
@@ -39,6 +39,11 @@ Desktop lease: worker 01 for focused editor scenarios. Other threads must coordi
 - Astra reviewer assigned early two-axis review of this core checkpoint while UI implementation continues. This is not full-ticket acceptance and does not unblock 02/03. No implementation integrated yet.
 - Early review complete: Standards `thr_z8vp9wmkku`, Spec `thr_tx93yzrxys`; both separate Astra contexts. Report `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/review-5d67648.md`.
 - Reviewer independently reproduced 17/17 core tests and clean Clippy; rustfmt check failed. Standards: 2 nonblocking P3 observations. Spec: P1 valid JSON object corruption through the serializer's private-number key; P2 boolean query mismatch with Swift baseline. Findings sent to worker for correction and a new immutable candidate. Checkpoint not accepted.
+- Full ticket candidate: `5147c46e981dcd9e3080eee1b0e6283104dcb49f` (core fix commit `a49a9fd`), stable checkpoint `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/checkpoint-5147c46`. Worker reports all earlier findings corrected, `rust/scripts/verify` PASS/exit 0 (20 core + 2 app tests, fmt, Clippy and debug app/gallery build). Both Mach-O binaries declare minos 14.0; macOS14/15 runtime unverified. Full two-axis review requested from Astra.
+- Native blocker: worker launch plus `screencapture` command was rejected with the same tool-permission rejection. GUI/native criteria remain unverified. Desktop lease ceded to orchestrator; owner authorization explicitly requested before any retry through Computer Use. No GUI action or screenshot attempted by the orchestrator. Existing input sources: Italian Pro, U.S., CharacterPalette, PressAndHold; no CJK IME enabled.
+- Full-candidate review contexts: Standards `thr_vi5yuk8yg2`, Spec `thr_zj2zsirmup`. Confirmed findings delivered to worker while reviewer gate is still compiling: keyboard-inoperable buttons, editor dependency escaping app/library boundary, missing Clipboard adapter, missing debounce, overstated runtime wording; stale Paste/Clear output due to suppressed editor events and parser stack overflow on deeply nested input. Prior private-number and boolean fixes appear corrected in reviewer probes. Worker resumed code/test fixes; native actions remain suspended. Final full-candidate review report pending.
+- Final full review `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/review-5147c46.md`: gate independently PASS/exit 0; 22 tests. Standards 4 P2 + 1 P3 documented violations and 1 P3 suggestion. Spec 2 P1 + 1 P2 + 1 P3 (query-container formatting drift). Both axes require changes. Stack overflow reproduced at 50,000 nested arrays / 100,001 bytes with candidate opt-level=1. All finding details sent to worker.
+- Reviewer found `WindowOptions.app_id` does not establish macOS bundle identity. Worker assigned minimal local Debug bundle/Info.plist for ticket01's distinct identity proof, with no launch/installation and no full ticket22 release scope. Native permission request remains unanswered.
 
 ## Local integration transport
 
