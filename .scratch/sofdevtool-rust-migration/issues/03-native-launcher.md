@@ -1,7 +1,7 @@
 # 03: Open Utilities through the macOS Launcher
 
 Type: task
-Status: ready-for-agent
+Status: claimed
 Blocked by: 01
 
 Parent: [Rust and GPUI migration specification](../spec.md)

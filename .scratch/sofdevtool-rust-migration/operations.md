@@ -78,3 +78,25 @@ Transport rehearsed successfully with checkpoint `5d67648` in `/Users/gerardo/.b
 - Main-checkout `CARGO_TARGET_DIR=/private/tmp/sofdevtool-terra-target rust/scripts/bundle-debug` rebuilt all three first-party crates and passed. Local bundle: `/Users/gerardo/code/SofDevTool/rust/artifacts/SofDevToolRust.app`. No installation or remote publication.
 - Native evidence: [resume report](evidence/2026-09-21-native-resume.md). Original and corrected Debug apps and gallery were exercised through Computer Use on macOS 26.2 arm64. Final family-emoji delete, Undo+insertion, partial selection, read-only result, Query and gallery checks passed. macOS14/15 runtime remains pending.
 - Remaining acceptance blocker: IME composition/commit/cancel has not been exercised. A separate request to add a temporary Japanese input source remains unanswered; no system input-source change was made. Ticket01 remains claimed/implemented/integrated but not accepted; tickets02–22 retain their existing dependency blockers. Resume at the native IME check, not another rewrite of the foundation.
+
+
+## Owner-directed continuation — 2026-09-22
+
+The owner explicitly rejected Japanese input configuration as a reason to stop
+and reiterated that all migration tickets must be implemented using Terra
+subagents and parallel work. The orchestrator accepts ticket01 with a recorded
+IME evidence exception, not a fictional passing test. No Japanese input source
+or other OS input setting is changed. Prior entries describing this as a blocking
+permission request are superseded. The original composition requirement remains
+an unverified native limitation rather than a dependency gate for this run.
+
+| Ticket | Implementation agent/model | Isolated checkout | Base | State |
+| --- | --- | --- | --- | --- |
+| 02 | `/root/foundation_audit`, GPT-5.6 Terra | `/private/tmp/sofdevtool-terra-02` | `3ba265b` | claimed; embedded WebView proof |
+| 03 | `/root/next_frontier`, GPT-5.6 Terra | `/private/tmp/sofdevtool-terra-03` | `3ba265b` | claimed; Launcher, registry and lifecycle |
+
+Ticket03 owns shared Registry/Workbench/main composition; ticket02 owns its
+Text Diff module, local assets and native WebView boundary. Integration and
+desktop checks remain serialized under the orchestrator. Both workers use
+separate build directories. The orchestrator owns local GitButler commits and
+independent Standards/Spec reviews.

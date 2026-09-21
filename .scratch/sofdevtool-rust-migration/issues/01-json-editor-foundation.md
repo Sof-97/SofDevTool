@@ -1,7 +1,7 @@
 # 01: Run JSON in a GPUI Workbench with reusable text controls
 
 Type: task
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -27,6 +27,8 @@ source findings. The full Rust gate passes (35 tests, Clippy, Debug/Release).
 
 [Native evidence](../evidence/2026-09-21-native-resume.md) records real editing,
 Clipboard, selection, undo/caret, scrolling, Query, focus and gallery observations
-on macOS 26.2. IME composition/commit/cancel remains unverified, pending the
-owner's response to adding a temporary composing input source. macOS 14/15
-runtime remains unverified. The ticket stays `claimed`; 02/03 are not unblocked.
+on macOS 26.2. IME composition/commit/cancel remains unverified. On 2026-09-22 the owner
+explicitly rejected Japanese input setup as a blocker and directed implementation
+of all tickets to continue. Ticket 01 is accepted with this documented native
+evidence exception; no IME pass is claimed and no OS input source is changed.
+macOS 14/15 runtime remains unverified. Tickets 02/03 are unblocked.
