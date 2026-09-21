@@ -21,7 +21,7 @@
 | 01 implementation | `thr_tpymn94mfd` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/worker-01` | `feat/rust-01-json` | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | `c193c74b93b1b0f31ab209d00b6fe94107c4ae2c` / not integrated | claimed; code review passed, native blocked |
 | Independent Astra reviewer | `thr_v6himghfju` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/reviewer` (reviews use immutable checkpoints below) | read-only | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | `c193c74b93b1b0f31ab209d00b6fe94107c4ae2c` | Standards/Spec passed; native evidence pending |
 
-Desktop lease: orchestrator; native execution suspended pending authorization after the rejected launch/screenshot tool call.
+Desktop lease: orchestrator. The resumed Codex task received explicit native authorization; see the latest entry below. Earlier suspended-authorization entries are historical.
 
 ## Session evidence and current impediment
 
@@ -64,3 +64,17 @@ The installed GitButler `pick` does not find a commit in an independent checkout
 The helper reads immutable base/candidate blobs through read-only Git, checks every receiving file against the base or candidate, refuses concurrent changes and symlinks, transfers contents/modes, and verifies bytes. It performs no Git metadata writes. Inspect the resulting `but diff`, then commit through GitButler with the candidate SHA in the message. Record both candidate and new integrated SHAs and run combined gates. Conflicts require deliberate resolution and renewed review.
 
 Transport rehearsed successfully with checkpoint `5d67648` in `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/integration-rehearsal`: 19 files transferred and committed via GitButler. This disposable rehearsal is not canonical integration or acceptance.
+
+
+## Codex resume with Terra — 2026-09-21
+
+- Current task: `01a0c5c0-6ebe-7170-ab79-cb1f2f1871ad`. The owner explicitly requested GPT-5.6 Terra implementation subagents and parallel work where dependencies allow; this supersedes the prior DeepSeek worker choice for this resume.
+- Owner explicitly authorized app/gallery launch, Computer Use screenshots and Clipboard tests with synthetic data. Prior launch authorization blocker is closed.
+- Terra implementation agent `/root/foundation_audit`, isolated checkout copy `/private/tmp/sofdevtool-terra-01/rust`, fixed base `c193c74b93b1b0f31ab209d00b6fe94107c4ae2c`. Terra `/root/next_frontier` independently inspected shared ownership for 02/03 without implementing blocked tickets.
+- Native observation exposed Backspace splitting family emoji and combining accents, plus clipped gallery Empty state. Terra fixed these behind the owner component interface with public APIs and the already-locked unicode-segmentation dependency; no vendor fork.
+- Independent Astra Standards `/root/standards_review` and Spec `/root/spec_review` reviewed correction iterations. Routing, undo-caret and overly broad interception findings were corrected; both final axes have no remaining source findings. Native limitations remain separate.
+- Final `CARGO_TARGET_DIR=/private/tmp/sofdevtool-terra-target scripts/verify --full`: PASS/exit 0, 35 tests (23 JSON, 5 session, 5 UI helpers, 2 identity), fmt/Clippy and Debug/Release. Existing transitive block 0.1.6 future-incompatibility notice only. Full log retained at `rust/artifacts/2026-09-21-terra-full-gate.log`.
+- Integrated code commit: `9b5703302dd1134955804b2a4ca8a4d9ef775d13`, current branch `feat/rust-gpui-migration`, combining previously reviewed c193c74 foundation and the separately reviewed Terra correction. The receiving source/config/fixture bytes were verified identical to the tested tree (46 files; evidence text updated separately).
+- Main-checkout `CARGO_TARGET_DIR=/private/tmp/sofdevtool-terra-target rust/scripts/bundle-debug` rebuilt all three first-party crates and passed. Local bundle: `/Users/gerardo/code/SofDevTool/rust/artifacts/SofDevToolRust.app`. No installation or remote publication.
+- Native evidence: [resume report](evidence/2026-09-21-native-resume.md). Original and corrected Debug apps and gallery were exercised through Computer Use on macOS 26.2 arm64. Final family-emoji delete, Undo+insertion, partial selection, read-only result, Query and gallery checks passed. macOS14/15 runtime remains pending.
+- Remaining acceptance blocker: IME composition/commit/cancel has not been exercised. A separate request to add a temporary Japanese input source remains unanswered; no system input-source change was made. Ticket01 remains claimed/implemented/integrated but not accepted; tickets02–22 retain their existing dependency blockers. Resume at the native IME check, not another rewrite of the foundation.
