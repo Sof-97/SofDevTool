@@ -140,3 +140,8 @@ new native evidence and final independent review, followed by local integration.
 - Unfinished03/04 deltas saved in [wip](wip/README.md); these are preservation
   artifacts, not accepted product implementations. Resume at03 native Launcher
   visibility/dismissal/lifecycle, then04 app History wiring.
+
+Integrated ticket02 commit: `50f2b05` on `feat/rust-gpui-migration`.
+The working tree was clean after that local integration commit. The generated
+app is `rust/artifacts/SofDevToolRust.app`; no remote publication or installation
+was performed. Owner-requested stop is now effective.
