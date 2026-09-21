@@ -1,0 +1,6 @@
+{
+  "name": "minify-whitespace",
+  "mode": "minify",
+  "input": "{\n  \"a\": 1,\n  \"b\": [1, 2]\n}",
+  "expected_output": "{\"a\":1,\"b\":[1,2]}"
+}

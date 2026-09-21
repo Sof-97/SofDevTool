@@ -1,0 +1,7 @@
+{
+  "name": "query-json-pointer",
+  "mode": "query",
+  "input": "{\"store\":{\"book\":[{\"title\":\"A\"},{\"title\":\"B\"}]}}",
+  "query": "/store/book/1/title",
+  "expected_output": "B"
+}

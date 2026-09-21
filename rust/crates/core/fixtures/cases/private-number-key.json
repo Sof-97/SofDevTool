@@ -1,0 +1,7 @@
+{
+  "name": "private-number-key",
+  "mode": "format",
+  "indentation": 2,
+  "input": "{\"$serde_json::private::Number\":\"123\"}",
+  "expected_output": "{\n  \"$serde_json::private::Number\": \"123\"\n}"
+}

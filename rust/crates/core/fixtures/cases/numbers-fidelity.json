@@ -1,0 +1,7 @@
+{
+  "name": "numbers-fidelity",
+  "mode": "format",
+  "indentation": 2,
+  "input": "{\"big\":123456789012345678901234567890,\"float\":1.0,\"exp\":1e3,\"negzero\":-0.0}",
+  "expected_output": "{\n  \"big\": 123456789012345678901234567890,\n  \"float\": 1.0,\n  \"exp\": 1e3,\n  \"negzero\": -0.0\n}"
+}

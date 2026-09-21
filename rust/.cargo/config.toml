@@ -1,0 +1,4 @@
+[env]
+# Keep the macOS 14 deployment baseline from the migration specification.
+# A dependency that cannot support it must be reported, not silently raised.
+MACOSX_DEPLOYMENT_TARGET = "14.0"

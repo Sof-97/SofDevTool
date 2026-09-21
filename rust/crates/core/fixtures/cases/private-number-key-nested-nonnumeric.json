@@ -1,0 +1,7 @@
+{
+  "name": "private-number-key-nested-nonnumeric",
+  "mode": "format",
+  "indentation": 2,
+  "input": "{\"a\":{\"$serde_json::private::Number\":\"hello\"}}",
+  "expected_output": "{\n  \"a\": {\n    \"$serde_json::private::Number\": \"hello\"\n  }\n}"
+}

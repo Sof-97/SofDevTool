@@ -1,0 +1,20 @@
+[package]
+name = "sofdevtool-app"
+description = "The Rust Developer Toolbox application."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "sofdevtool_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sofdevtool"
+path = "src/main.rs"
+
+[dependencies]
+gpui.workspace = true
+sofdevtool-core = { path = "../core" }
+sofdevtool-ui = { path = "../ui" }

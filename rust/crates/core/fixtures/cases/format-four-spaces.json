@@ -1,0 +1,7 @@
+{
+  "name": "format-four-spaces",
+  "mode": "format",
+  "indentation": 4,
+  "input": "{\"a\":{\"b\":1}}",
+  "expected_output": "{\n    \"a\": {\n        \"b\": 1\n    }\n}"
+}

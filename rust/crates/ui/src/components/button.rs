@@ -1,0 +1,167 @@
+use std::rc::Rc;
+
+use gpui::prelude::*;
+use gpui::{
+    div, App, ElementId, FocusHandle, IntoElement, KeyBinding, RenderOnce, SharedString, Window,
+};
+
+use crate::theme::ThemeTokens;
+
+/// Key context for focusable buttons; Enter and Space activate the focused one.
+pub const BUTTON_KEY_CONTEXT: &str = "SofDevToolButton";
+
+gpui::actions!(sofdevtool_ui, [ActivateButton]);
+
+/// A click or keyboard activation handler owned by a [`Button`].
+pub type ClickHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonVariant {
+    Primary,
+    Secondary,
+}
+
+#[derive(IntoElement)]
+pub struct Button {
+    label: SharedString,
+    variant: ButtonVariant,
+    disabled: bool,
+    focus: Option<FocusHandle>,
+    on_click: Option<ClickHandler>,
+}
+
+impl Button {
+    pub fn new(label: impl Into<SharedString>) -> Self {
+        Self {
+            label: label.into(),
+            variant: ButtonVariant::Secondary,
+            disabled: false,
+            focus: None,
+            on_click: None,
+        }
+    }
+
+    pub fn primary(label: impl Into<SharedString>) -> Self {
+        Self::new(label).variant(ButtonVariant::Primary)
+    }
+
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Makes the button focusable and reachable with Tab/Shift-Tab. The handle
+    /// must be owned by the view so focus survives re-renders.
+    pub fn focus_handle(mut self, handle: FocusHandle) -> Self {
+        self.focus = Some(handle);
+        self
+    }
+
+    pub fn on_click(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_click = Some(Rc::new(handler));
+        self
+    }
+}
+
+pub(crate) fn register_key_bindings(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("enter", ActivateButton, Some(BUTTON_KEY_CONTEXT)),
+        KeyBinding::new("space", ActivateButton, Some(BUTTON_KEY_CONTEXT)),
+    ]);
+}
+
+/// Adapts a view-context handler into the event-less [`Button`] handler, so
+/// callers can mutate their view without naming a GPUI event type.
+pub fn view_click<T: 'static>(
+    cx: &mut gpui::Context<T>,
+    handler: impl Fn(&mut T, &mut Window, &mut gpui::Context<T>) + 'static,
+) -> impl Fn(&mut Window, &mut App) + 'static {
+    let weak = cx.weak_entity();
+    move |window, cx| {
+        weak.update(cx, |this, cx| handler(this, window, cx)).ok();
+    }
+}
+
+impl RenderOnce for Button {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Button {
+            label,
+            variant,
+            disabled,
+            focus,
+            on_click,
+        } = self;
+        let tokens = ThemeTokens::graphite();
+        let (background, foreground, base_border) = match variant {
+            ButtonVariant::Primary => (tokens.accent(), tokens.accent_text(), tokens.accent()),
+            ButtonVariant::Secondary => (tokens.surface_raised(), tokens.text(), tokens.border()),
+        };
+
+        let focused = focus
+            .as_ref()
+            .map(|handle| window.focused(cx).as_ref() == Some(handle))
+            .unwrap_or(false);
+        let border = if focused {
+            // A visible focus ring distinct from each variant's resting border,
+            // including Primary whose resting border is the accent colour.
+            match variant {
+                ButtonVariant::Primary => tokens.text(),
+                ButtonVariant::Secondary => tokens.accent(),
+            }
+        } else {
+            base_border
+        };
+
+        let id = ElementId::Name(label.clone());
+        let mut element = div()
+            .id(id)
+            .flex()
+            .items_center()
+            .justify_center()
+            .px_3()
+            .py_1()
+            .rounded_md()
+            .border_1()
+            .bg(background)
+            .text_color(foreground)
+            .border_color(border)
+            .child(label);
+
+        if disabled {
+            element = element.opacity(0.45).cursor_default();
+        } else {
+            element = element.cursor_pointer().hover(|style| style.opacity(0.85));
+            match focus {
+                Some(handle) => {
+                    let for_keyboard = on_click.clone();
+                    let for_mouse = on_click;
+                    element = element
+                        .track_focus(&handle)
+                        .key_context(BUTTON_KEY_CONTEXT)
+                        .on_action(move |_: &ActivateButton, window, cx| {
+                            if let Some(handler) = &for_keyboard {
+                                handler(window, cx);
+                            }
+                        })
+                        .on_click(move |_event, window, cx| {
+                            if let Some(handler) = &for_mouse {
+                                handler(window, cx);
+                            }
+                        });
+                }
+                None => {
+                    if let Some(handler) = on_click {
+                        element = element.on_click(move |_event, window, cx| handler(window, cx));
+                    }
+                }
+            }
+        }
+
+        element
+    }
+}

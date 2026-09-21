@@ -1,0 +1,60 @@
+use gpui::prelude::*;
+use gpui::{App, Context, Entity, IntoElement, SharedString, Subscription, Window};
+use gpui_component::input::{Input, InputEvent, InputState};
+
+/// A single-line text field owned by this library.
+///
+/// `gpui-component`'s editing engine is an implementation detail: callers only
+/// see this type's set/text/on_change/render surface.
+pub struct TextField {
+    state: Entity<InputState>,
+}
+
+impl TextField {
+    pub fn new(window: &mut Window, cx: &mut App) -> Self {
+        Self {
+            state: cx.new(|cx| InputState::new(window, cx)),
+        }
+    }
+
+    pub fn set_text(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.set_value(text, window, cx));
+    }
+
+    /// Replaces the whole text as a user-style edit: recorded in the undo
+    /// history and emitting a change event.
+    pub fn replace_all(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.replace_all(text, window, cx));
+    }
+
+    pub fn text(&self, cx: &App) -> String {
+        self.state.read(cx).value().to_string()
+    }
+
+    /// Subscribe inside a view's context. The handler receives the view, window
+    /// and context so it can recompute and notify without naming the engine type.
+    pub fn on_change_in<T: 'static>(
+        &self,
+        window: &Window,
+        cx: &mut Context<T>,
+        mut handler: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        cx.subscribe_in(
+            &self.state,
+            window,
+            move |view, _entity, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    handler(view, window, cx);
+                }
+            },
+        )
+    }
+
+    pub fn render(&self, accessibility_id: &'static str) -> impl IntoElement {
+        Input::new(&self.state)
+            .accessibility_id(accessibility_id)
+            .w_full()
+    }
+}

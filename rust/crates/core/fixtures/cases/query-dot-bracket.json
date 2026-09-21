@@ -1,0 +1,7 @@
+{
+  "name": "query-dot-bracket",
+  "mode": "query",
+  "input": "{\"items\":[{\"name\":\"x\"},{\"name\":\"y\"}]}",
+  "query": "items[1].name",
+  "expected_output": "y"
+}
