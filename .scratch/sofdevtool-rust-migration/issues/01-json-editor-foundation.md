@@ -1,7 +1,7 @@
 # 01: Run JSON in a GPUI Workbench with reusable text controls
 
 Type: task
-Status: ready-for-agent
+Status: claimed
 Blocked by: None (can start immediately)
 
 Parent: [Rust and GPUI migration specification](../spec.md)

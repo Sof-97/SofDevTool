@@ -13,4 +13,12 @@
 
 ## Assignments
 
-Pending bootstrap commit and isolated checkout validation.
+- Bootstrap commit: `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6`. Gate passed: 22 tickets present and all local Markdown links resolve.
+- Independent checkout validation: copied tracked files and independent `.git`, registered with `but setup`; `but branch new` successfully created worker branch above the bootstrap. No linked worktree or raw Git writes used.
+
+| Ticket / role | Thread | Checkout | Branch | Base | Candidate / integrated | State |
+| --- | --- | --- | --- | --- | --- | --- |
+| 01 implementation | `thr_tpymn94mfd` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/worker-01` | `feat/rust-01-json` | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | Pending | claimed |
+| Independent Astra reviewer | `thr_v6himghfju` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/reviewer` | stable bootstrap snapshot | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | Pending | preparing criteria; no acceptance |
+
+Desktop lease: worker 01 for focused editor scenarios. Other threads must coordinate before native interaction.
