@@ -6,3 +6,4 @@
 pub mod clipboard;
 pub mod identity;
 pub mod json_workspace;
+pub mod text_diff;

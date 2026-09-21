@@ -47,7 +47,9 @@ pub fn panel(
                         .child(caption),
                 ),
         )
-        .child(div().flex_1().min_h_0().child(content))
+        // This wrapper establishes the vertical flex context that gives
+        // editors and the native WebView their remaining panel height.
+        .child(div().flex().flex_col().flex_1().min_h_0().child(content))
 }
 
 /// A label stacked above a control.
@@ -94,9 +96,11 @@ impl RenderOnce for LabeledField {
         div()
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h_0()
             .gap_1()
             .min_w_0()
             .child(header)
-            .child(self.control)
+            .child(div().flex().flex_1().min_h_0().child(self.control))
     }
 }

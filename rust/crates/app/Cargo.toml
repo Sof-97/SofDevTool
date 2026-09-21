@@ -16,5 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 gpui.workspace = true
+serde_json.workspace = true
+wry.workspace = true
 sofdevtool-core = { path = "../core" }
 sofdevtool-ui = { path = "../ui" }

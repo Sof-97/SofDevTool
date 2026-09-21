@@ -140,6 +140,7 @@ impl RenderOnce for Button {
                 Some(handle) => {
                     let for_keyboard = on_click.clone();
                     let for_mouse = on_click;
+                    let focus_for_mouse = handle.clone();
                     element = element
                         .track_focus(&handle)
                         .key_context(BUTTON_KEY_CONTEXT)
@@ -149,6 +150,7 @@ impl RenderOnce for Button {
                             }
                         })
                         .on_click(move |_event, window, cx| {
+                            window.focus(&focus_for_mouse, cx);
                             if let Some(handler) = &for_mouse {
                                 handler(window, cx);
                             }

@@ -1,0 +1,2125 @@
+--- a/rust/Cargo.toml
++++ b/rust/Cargo.toml
+@@ -16,6 +16,8 @@
+ gpui-platform = { package = "gpui-pre-platform", version = "=0.3.6", features = ["font-kit", "runtime_shaders"] }
+ unicode-segmentation = "=1.13.3"
+ wry = "=0.53.5"
++raw-window-handle = "=0.6.2"
++objc = "=0.2.7"
+ 
+ [profile.dev]
+ # GPUI debug builds are large; keep debug info but avoid the slowest codegen.
+--- a/rust/crates/app/Cargo.toml
++++ b/rust/crates/app/Cargo.toml
+@@ -16,7 +16,14 @@
+ 
+ [dependencies]
+ gpui.workspace = true
++serde.workspace = true
+ serde_json.workspace = true
+ wry.workspace = true
++raw-window-handle.workspace = true
+ sofdevtool-core = { path = "../core" }
+ sofdevtool-ui = { path = "../ui" }
++
++[target.'cfg(target_os = "macos")'.dependencies]
++objc.workspace = true
++objc2-app-kit = { version = "=0.2.2", features = ["NSApplication", "NSEvent"] }
++objc2-foundation = "=0.2.2"
+--- a/rust/crates/app/src/main.rs
++++ b/rust/crates/app/src/main.rs
+@@ -1,30 +1,25 @@
+-//! Ticket 02 native proof application.
+-//!
+-//! This composes only the two concrete workspaces needed for the migration
+-//! check. Launcher, shortcuts, lifecycle and history remain outside its scope.
++//! Entry point for the Rust Developer Toolbox.
+ 
+-use std::cell::RefCell;
++use std::cell::{Cell, RefCell};
+ use std::rc::Rc;
+ 
+ use gpui::prelude::*;
+ use gpui::{
+-    div, App, Context, FocusHandle, Menu, MenuItem, OsAction, Render, TitlebarOptions, Window,
++    AnyWindowHandle, App, Entity, Menu, MenuItem, OsAction, TitlebarOptions, WindowBounds,
+     WindowOptions,
+ };
+ use sofdevtool_app::clipboard::{Clipboard, GpuiClipboard};
+ use sofdevtool_app::identity;
+-use sofdevtool_app::json_workspace::JsonWorkspace;
+-use sofdevtool_app::text_diff::TextDiffWorkspace;
+-use sofdevtool_ui::{
+-    init, mount, panel, run, set_dark_theme, view_click, Button, ButtonVariant, ThemeTokens,
+-};
++use sofdevtool_app::preferences::{ShortcutPreferences, StartupShortcut};
++use sofdevtool_app::registry::{OpenUtility, UtilityId};
++use sofdevtool_app::workbench::Workbench;
++use sofdevtool_ui::{init, mount, run_with_application, set_dark_theme};
+ 
+-gpui::actions!(ticket02_actions, [Quit, Copy, Paste]);
+-#[cfg(debug_assertions)]
+-gpui::actions!(ticket02_debug_actions, [SimulateRendererFailure]);
++gpui::actions!(application_actions, [Quit, Copy, Paste]);
+ 
+-fn window_options() -> WindowOptions {
++fn window_options(bounds: Option<WindowBounds>) -> WindowOptions {
+     WindowOptions {
++        window_bounds: bounds,
+         titlebar: Some(TitlebarOptions {
+             title: Some(identity::APP_DISPLAY_NAME.into()),
+             ..Default::default()
+@@ -34,175 +29,104 @@
+     }
+ }
+ 
+-struct Ticket02Workbench {
+-    json: gpui::Entity<JsonWorkspace>,
+-    text_diff: gpui::Entity<TextDiffWorkspace>,
+-    text_diff_selected: bool,
+-    json_focus: FocusHandle,
+-    text_diff_focus: FocusHandle,
+-}
++fn main() {
++    // A deterministic native Ticket 02 check: launches the ordinary
++    // application composition with Text Diff selected, without requiring the
++    // Ticket 03 launcher panel or a registered global shortcut.
++    let text_diff_proof = std::env::args().any(|argument| argument == "--text-diff-proof");
++    let workbench: Rc<RefCell<Option<Entity<Workbench>>>> = Rc::new(RefCell::new(None));
++    let visible = Rc::new(Cell::new(true));
++    let native_window: Rc<RefCell<Option<AnyWindowHandle>>> = Rc::new(RefCell::new(None));
++    let previous_bounds: Rc<RefCell<Option<WindowBounds>>> = Rc::new(RefCell::new(None));
++    let preferences = ShortcutPreferences::application_support().ok();
++    let startup = preferences
++        .as_ref()
++        .map(ShortcutPreferences::load_for_startup)
++        .unwrap_or(StartupShortcut {
++            shortcut: None,
++            diagnostic: Some(
++                "Launcher settings are unavailable because the Rust Application Support directory could not be resolved."
++                    .into(),
++            ),
++        });
+ 
+-impl Ticket02Workbench {
+-    fn new(window: &mut Window, cx: &mut Context<Self>, clipboard: Rc<dyn Clipboard>) -> Self {
+-        let json = cx.new(|cx| JsonWorkspace::new(window, cx, clipboard.clone()));
+-        let text_diff = cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard));
+-        text_diff.read(cx).set_active(false);
+-        Self {
+-            json,
+-            text_diff,
+-            text_diff_selected: false,
+-            json_focus: cx.focus_handle().tab_stop(true).tab_index(0),
+-            text_diff_focus: cx.focus_handle().tab_stop(true).tab_index(0),
+-        }
+-    }
+-
+-    fn select_json(&mut self, cx: &mut Context<Self>) {
+-        self.text_diff.read(cx).focus_parent();
+-        self.text_diff.read(cx).set_active(false);
+-        self.text_diff_selected = false;
+-        cx.notify();
+-    }
+-
+-    fn select_text_diff(&mut self, cx: &mut Context<Self>) {
+-        self.text_diff.read(cx).focus_parent();
+-        self.text_diff.read(cx).set_active(true);
+-        self.text_diff_selected = true;
+-        cx.notify();
+-    }
+-}
+-
+-impl Render for Ticket02Workbench {
+-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+-        let tokens = ThemeTokens::graphite();
+-        let text_diff_selected = self.text_diff_selected;
+-        div()
+-            .flex()
+-            .flex_col()
+-            .size_full()
+-            .bg(tokens.background())
+-            .text_color(tokens.text())
+-            .child(
+-                div()
+-                    .px_4()
+-                    .py_3()
+-                    .border_b_1()
+-                    .border_color(tokens.border())
+-                    .text_lg()
+-                    .font_weight(gpui::FontWeight::SEMIBOLD)
+-                    .child("Developer Toolbox"),
+-            )
+-            .child(
+-                div()
+-                    .flex()
+-                    .flex_1()
+-                    .min_h_0()
+-                    .child(
+-                        div()
+-                            .flex()
+-                            .flex_col()
+-                            .w_56()
+-                            .p_3()
+-                            .gap_2()
+-                            .border_r_1()
+-                            .border_color(tokens.border())
+-                            .child(
+-                                Button::new("JSON")
+-                                    .focus_handle(self.json_focus.clone())
+-                                    .variant(if text_diff_selected {
+-                                        ButtonVariant::Secondary
+-                                    } else {
+-                                        ButtonVariant::Primary
+-                                    })
+-                                    .on_click(view_click(cx, |this, _window, cx| {
+-                                        this.select_json(cx)
+-                                    })),
+-                            )
+-                            .child(
+-                                Button::new("Text Diff")
+-                                    .focus_handle(self.text_diff_focus.clone())
+-                                    .variant(if text_diff_selected {
+-                                        ButtonVariant::Primary
+-                                    } else {
+-                                        ButtonVariant::Secondary
+-                                    })
+-                                    .on_click(view_click(cx, |this, _window, cx| {
+-                                        this.select_text_diff(cx)
+-                                    })),
+-                            ),
+-                    )
+-                    .child(if text_diff_selected {
+-                        div().m_3().flex().flex_1().min_w_0().min_h_0().child(panel(
+-                            "Text Diff",
+-                            "persistent session",
+-                            div()
+-                                .flex()
+-                                .flex_1()
+-                                .min_h_0()
+-                                .child(self.text_diff.clone()),
+-                        ))
+-                    } else {
+-                        div().m_3().flex().flex_1().min_w_0().min_h_0().child(panel(
+-                            "JSON",
+-                            "persistent session",
+-                            div().flex().flex_1().min_h_0().child(self.json.clone()),
+-                        ))
+-                    }),
+-            )
+-    }
+-}
+-
+-fn main() {
+-    #[cfg(debug_assertions)]
+-    let text_diff_for_diagnostics: Rc<RefCell<Option<gpui::Entity<TextDiffWorkspace>>>> =
+-        Rc::new(RefCell::new(None));
+-    run(move |cx: &mut App| {
+-        init(cx);
+-        set_dark_theme(None, cx);
+-        // GPUI uses these bindings to assign Cmd-C/V key equivalents to the
+-        // native selectors. AppKit then delivers them to WKWebView's first
+-        // responder, while GPUI inputs retain their own copy/paste routing.
+-        cx.bind_keys([
+-            gpui::KeyBinding::new("cmd-q", Quit, None),
+-            gpui::KeyBinding::new("cmd-c", Copy, None),
+-            gpui::KeyBinding::new("cmd-v", Paste, None),
+-        ]);
+-        cx.on_action(|_: &Quit, cx| cx.quit());
+-        #[cfg(debug_assertions)]
+-        {
+-            let text_diff_for_diagnostics = text_diff_for_diagnostics.clone();
+-            cx.on_action(move |_: &SimulateRendererFailure, cx| {
+-                if let Some(text_diff) = text_diff_for_diagnostics.borrow().clone() {
+-                    text_diff.update(cx, |workspace, cx| {
+-                        workspace.simulate_renderer_failure(cx);
+-                    });
++    let reopen_visible = visible.clone();
++    let reopen_native_window = native_window.clone();
++    let launch_preferences = preferences.clone();
++    run_with_application(
++        move |application| {
++            // Closing the Workbench hides its retained native window. Dock
++            // reopen orders that same window front, preserving its bounds,
++            // selected Utility, and child native views. Cmd-Q and the
++            // application menu are the only explicit process exit paths.
++            application.on_reopen(move |cx| {
++                cx.activate(true);
++                if !reopen_visible.get() {
++                    if let Some(handle) = *reopen_native_window.borrow() {
++                        let restored = handle.update(cx, |_, window, _| {
++                            sofdevtool_app::native_window::show(window);
++                            window.activate_window();
++                        });
++                        if restored.is_ok() {
++                            reopen_visible.set(true);
++                        }
++                    }
+                 }
+             });
+-        }
+-        let mut menus = vec![
+-            Menu::new(identity::APP_DISPLAY_NAME)
+-                .items([MenuItem::action("Quit SofDevTool", Quit)]),
+-            Menu::new("Edit").items([
+-                MenuItem::os_action("Copy", Copy, OsAction::Copy),
+-                MenuItem::os_action("Paste", Paste, OsAction::Paste),
+-            ]),
+-        ];
+-        #[cfg(debug_assertions)]
+-        menus.push(Menu::new("Renderer diagnostics").items([MenuItem::action(
+-            "Test renderer failure",
+-            SimulateRendererFailure,
+-        )]));
+-        cx.set_menus(menus);
+-        let clipboard: Rc<dyn Clipboard> = Rc::new(GpuiClipboard);
+-        #[cfg(debug_assertions)]
+-        let text_diff_for_diagnostics = text_diff_for_diagnostics.clone();
+-        cx.open_window(window_options(), move |window, cx| {
+-            let view = cx.new(|cx| Ticket02Workbench::new(window, cx, clipboard.clone()));
+-            #[cfg(debug_assertions)]
+-            {
+-                *text_diff_for_diagnostics.borrow_mut() = Some(view.read(cx).text_diff.clone());
+-            }
+-            mount(view, window, cx)
+-        })
+-        .expect("open the Ticket 02 proof window");
+-    });
++        },
++        move |cx: &mut App| {
++            init(cx);
++            sofdevtool_app::launcher::init(cx);
++            set_dark_theme(None, cx);
++            // `MenuItem::os_action` gives macOS the responder-chain selector,
++            // while these bindings give its menu item the standard key
++            // equivalent. The selector is therefore delivered to a focused
++            // WKWebView (and remains available to GPUI controls).
++            cx.bind_keys([
++                gpui::KeyBinding::new("cmd-q", Quit, None),
++                gpui::KeyBinding::new("cmd-c", Copy, None),
++                gpui::KeyBinding::new("cmd-v", Paste, None),
++            ]);
++            cx.on_action(|_: &Quit, cx| cx.quit());
++            cx.set_menus([
++                Menu::new(identity::APP_DISPLAY_NAME)
++                    .items([MenuItem::action("Quit SofDevTool", Quit)]),
++                Menu::new("Edit").items([
++                    MenuItem::os_action("Copy", Copy, OsAction::Copy),
++                    MenuItem::os_action("Paste", Paste, OsAction::Paste),
++                ]),
++            ]);
++            let clipboard: Rc<dyn Clipboard> = Rc::new(GpuiClipboard);
++            let initial_workbench = workbench.clone();
++            let initial_visible = visible.clone();
++            let initial_bounds = previous_bounds.clone();
++            let initial_native_window = native_window.clone();
++            let preferences = launch_preferences.clone();
++            let startup = startup.clone();
++            cx.open_window(window_options(None), move |window, cx| {
++                let visible = initial_visible.clone();
++                let bounds = initial_bounds.clone();
++                window.on_window_should_close(cx, move |window, _cx| {
++                    *bounds.borrow_mut() = Some(window.window_bounds());
++                    sofdevtool_app::native_window::hide(window);
++                    visible.set(false);
++                    // Retain this GPUI/NSWindow and its Wry child. Dock reopen
++                    // orders the same window front, avoiding an unsupported
++                    // reparent of WKWebView into a replacement NSWindow.
++                    false
++                });
++                let view = cx.new(|cx| Workbench::new(window, cx, clipboard.clone()));
++                view.update(cx, |workbench, cx| {
++                    workbench.restore_shortcut_preferences(preferences, startup, cx);
++                    if text_diff_proof {
++                        workbench.open(OpenUtility(UtilityId::TextDiff), cx);
++                    }
++                });
++                *initial_native_window.borrow_mut() = Some(window.window_handle());
++                *initial_workbench.borrow_mut() = Some(view.clone());
++                mount(view, window, cx)
++            })
++            .expect("open the workbench window");
++        },
++    );
+ }
+--- a/rust/crates/app/src/lib.rs
++++ b/rust/crates/app/src/lib.rs
+@@ -6,4 +6,11 @@
+ pub mod clipboard;
+ pub mod identity;
+ pub mod json_workspace;
++pub mod launcher;
++pub mod native_window;
++pub mod preferences;
++pub mod registry;
++pub mod settings;
++pub mod shortcut;
+ pub mod text_diff;
++pub mod workbench;
+--- /dev/null
++++ b/rust/crates/app/src/workbench.rs
+@@ -0,0 +1,354 @@
++//! The long-lived application shell and concrete Utility workspace sessions.
++
++use std::rc::Rc;
++use std::sync::{
++    atomic::{AtomicBool, Ordering},
++    Arc,
++};
++use std::time::Duration;
++
++use gpui::prelude::*;
++use gpui::{div, AnyWindowHandle, App, Context, Entity, FocusHandle, IntoElement, Render, Window};
++use sofdevtool_ui::{panel, view_click, Button, ButtonVariant, ThemeTokens};
++
++use crate::clipboard::Clipboard;
++use crate::json_workspace::JsonWorkspace;
++use crate::preferences::{ShortcutPreferences, StartupShortcut};
++use crate::registry::{OpenUtility, UtilityId, UtilityRegistry};
++use crate::shortcut::{Shortcut, ShortcutController};
++use crate::text_diff::TextDiffWorkspace;
++
++#[cfg(target_os = "macos")]
++use crate::shortcut::macos::CarbonShortcutRegistrar;
++
++/// The GPUI Workbench retains each concrete workspace entity for the whole
++/// application run. No workspace input or result is persisted here.
++pub struct Workbench {
++    registry: UtilityRegistry,
++    selected: UtilityId,
++    json: Entity<JsonWorkspace>,
++    text_diff: Entity<TextDiffWorkspace>,
++    launcher_focus: FocusHandle,
++    launcher: Option<AnyWindowHandle>,
++    main_window: AnyWindowHandle,
++    entity: gpui::WeakEntity<Self>,
++    shortcut_requested: Arc<AtomicBool>,
++    #[cfg(target_os = "macos")]
++    shortcut: ShortcutController<CarbonShortcutRegistrar>,
++    shortcut_error: Option<String>,
++    shortcut_preferences: Option<ShortcutPreferences>,
++}
++
++impl Workbench {
++    pub fn new(window: &mut Window, cx: &mut Context<Self>, clipboard: Rc<dyn Clipboard>) -> Self {
++        let json = cx.new(|cx| JsonWorkspace::new(window, cx, clipboard.clone()));
++        let text_diff = cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard));
++        text_diff.read(cx).set_active(false);
++        let shortcut_requested = Arc::new(AtomicBool::new(false));
++        #[cfg(target_os = "macos")]
++        let mut shortcut = ShortcutController::new(CarbonShortcutRegistrar::new({
++            let shortcut_requested = shortcut_requested.clone();
++            move || shortcut_requested.store(true, Ordering::Release)
++        }));
++        #[cfg(target_os = "macos")]
++        let shortcut_error = shortcut
++            .register(Shortcut::launcher_default())
++            .err()
++            .map(|error| error.to_string());
++        let workbench = Self {
++            registry: UtilityRegistry::initial(),
++            selected: UtilityId::Json,
++            json,
++            text_diff,
++            launcher_focus: cx.focus_handle().tab_stop(true).tab_index(0),
++            launcher: None,
++            main_window: window.window_handle(),
++            entity: cx.weak_entity(),
++            shortcut_requested,
++            #[cfg(target_os = "macos")]
++            shortcut,
++            shortcut_error,
++            shortcut_preferences: None,
++        };
++        workbench.observe_global_shortcut(cx);
++        workbench
++    }
++
++    pub fn open(&mut self, request: OpenUtility, cx: &mut Context<Self>) -> bool {
++        let opened = self.registry.open(request.0, &mut self.selected);
++        if opened {
++            self.sync_workspace_visibility(cx);
++            cx.notify();
++        }
++        opened
++    }
++
++    fn sync_workspace_visibility(&self, cx: &App) {
++        self.text_diff
++            .read(cx)
++            .set_active(self.selected == UtilityId::TextDiff && self.launcher.is_none());
++    }
++
++    fn select_json(&mut self, cx: &mut Context<Self>) {
++        self.open(OpenUtility(UtilityId::Json), cx);
++    }
++
++    fn show_launcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
++        if let Some(launcher) = self.launcher.take() {
++            if launcher
++                .update(cx, |_launcher, launcher_window, _cx| {
++                    launcher_window.remove_window()
++                })
++                .is_ok()
++            {
++                return;
++            }
++        }
++        self.text_diff.read(cx).set_active(false);
++        self.launcher = crate::launcher::show(
++            self.registry.clone(),
++            window.window_handle(),
++            cx.weak_entity(),
++            cx,
++        );
++    }
++
++    /// Called from the application-owned shortcut observer rather than a
++    /// render pass. A hidden Workbench remains a live GPUI window, so this
++    /// works when the user has closed its visible native surface.
++    fn consume_global_shortcut(&mut self, cx: &mut Context<Self>) {
++        if !self.shortcut_requested.swap(false, Ordering::AcqRel) {
++            return;
++        }
++        if let Some(launcher) = self.launcher.take() {
++            if launcher
++                .update(cx, |_launcher, launcher_window, _cx| {
++                    launcher_window.remove_window()
++                })
++                .is_ok()
++            {
++                self.sync_workspace_visibility(cx);
++                cx.notify();
++                return;
++            }
++        }
++        let main_window = self.main_window;
++        self.text_diff.read(cx).set_active(false);
++        self.launcher =
++            crate::launcher::show(self.registry.clone(), main_window, self.entity.clone(), cx);
++    }
++
++    pub fn launcher_did_dismiss(&mut self, cx: &mut Context<Self>) {
++        self.launcher = None;
++        self.sync_workspace_visibility(cx);
++        cx.notify();
++    }
++
++    fn observe_global_shortcut(&self, cx: &mut Context<Self>) {
++        let requested = self.shortcut_requested.clone();
++        let executor = cx.background_executor().clone();
++        cx.spawn(async move |this, cx| loop {
++            executor.timer(Duration::from_millis(50)).await;
++            if this
++                .update(cx, |_workbench, cx| {
++                    if requested.load(Ordering::Acquire) {
++                        _workbench.consume_global_shortcut(cx);
++                    }
++                })
++                .is_err()
++            {
++                break;
++            }
++        })
++        .detach();
++    }
++
++    pub fn configure_shortcut(&mut self, shortcut: Shortcut, cx: &mut Context<Self>) {
++        #[cfg(target_os = "macos")]
++        {
++            if let Err(error) = self.shortcut.register(shortcut) {
++                self.shortcut_error = Some(error.to_string());
++            } else {
++                self.shortcut_error = None;
++            }
++            cx.notify();
++        }
++    }
++
++    pub fn restore_shortcut_preferences(
++        &mut self,
++        preferences: Option<ShortcutPreferences>,
++        startup: StartupShortcut,
++        cx: &mut Context<Self>,
++    ) {
++        self.shortcut_preferences = preferences;
++        let mut diagnostics = Vec::new();
++        if let Some(shortcut) = startup.shortcut {
++            #[cfg(target_os = "macos")]
++            if let Err(error) = self.shortcut.register(shortcut) {
++                diagnostics.push(error.to_string());
++            }
++        } else if let Some(error) = self.shortcut_error.take() {
++            diagnostics.push(error);
++        }
++        diagnostics.extend(startup.diagnostic);
++        // A failed default registration remains visible when no saved shortcut
++        // replaces it. A successfully registered saved shortcut clears that
++        // stale default error instead of presenting an unreachable state.
++        self.shortcut_error = (!diagnostics.is_empty()).then(|| diagnostics.join(" "));
++        cx.notify();
++    }
++
++    fn show_settings(&mut self, cx: &mut Context<Self>) {
++        if let Some(preferences) = self.shortcut_preferences.clone() {
++            crate::settings::show(cx.weak_entity(), preferences, self.current_shortcut(), cx);
++        } else {
++            self.shortcut_error = Some(
++                "Launcher settings are unavailable because the Rust Application Support directory could not be resolved."
++                    .into(),
++            );
++            cx.notify();
++        }
++    }
++
++    /// The committed OS shortcut. Settings persists only this value after the
++    /// native registrar accepts a candidate.
++    pub fn current_shortcut(&self) -> Shortcut {
++        #[cfg(target_os = "macos")]
++        {
++            self.shortcut.shortcut()
++        }
++        #[cfg(not(target_os = "macos"))]
++        {
++            Shortcut::launcher_default()
++        }
++    }
++}
++
++impl Render for Workbench {
++    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++        let tokens = ThemeTokens::graphite();
++        let json_selected = self.selected == UtilityId::Json;
++        let text_diff_selected = self.selected == UtilityId::TextDiff;
++        div()
++            .flex()
++            .flex_col()
++            .size_full()
++            .bg(tokens.background())
++            .text_color(tokens.text())
++            .child(
++                div()
++                    .flex()
++                    .items_center()
++                    .justify_between()
++                    .px_4()
++                    .py_3()
++                    .border_b_1()
++                    .border_color(tokens.border())
++                    .child(
++                        div()
++                            .text_lg()
++                            .font_weight(gpui::FontWeight::SEMIBOLD)
++                            .child("Developer Toolbox"),
++                    )
++                    .child(
++                        div()
++                            .flex()
++                            .items_center()
++                            .gap_2()
++                            .text_xs()
++                            .text_color(tokens.text_muted())
++                            .child("Library · local and offline")
++                            .child(
++                                Button::new("Settings").variant(ButtonVariant::Secondary).on_click(
++                                    view_click(cx, |this, _window, cx| this.show_settings(cx)),
++                                ),
++                            ),
++                    ),
++            )
++            .child(
++                div()
++                    .flex()
++                    .flex_row()
++                    .flex_1()
++                    .min_h_0()
++                    .child(
++                        div()
++                            .w_56()
++                            .p_3()
++                            .border_r_1()
++                            .border_color(tokens.border())
++                            .child(
++                                Button::new("JSON")
++                                    .variant(if json_selected {
++                                        ButtonVariant::Primary
++                                    } else {
++                                        ButtonVariant::Secondary
++                                    })
++                                    .on_click(view_click(cx, |this, _window, cx| {
++                                        this.select_json(cx);
++                                    })),
++                            )
++                            .child(
++                                Button::new("Text Diff")
++                                    .variant(if text_diff_selected {
++                                        ButtonVariant::Primary
++                                    } else {
++                                        ButtonVariant::Secondary
++                                    })
++                                    .on_click(view_click(cx, |this, _window, cx| {
++                                        this.open(OpenUtility(UtilityId::TextDiff), cx);
++                                    })),
++                            )
++                            .child(
++                                div()
++                                    .mt_4()
++                                    .text_xs()
++                                    .text_color(tokens.text_muted())
++                                    .child("More Utilities arrive only when their concrete workspaces are ready."),
++                            ),
++                    )
++                    .child(
++                        if json_selected {
++                            div().m_3().flex().flex_1().min_w_0().min_h_0().child(panel(
++                                "JSON",
++                                "persistent session",
++                                div().flex().flex_1().min_h_0().child(self.json.clone()),
++                            ))
++                        } else {
++                            div().m_3().flex().flex_1().min_w_0().min_h_0().child(panel(
++                                "Text Diff",
++                                "persistent session",
++                                div().flex().flex_1().min_h_0().child(self.text_diff.clone()),
++                            ))
++                        },
++                    ),
++            )
++            .child(
++                div()
++                    .flex()
++                    .justify_end()
++                    .px_4()
++                    .py_3()
++                    .border_t_1()
++                    .border_color(tokens.border())
++                    .child(
++                        Button::new("Open Utility Launcher")
++                            .focus_handle(self.launcher_focus.clone())
++                            .on_click(view_click(cx, |this, window, cx| {
++                                this.show_launcher(window, cx);
++                            })),
++                    ),
++            )
++            .when_some(self.shortcut_error.as_ref(), |this, error| {
++                this.child(
++                    div()
++                        .px_4()
++                        .py_2()
++                        .text_xs()
++                        .text_color(tokens.danger())
++                        .child(format!("Launcher: {error}")),
++                )
++            })
++    }
++}
+--- /dev/null
++++ b/rust/crates/app/src/launcher.rs
+@@ -0,0 +1,232 @@
++//! A transient, nonactivating Utility Launcher window.
++
++use gpui::prelude::*;
++use gpui::{
++    div, point, px, size, AnyWindowHandle, App, Context, DisplayId, IntoElement, Render, Window,
++    WindowBounds, WindowKind, WindowOptions,
++};
++use sofdevtool_ui::{mount, view_click, Button, LabeledField, TextField, ThemeTokens};
++
++use crate::registry::{OpenUtility, UtilityId, UtilityRegistry};
++use crate::workbench::Workbench;
++
++gpui::actions!(
++    launcher_actions,
++    [DismissLauncher, SelectPrevious, SelectNext, OpenSelection]
++);
++
++/// Registers Launcher-only dismissal handling. The action is scoped to the
++/// popup view, so Escape does not alter Workbench text editing.
++pub fn init(cx: &mut App) {
++    cx.bind_keys([
++        gpui::KeyBinding::new("escape", DismissLauncher, Some("SofDevToolLauncher")),
++        gpui::KeyBinding::new("up", SelectPrevious, Some("SofDevToolLauncher")),
++        gpui::KeyBinding::new("down", SelectNext, Some("SofDevToolLauncher")),
++        gpui::KeyBinding::new("enter", OpenSelection, Some("SofDevToolLauncher")),
++    ]);
++}
++
++/// Opens a native GPUI popup rather than an in-window palette. `focus: false`
++/// keeps the current application active when the global shortcut invokes it.
++pub fn show(
++    registry: UtilityRegistry,
++    main_window: AnyWindowHandle,
++    workbench: gpui::WeakEntity<Workbench>,
++    cx: &mut App,
++) -> Option<AnyWindowHandle> {
++    let display_id = active_display(cx);
++    let options = WindowOptions {
++        window_bounds: Some(WindowBounds::Windowed(gpui::Bounds::centered(
++            display_id,
++            size(px(580.), px(430.)),
++            cx,
++        ))),
++        display_id,
++        focus: false,
++        kind: WindowKind::PopUp,
++        is_resizable: false,
++        is_minimizable: false,
++        titlebar: None,
++        ..Default::default()
++    };
++    cx.open_window(options, move |window, cx| {
++        let dismiss_workbench = workbench.clone();
++        window.on_window_should_close(cx, move |_window, cx| {
++            let _ =
++                dismiss_workbench.update(cx, |workbench, cx| workbench.launcher_did_dismiss(cx));
++            true
++        });
++        let view = cx.new(|cx| LauncherView::new(window, cx, registry, main_window, workbench));
++        let focus_view = view.clone();
++        let root = mount(view, window, cx);
++        crate::native_window::show_nonactivating(window);
++        // The component Root installs the input registry when it is mounted.
++        // Focusing before that boundary exists aborts in GPUI's macOS event
++        // bridge, so request focus on the next application turn.
++        window.defer(cx, move |window, cx| {
++            focus_view.update(cx, |view, cx| view.focus_search(window, cx));
++        });
++        root
++    })
++    .ok()
++    .map(Into::into)
++}
++
++fn active_display(cx: &App) -> Option<DisplayId> {
++    let (x, y) = crate::native_window::mouse_location()?;
++    let location = point(px(x), px(y));
++    cx.displays()
++        .into_iter()
++        .find(|display| display.bounds().contains(&location))
++        .map(|display| display.id())
++}
++
++pub struct LauncherView {
++    registry: UtilityRegistry,
++    search: TextField,
++    selected: Option<UtilityId>,
++    main_window: AnyWindowHandle,
++    workbench: gpui::WeakEntity<Workbench>,
++    _search_subscription: gpui::Subscription,
++}
++
++impl LauncherView {
++    fn new(
++        window: &mut Window,
++        cx: &mut Context<Self>,
++        registry: UtilityRegistry,
++        main_window: AnyWindowHandle,
++        workbench: gpui::WeakEntity<Workbench>,
++    ) -> Self {
++        let search = TextField::new(window, cx);
++        let selected = registry.search("").first().copied();
++        let search_subscription = search.on_change_in(window, cx, |this, _window, cx| {
++            this.selected = this.results(cx).first().copied();
++            cx.notify();
++        });
++        Self {
++            registry,
++            search,
++            selected,
++            main_window,
++            workbench,
++            _search_subscription: search_subscription,
++        }
++    }
++
++    fn results(&self, cx: &App) -> Vec<UtilityId> {
++        self.registry.search(&self.search.text(cx))
++    }
++
++    fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
++        self.search.focus(window, cx);
++    }
++
++    fn open(&mut self, id: UtilityId, window: &mut Window, cx: &mut Context<Self>) {
++        if self
++            .workbench
++            .update(cx, |workbench, cx| workbench.open(OpenUtility(id), cx))
++            .unwrap_or(false)
++        {
++            let main_window = self.main_window;
++            let _ = main_window.update(cx, |_, window, _| window.activate_window());
++        }
++        self.dismiss(window, cx);
++    }
++
++    fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
++        let _ = self
++            .workbench
++            .update(cx, |workbench, cx| workbench.launcher_did_dismiss(cx));
++        window.remove_window();
++    }
++
++    fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
++        let results = self.results(cx);
++        if results.is_empty() {
++            self.selected = None;
++        } else {
++            let index = self
++                .selected
++                .and_then(|selected| results.iter().position(|id| *id == selected))
++                .unwrap_or(0) as isize;
++            let next = (index + delta).rem_euclid(results.len() as isize) as usize;
++            self.selected = Some(results[next]);
++        }
++        cx.notify();
++    }
++
++    fn dismiss_action(&mut self, _: &DismissLauncher, window: &mut Window, cx: &mut Context<Self>) {
++        self.dismiss(window, cx);
++    }
++
++    fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
++        self.move_selection(-1, cx);
++    }
++
++    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
++        self.move_selection(1, cx);
++    }
++
++    fn open_selection(&mut self, _: &OpenSelection, window: &mut Window, cx: &mut Context<Self>) {
++        if let Some(id) = self.selected {
++            self.open(id, window, cx);
++        }
++    }
++}
++
++impl Render for LauncherView {
++    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++        let tokens = ThemeTokens::graphite();
++        let results = self.results(cx);
++        let mut list = div().flex().flex_col().gap_2().flex_1().min_h_0();
++        for id in results {
++            let definition = self
++                .registry
++                .definition(id)
++                .expect("searched definition exists");
++            let selected = self.selected == Some(id);
++            list = list.child(
++                Button::new(definition.name)
++                    .variant(if selected {
++                        sofdevtool_ui::ButtonVariant::Primary
++                    } else {
++                        sofdevtool_ui::ButtonVariant::Secondary
++                    })
++                    .on_click(view_click(cx, move |this, window, cx| {
++                        this.open(id, window, cx);
++                    })),
++            );
++        }
++        div()
++            .flex()
++            .flex_col()
++            .size_full()
++            .key_context("SofDevToolLauncher")
++            .on_action(cx.listener(Self::dismiss_action))
++            .on_action(cx.listener(Self::select_previous))
++            .on_action(cx.listener(Self::select_next))
++            .on_action(cx.listener(Self::open_selection))
++            .p_5()
++            .gap_4()
++            .bg(tokens.surface())
++            .text_color(tokens.text())
++            .child(
++                div()
++                    .text_lg()
++                    .font_weight(gpui::FontWeight::SEMIBOLD)
++                    .child("Find a Utility"),
++            )
++            .child(LabeledField::new(
++                "Search",
++                self.search.render("launcher.search"),
++            ))
++            .child(list)
++            .child(
++                div()
++                    .text_xs()
++                    .text_color(tokens.text_muted())
++                    .child("Escape dismisses this launcher. Selection opens the Workbench."),
++            )
++    }
++}
+--- /dev/null
++++ b/rust/crates/app/src/native_window.rs
+@@ -0,0 +1,88 @@
++//! Narrow AppKit operations that GPUI does not expose as public window APIs.
++//!
++//! GPUI owns the lifetime of the native view. These functions borrow its
++//! AppKit view only for the duration of the call and never retain it.
++
++#![allow(unexpected_cfgs)] // objc 0.2's selector macro probes cargo-clippy.
++
++#[cfg(target_os = "macos")]
++use gpui::Window;
++
++/// Keeps the GPUI window and any child native views alive while hiding the
++/// Workbench. Recreating its root would attach an existing WKWebView to a
++/// different NSWindow, which is not a supported Wry lifecycle.
++#[cfg(target_os = "macos")]
++pub fn hide(window: &Window) {
++    with_ns_window(window, |native| unsafe {
++        use objc::{msg_send, sel, sel_impl};
++        let nil = std::ptr::null_mut::<objc::runtime::Object>();
++        let _: () = msg_send![native, orderOut: nil];
++    });
++}
++
++/// Restores the retained native Workbench window without remounting its root.
++#[cfg(target_os = "macos")]
++pub fn show(window: &Window) {
++    with_ns_window(window, |native| unsafe {
++        use objc::{msg_send, sel, sel_impl};
++        let nil = std::ptr::null_mut::<objc::runtime::Object>();
++        let _: () = msg_send![native, makeKeyAndOrderFront: nil];
++    });
++}
++
++/// Orders a nonactivating Launcher panel above the current application without
++/// bringing the Workbench forward. GPUI's `focus: false` creates the correct
++/// panel class; AppKit still needs this explicit order operation for a popup
++/// created while another application owns the key window.
++#[cfg(target_os = "macos")]
++pub fn show_nonactivating(window: &Window) {
++    with_ns_window(window, |native| unsafe {
++        use objc::{msg_send, sel, sel_impl};
++        let _: () = msg_send![native, orderFrontRegardless];
++    });
++}
++
++#[cfg(not(target_os = "macos"))]
++pub fn show_nonactivating(_window: &gpui::Window) {}
++
++#[cfg(target_os = "macos")]
++fn with_ns_window(window: &Window, operation: impl FnOnce(*mut objc::runtime::Object)) {
++    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
++
++    let Ok(handle) = HasWindowHandle::window_handle(window) else {
++        return;
++    };
++    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
++        return;
++    };
++    unsafe {
++        use objc::{msg_send, sel, sel_impl};
++        let view = handle.ns_view.as_ptr().cast::<objc::runtime::Object>();
++        let native: *mut objc::runtime::Object = msg_send![view, window];
++        if !native.is_null() {
++            operation(native);
++        }
++    }
++}
++
++#[cfg(not(target_os = "macos"))]
++pub fn hide(_window: &gpui::Window) {}
++
++#[cfg(not(target_os = "macos"))]
++pub fn show(_window: &gpui::Window) {}
++
++/// The current cursor location in AppKit's global display coordinate space.
++/// It is sampled only while placing the transient Launcher and is never
++/// retained or monitored.
++#[cfg(target_os = "macos")]
++pub fn mouse_location() -> Option<(f32, f32)> {
++    use objc2_app_kit::NSEvent;
++
++    let point = unsafe { NSEvent::mouseLocation() };
++    Some((point.x as f32, point.y as f32))
++}
++
++#[cfg(not(target_os = "macos"))]
++pub fn mouse_location() -> Option<(f32, f32)> {
++    None
++}
+--- /dev/null
++++ b/rust/crates/app/src/preferences.rs
+@@ -0,0 +1,205 @@
++//! Fresh Rust-only persistence for application preferences.
++//!
++//! This module deliberately stores only the Launcher chord under the Rust
++//! Application Support namespace. It neither reads nor names Swift preference
++//! files or domains.
++
++use std::fmt;
++use std::fs;
++use std::io;
++use std::path::{Path, PathBuf};
++
++use serde::{Deserialize, Serialize};
++
++use crate::identity;
++use crate::shortcut::Shortcut;
++
++const SHORTCUT_FILE: &str = "launcher-shortcut.v1.json";
++const SHORTCUT_SCHEMA_VERSION: u8 = 1;
++
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct ShortcutPreferences {
++    root: PathBuf,
++}
++
++impl ShortcutPreferences {
++    /// Uses the fresh Rust Application Support namespace. A missing home
++    /// directory is represented as a diagnostic rather than silently falling
++    /// back to any Swift location.
++    pub fn application_support() -> Result<Self, PreferenceError> {
++        identity::application_support_root()
++            .map(Self::new)
++            .ok_or(PreferenceError::UnavailableRoot)
++    }
++
++    /// Test and composition seam for a caller-owned Rust-only directory.
++    pub fn new(root: PathBuf) -> Self {
++        Self { root }
++    }
++
++    pub fn root(&self) -> &Path {
++        &self.root
++    }
++
++    pub fn load_for_startup(&self) -> StartupShortcut {
++        match self.load() {
++            Ok(shortcut) => StartupShortcut {
++                shortcut,
++                diagnostic: None,
++            },
++            Err(error) => StartupShortcut {
++                shortcut: None,
++                diagnostic: Some(format!(
++                    "Launcher shortcut preference could not be loaded; using the default for this launch. {error}"
++                )),
++            },
++        }
++    }
++
++    pub fn load(&self) -> Result<Option<Shortcut>, PreferenceError> {
++        let path = self.path();
++        let contents = match fs::read_to_string(&path) {
++            Ok(contents) => contents,
++            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
++            Err(error) => return Err(PreferenceError::Read(error)),
++        };
++        let record: ShortcutRecord =
++            serde_json::from_str(&contents).map_err(PreferenceError::Decode)?;
++        if record.version != SHORTCUT_SCHEMA_VERSION {
++            return Err(PreferenceError::UnsupportedVersion(record.version));
++        }
++        let shortcut = Shortcut::new(record.key_code, record.modifiers, record.display_name);
++        shortcut
++            .validate()
++            .map_err(PreferenceError::InvalidShortcut)?;
++        Ok(Some(shortcut))
++    }
++
++    /// Persists after a successful native registration. Replacement happens
++    /// atomically in the same directory, leaving a prior valid preference in
++    /// place when serialization or writing fails.
++    pub fn save(&self, shortcut: &Shortcut) -> Result<(), PreferenceError> {
++        shortcut
++            .validate()
++            .map_err(PreferenceError::InvalidShortcut)?;
++        fs::create_dir_all(&self.root).map_err(PreferenceError::CreateDirectory)?;
++        let record = ShortcutRecord {
++            version: SHORTCUT_SCHEMA_VERSION,
++            key_code: shortcut.key_code,
++            modifiers: shortcut.modifiers,
++            display_name: shortcut.display_name.clone(),
++        };
++        let serialized = serde_json::to_vec_pretty(&record).map_err(PreferenceError::Encode)?;
++        let path = self.path();
++        let temporary = self
++            .root
++            .join(format!(".{SHORTCUT_FILE}.{}.tmp", std::process::id()));
++        fs::write(&temporary, serialized).map_err(PreferenceError::Write)?;
++        fs::rename(&temporary, &path).map_err(PreferenceError::Replace)
++    }
++
++    fn path(&self) -> PathBuf {
++        self.root.join(SHORTCUT_FILE)
++    }
++}
++
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct StartupShortcut {
++    pub shortcut: Option<Shortcut>,
++    pub diagnostic: Option<String>,
++}
++
++#[derive(Debug)]
++pub enum PreferenceError {
++    UnavailableRoot,
++    Read(io::Error),
++    Decode(serde_json::Error),
++    UnsupportedVersion(u8),
++    InvalidShortcut(crate::shortcut::ShortcutError),
++    CreateDirectory(io::Error),
++    Encode(serde_json::Error),
++    Write(io::Error),
++    Replace(io::Error),
++}
++
++impl fmt::Display for PreferenceError {
++    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
++        match self {
++            Self::UnavailableRoot => write!(
++                formatter,
++                "the Rust Application Support directory is unavailable"
++            ),
++            Self::Read(error) => write!(formatter, "could not read it: {error}"),
++            Self::Decode(error) => {
++                write!(formatter, "it is not valid Rust preference data: {error}")
++            }
++            Self::UnsupportedVersion(version) => {
++                write!(formatter, "it uses unsupported schema version {version}")
++            }
++            Self::InvalidShortcut(error) => {
++                write!(formatter, "it contains an invalid shortcut: {error}")
++            }
++            Self::CreateDirectory(error) => {
++                write!(formatter, "could not create its directory: {error}")
++            }
++            Self::Encode(error) => write!(formatter, "could not encode it: {error}"),
++            Self::Write(error) => write!(formatter, "could not write it: {error}"),
++            Self::Replace(error) => write!(formatter, "could not replace it: {error}"),
++        }
++    }
++}
++
++impl std::error::Error for PreferenceError {}
++
++#[derive(Deserialize, Serialize)]
++struct ShortcutRecord {
++    version: u8,
++    key_code: u32,
++    modifiers: u32,
++    display_name: String,
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::shortcut::{CONTROL, OPTION};
++
++    fn temporary_preferences(name: &str) -> ShortcutPreferences {
++        let root = std::env::temp_dir().join(format!(
++            "sofdevtool-rust-preferences-{name}-{}-{}",
++            std::process::id(),
++            std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .expect("clock after epoch")
++                .as_nanos()
++        ));
++        ShortcutPreferences::new(root)
++    }
++
++    #[test]
++    fn a_saved_rust_shortcut_reloads_from_the_same_fresh_namespace() {
++        let preferences = temporary_preferences("reload");
++        let shortcut = Shortcut::new(0, CONTROL | OPTION, "⌃⌥A");
++
++        preferences.save(&shortcut).expect("save shortcut");
++
++        assert_eq!(preferences.load().expect("load shortcut"), Some(shortcut));
++        fs::remove_dir_all(preferences.root()).expect("remove test directory");
++    }
++
++    #[test]
++    fn malformed_data_becomes_a_startup_diagnostic_and_never_a_shortcut() {
++        let preferences = temporary_preferences("malformed");
++        fs::create_dir_all(preferences.root()).expect("create test directory");
++        fs::write(preferences.path(), "not json").expect("write malformed data");
++
++        let loaded = preferences.load_for_startup();
++
++        assert_eq!(loaded.shortcut, None);
++        assert!(loaded
++            .diagnostic
++            .expect("diagnostic")
++            .contains("could not be loaded"));
++        fs::remove_dir_all(preferences.root()).expect("remove test directory");
++    }
++}
+--- /dev/null
++++ b/rust/crates/app/src/registry.rs
+@@ -0,0 +1,138 @@
++//! The source-defined Utility catalog shared by the Workbench and Launcher.
++
++/// The stable identity of a source-defined Utility.
++///
++/// This stays deliberately narrow while only JSON is integrated. `TextDiff`
++/// is reserved for ticket 02's concrete workspace; it never appears in the
++/// catalog until that workspace is available.
++#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
++pub enum UtilityId {
++    Json,
++    TextDiff,
++}
++
++/// A request from a discovery surface to reveal one registered Utility.
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub struct OpenUtility(pub UtilityId);
++
++/// Immutable discovery metadata. Construction of the concrete workspace stays
++/// in the Workbench so each Utility retains its strong concrete type.
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub struct UtilityDefinition {
++    pub id: UtilityId,
++    pub name: &'static str,
++    pub summary: &'static str,
++    pub category: &'static str,
++    pub aliases: &'static [&'static str],
++}
++
++impl UtilityDefinition {
++    pub const fn json() -> Self {
++        Self {
++            id: UtilityId::Json,
++            name: "JSON",
++            summary: "Format, minify, validate, and query JSON",
++            category: "Format & Convert",
++            aliases: &["format", "validate", "minify", "query"],
++        }
++    }
++
++    pub const fn text_diff() -> Self {
++        Self {
++            id: UtilityId::TextDiff,
++            name: "Text Diff",
++            summary: "Compare text with split or unified output",
++            category: "Text",
++            aliases: &["diff", "compare", "patch"],
++        }
++    }
++}
++
++/// The authoritative, source-defined Utility catalog.
++#[derive(Clone, Debug)]
++pub struct UtilityRegistry {
++    definitions: Vec<UtilityDefinition>,
++}
++
++impl UtilityRegistry {
++    pub fn initial() -> Self {
++        Self {
++            definitions: vec![UtilityDefinition::json(), UtilityDefinition::text_diff()],
++        }
++    }
++
++    pub fn definitions(&self) -> &[UtilityDefinition] {
++        &self.definitions
++    }
++
++    pub fn definition(&self, id: UtilityId) -> Option<UtilityDefinition> {
++        self.definitions
++            .iter()
++            .copied()
++            .find(|definition| definition.id == id)
++    }
++
++    pub fn search(&self, query: &str) -> Vec<UtilityId> {
++        let terms: Vec<_> = query
++            .split_whitespace()
++            .map(str::to_ascii_lowercase)
++            .collect();
++        self.definitions
++            .iter()
++            .filter(|definition| {
++                let haystack = format!(
++                    "{} {} {} {}",
++                    definition.name,
++                    definition.summary,
++                    definition.category,
++                    definition.aliases.join(" ")
++                )
++                .to_ascii_lowercase();
++                terms.iter().all(|term| haystack.contains(term))
++            })
++            .map(|definition| definition.id)
++            .collect()
++    }
++
++    pub fn open(&self, id: UtilityId, selected: &mut UtilityId) -> bool {
++        if self.definition(id).is_none() {
++            return false;
++        }
++        *selected = id;
++        true
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn concrete_json_and_text_diff_workspaces_are_discoverable() {
++        let registry = UtilityRegistry::initial();
++
++        assert_eq!(
++            registry.definitions(),
++            &[UtilityDefinition::json(), UtilityDefinition::text_diff()]
++        );
++    }
++
++    #[test]
++    fn search_matches_name_summary_and_aliases_using_all_terms() {
++        let registry = UtilityRegistry::initial();
++
++        assert_eq!(registry.search("format json"), vec![UtilityId::Json]);
++        assert_eq!(registry.search("validate"), vec![UtilityId::Json]);
++        assert_eq!(registry.search("compare text"), vec![UtilityId::TextDiff]);
++        assert!(registry.search("random json").is_empty());
++    }
++
++    #[test]
++    fn opening_an_unknown_utility_is_rejected_without_changing_selection() {
++        let registry = UtilityRegistry::initial();
++        let mut selection = UtilityId::Json;
++
++        assert!(registry.open(UtilityId::TextDiff, &mut selection));
++        assert_eq!(selection, UtilityId::TextDiff);
++    }
++}
+--- /dev/null
++++ b/rust/crates/app/src/settings.rs
+@@ -0,0 +1,333 @@
++//! Separate Settings surface for Launcher shortcut configuration.
++
++use gpui::prelude::*;
++use gpui::{
++    div, px, size, Context, FocusHandle, IntoElement, KeyDownEvent, Render, Window, WindowBounds,
++    WindowKind, WindowOptions,
++};
++use sofdevtool_ui::{mount, view_click, Button, ThemeTokens};
++
++use crate::preferences::ShortcutPreferences;
++use crate::shortcut::{Shortcut, COMMAND, CONTROL, OPTION, SHIFT};
++use crate::workbench::Workbench;
++
++/// Opens a focused, separate Settings window. The Workbench keeps ownership of
++/// the operating-system registration; this view can only request a change.
++pub fn show(
++    workbench: gpui::WeakEntity<Workbench>,
++    preferences: ShortcutPreferences,
++    current_shortcut: Shortcut,
++    cx: &mut gpui::App,
++) {
++    let options = WindowOptions {
++        window_bounds: Some(WindowBounds::centered(size(px(460.), px(260.)), cx)),
++        focus: true,
++        kind: WindowKind::Normal,
++        is_resizable: false,
++        titlebar: Some(gpui::TitlebarOptions {
++            title: Some("Developer Toolbox Settings".into()),
++            ..Default::default()
++        }),
++        ..Default::default()
++    };
++    let _ = cx.open_window(options, move |window, cx| {
++        let view =
++            cx.new(|cx| SettingsView::new(window, cx, workbench, preferences, current_shortcut));
++        mount(view, window, cx)
++    });
++}
++
++pub struct SettingsView {
++    workbench: gpui::WeakEntity<Workbench>,
++    preferences: ShortcutPreferences,
++    active_shortcut: Shortcut,
++    capturing: bool,
++    diagnostic: Option<String>,
++    capture_focus: FocusHandle,
++    capture_button_focus: FocusHandle,
++}
++
++impl SettingsView {
++    fn new(
++        _window: &mut Window,
++        cx: &mut Context<Self>,
++        workbench: gpui::WeakEntity<Workbench>,
++        preferences: ShortcutPreferences,
++        active_shortcut: Shortcut,
++    ) -> Self {
++        Self {
++            workbench,
++            preferences,
++            active_shortcut,
++            capturing: false,
++            diagnostic: None,
++            capture_focus: cx.focus_handle().tab_stop(true).tab_index(0),
++            capture_button_focus: cx.focus_handle().tab_stop(true).tab_index(1),
++        }
++    }
++
++    fn begin_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
++        self.capturing = true;
++        self.diagnostic = None;
++        self.capture_focus.focus(window, cx);
++        cx.notify();
++    }
++
++    fn receive_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
++        if !self.capturing {
++            return;
++        }
++        match ShortcutCapture::record(
++            native_key_code(),
++            &event.keystroke.key,
++            carbon_modifiers(&event.keystroke.modifiers),
++        ) {
++            CaptureResult::IgnoredModifier => {}
++            CaptureResult::Cancelled => {
++                self.capturing = false;
++                self.diagnostic = None;
++                cx.notify();
++            }
++            CaptureResult::Invalid(diagnostic) => {
++                self.diagnostic = Some(diagnostic);
++                cx.notify();
++            }
++            CaptureResult::Captured(candidate) => self.apply(candidate, cx),
++        }
++        cx.stop_propagation();
++    }
++
++    fn apply(&mut self, candidate: Shortcut, cx: &mut Context<Self>) {
++        if candidate.is_same_chord(&self.active_shortcut) {
++            self.capturing = false;
++            self.diagnostic = None;
++            cx.notify();
++            return;
++        }
++        let Some(current) = self
++            .workbench
++            .update(cx, |workbench, cx| {
++                workbench.configure_shortcut(candidate.clone(), cx);
++                workbench.current_shortcut()
++            })
++            .ok()
++        else {
++            self.capturing = false;
++            self.diagnostic =
++                Some("The Workbench is no longer available; the shortcut was not changed.".into());
++            cx.notify();
++            return;
++        };
++        if !current.is_same_chord(&candidate) {
++            self.capturing = false;
++            self.diagnostic = Some(
++                "That shortcut could not be registered. The previous shortcut remains active."
++                    .into(),
++            );
++            cx.notify();
++            return;
++        }
++        match self.preferences.save(&current) {
++            Ok(()) => {
++                self.active_shortcut = current;
++                self.diagnostic = None;
++            }
++            Err(error) => {
++                self.active_shortcut = current;
++                self.diagnostic = Some(format!(
++                    "Shortcut is active for this launch but could not be saved: {error}"
++                ));
++            }
++        }
++        self.capturing = false;
++        cx.notify();
++    }
++}
++
++impl Render for SettingsView {
++    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++        let tokens = ThemeTokens::graphite();
++        let capture_text = if self.capturing {
++            "Press a shortcut now (Escape cancels)"
++        } else {
++            &self.active_shortcut.display_name
++        };
++        div()
++            .size_full()
++            .flex()
++            .flex_col()
++            .gap_4()
++            .p_5()
++            .bg(tokens.background())
++            .text_color(tokens.text())
++            .track_focus(&self.capture_focus)
++            .capture_key_down(
++                cx.listener(|this, event, window, cx| this.receive_key(event, window, cx)),
++            )
++            .child(
++                div()
++                    .text_lg()
++                    .font_weight(gpui::FontWeight::SEMIBOLD)
++                    .child("Launcher shortcut"),
++            )
++            .child(
++                div()
++                    .text_sm()
++                    .text_color(tokens.text_muted())
++                    .child(capture_text.to_string()),
++            )
++            .child(
++                div()
++                    .text_xs()
++                    .text_color(tokens.text_muted())
++                    .child("Use Command, Control, or Option with a non-modifier key."),
++            )
++            .child(
++                Button::new("Capture shortcut")
++                    .focus_handle(self.capture_button_focus.clone())
++                    .on_click(view_click(cx, |this, window, cx| {
++                        this.begin_capture(window, cx)
++                    })),
++            )
++            .when_some(self.diagnostic.as_ref(), |this, diagnostic| {
++                this.child(
++                    div()
++                        .text_xs()
++                        .text_color(tokens.danger())
++                        .child(diagnostic.clone()),
++                )
++            })
++    }
++}
++
++#[derive(Clone, Debug, Eq, PartialEq)]
++enum CaptureResult {
++    IgnoredModifier,
++    Cancelled,
++    Invalid(String),
++    Captured(Shortcut),
++}
++
++struct ShortcutCapture;
++
++impl ShortcutCapture {
++    /// Converts the focused native GPUI key event to the Carbon virtual-key
++    /// code the global registrar requires. Modifier-only events have no key
++    /// code and therefore cannot accidentally replace the active chord.
++    fn record(key_code: Option<u32>, displayed_key: &str, modifiers: u32) -> CaptureResult {
++        let Some(key_code) = key_code else {
++            return CaptureResult::Invalid(
++                "macOS did not provide a physical key code. Try capturing the shortcut again."
++                    .into(),
++            );
++        };
++        if key_code == 53 {
++            return CaptureResult::Cancelled;
++        }
++        if matches!(key_code, 54..=63) {
++            return CaptureResult::IgnoredModifier;
++        }
++        let label = display_name(displayed_key, modifiers);
++        let shortcut = Shortcut::new(key_code, modifiers, label);
++        match shortcut.validate() {
++            Ok(()) => CaptureResult::Captured(shortcut),
++            Err(error) => CaptureResult::Invalid(error.to_string()),
++        }
++    }
++}
++
++#[cfg(target_os = "macos")]
++fn native_key_code() -> Option<u32> {
++    use objc2_app_kit::NSApplication;
++    use objc2_foundation::MainThreadMarker;
++
++    let marker = MainThreadMarker::new()?;
++    let event = NSApplication::sharedApplication(marker).currentEvent()?;
++    Some(unsafe { event.keyCode() as u32 })
++}
++
++#[cfg(not(target_os = "macos"))]
++fn native_key_code() -> Option<u32> {
++    None
++}
++
++fn carbon_modifiers(modifiers: &gpui::Modifiers) -> u32 {
++    let mut carbon = 0;
++    if modifiers.shift {
++        carbon |= SHIFT;
++    }
++    if modifiers.control {
++        carbon |= CONTROL;
++    }
++    if modifiers.alt {
++        carbon |= OPTION;
++    }
++    if modifiers.platform {
++        carbon |= COMMAND;
++    }
++    carbon
++}
++
++fn display_name(key: &str, modifiers: u32) -> String {
++    let mut label = String::new();
++    if modifiers & CONTROL != 0 {
++        label.push('⌃');
++    }
++    if modifiers & OPTION != 0 {
++        label.push('⌥');
++    }
++    if modifiers & SHIFT != 0 {
++        label.push('⇧');
++    }
++    if modifiers & COMMAND != 0 {
++        label.push('⌘');
++    }
++    label.push_str(match key.to_ascii_lowercase().as_str() {
++        "space" => "Space",
++        "return" | "enter" => "Return",
++        "delete" | "backspace" => "Delete",
++        key => key,
++    });
++    label
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn recorder_maps_a_real_chord_to_its_carbon_key_code() {
++        assert_eq!(
++            ShortcutCapture::record(Some(49), "space", CONTROL | OPTION),
++            CaptureResult::Captured(Shortcut::new(49, CONTROL | OPTION, "⌃⌥Space"))
++        );
++    }
++
++    #[test]
++    fn recorder_ignores_pure_modifiers_and_cancels_with_escape() {
++        assert_eq!(
++            ShortcutCapture::record(Some(56), "shift", SHIFT),
++            CaptureResult::IgnoredModifier
++        );
++        assert_eq!(
++            ShortcutCapture::record(Some(53), "escape", CONTROL),
++            CaptureResult::Cancelled
++        );
++    }
++
++    #[test]
++    fn recorder_requires_a_primary_modifier() {
++        assert_eq!(
++            ShortcutCapture::record(Some(0), "a", SHIFT),
++            CaptureResult::Invalid("Use Command, Control, or Option with another key.".into())
++        );
++    }
++
++    #[test]
++    fn recorder_preserves_the_physical_forward_delete_code() {
++        assert_eq!(
++            ShortcutCapture::record(Some(117), "delete", CONTROL),
++            CaptureResult::Captured(Shortcut::new(117, CONTROL, "⌃Delete"))
++        );
++    }
++}
+--- /dev/null
++++ b/rust/crates/app/src/shortcut.rs
+@@ -0,0 +1,358 @@
++//! App-owned global-shortcut registration boundary.
++
++/// Carbon modifier masks used by `RegisterEventHotKey`.
++pub const SHIFT: u32 = 1 << 9;
++pub const CONTROL: u32 = 1 << 12;
++pub const OPTION: u32 = 1 << 11;
++pub const COMMAND: u32 = 1 << 8;
++
++/// A user-visible shortcut and its native key representation.
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct Shortcut {
++    pub key_code: u32,
++    pub modifiers: u32,
++    pub display_name: String,
++}
++
++impl Shortcut {
++    pub fn new(key_code: u32, modifiers: u32, display_name: impl Into<String>) -> Self {
++        Self {
++            key_code,
++            modifiers,
++            display_name: display_name.into(),
++        }
++    }
++
++    pub fn launcher_default() -> Self {
++        // kVK_Space, controlKey | optionKey.
++        Self::new(49, CONTROL | OPTION, "⌃⌥Space")
++    }
++
++    pub fn validate(&self) -> Result<(), ShortcutError> {
++        // kVK values for left/right command, option, control, shift, caps
++        // lock, and function. A modifier cannot form a launcher chord alone.
++        if matches!(self.key_code, 54..=63) || self.modifiers & (CONTROL | OPTION | COMMAND) == 0 {
++            return Err(ShortcutError::InvalidConfiguration);
++        }
++        Ok(())
++    }
++
++    pub fn is_same_chord(&self, other: &Self) -> bool {
++        self.key_code == other.key_code && self.modifiers == other.modifiers
++    }
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub enum ShortcutError {
++    InvalidConfiguration,
++    Unavailable,
++}
++
++impl std::fmt::Display for ShortcutError {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            Self::InvalidConfiguration => {
++                write!(f, "Use Command, Control, or Option with another key.")
++            }
++            Self::Unavailable => write!(
++                f,
++                "That shortcut could not be registered. The previous shortcut remains active."
++            ),
++        }
++    }
++}
++
++/// Owns one operating-system shortcut registration.
++pub trait RegisteredShortcut: 'static {}
++
++/// Allows tests to simulate registration failure without pretending it is a
++/// native behavior test.
++pub trait ShortcutRegistrar: 'static {
++    fn register(
++        &mut self,
++        shortcut: Shortcut,
++    ) -> Result<Box<dyn RegisteredShortcut>, ShortcutError>;
++}
++
++/// Updates the native registration transactionally: a failed candidate cannot
++/// disturb the active shortcut.
++pub struct ShortcutController<R: ShortcutRegistrar> {
++    registrar: R,
++    active: Option<Box<dyn RegisteredShortcut>>,
++    shortcut: Shortcut,
++}
++
++impl<R: ShortcutRegistrar> ShortcutController<R> {
++    pub fn new(registrar: R) -> Self {
++        Self {
++            registrar,
++            active: None,
++            shortcut: Shortcut::launcher_default(),
++        }
++    }
++
++    pub fn register(&mut self, candidate: Shortcut) -> Result<(), ShortcutError> {
++        candidate.validate()?;
++        if self.active.is_some()
++            && candidate.key_code == self.shortcut.key_code
++            && candidate.modifiers == self.shortcut.modifiers
++        {
++            self.shortcut = candidate;
++            return Ok(());
++        }
++        let registered = self.registrar.register(candidate.clone())?;
++        self.active = Some(registered);
++        self.shortcut = candidate;
++        Ok(())
++    }
++
++    pub fn shortcut(&self) -> Shortcut {
++        self.shortcut.clone()
++    }
++
++    pub fn is_registered(&self) -> bool {
++        self.active.is_some()
++    }
++
++    pub fn registrar_mut(&mut self) -> &mut R {
++        &mut self.registrar
++    }
++}
++
++/// Production Carbon registration. Carbon delivers hot keys while another
++/// application is active, unlike a GPUI key binding confined to this window.
++#[cfg(target_os = "macos")]
++pub mod macos {
++    use std::ffi::c_void;
++    use std::sync::{Arc, Mutex, OnceLock};
++
++    use super::{RegisteredShortcut, Shortcut, ShortcutError, ShortcutRegistrar};
++
++    type OsStatus = i32;
++    type EventTargetRef = *mut c_void;
++    type EventHandlerRef = *mut c_void;
++    type EventHotKeyRef = *mut c_void;
++    type EventHandlerCallRef = *mut c_void;
++    type EventRef = *mut c_void;
++
++    #[repr(C)]
++    struct EventTypeSpec {
++        event_class: u32,
++        event_kind: u32,
++    }
++
++    #[repr(C)]
++    struct EventHotKeyId {
++        signature: u32,
++        id: u32,
++    }
++
++    type EventHandler =
++        unsafe extern "C" fn(EventHandlerCallRef, EventRef, *mut c_void) -> OsStatus;
++
++    #[link(name = "Carbon", kind = "framework")]
++    unsafe extern "C" {
++        fn GetApplicationEventTarget() -> EventTargetRef;
++        fn InstallEventHandler(
++            target: EventTargetRef,
++            handler: EventHandler,
++            number_of_types: u32,
++            event_types: *const EventTypeSpec,
++            user_data: *mut c_void,
++            out_ref: *mut EventHandlerRef,
++        ) -> OsStatus;
++        fn RegisterEventHotKey(
++            key_code: u32,
++            modifiers: u32,
++            hot_key_id: EventHotKeyId,
++            target: EventTargetRef,
++            options: u32,
++            out_ref: *mut EventHotKeyRef,
++        ) -> OsStatus;
++        fn UnregisterEventHotKey(hot_key: EventHotKeyRef) -> OsStatus;
++    }
++
++    type HotKeyCallback = Arc<dyn Fn() + Send + Sync>;
++    static CALLBACK: OnceLock<Mutex<Option<HotKeyCallback>>> = OnceLock::new();
++    static HANDLER: OnceLock<()> = OnceLock::new();
++
++    unsafe extern "C" fn hot_key_pressed(
++        _call: EventHandlerCallRef,
++        _event: EventRef,
++        _user_data: *mut c_void,
++    ) -> OsStatus {
++        if let Some(callback) = CALLBACK
++            .get()
++            .and_then(|callback| callback.lock().ok())
++            .and_then(|callback| callback.as_ref().cloned())
++        {
++            callback();
++        }
++        0
++    }
++
++    /// One app-local registrar backed by Carbon's global hot-key API.
++    pub struct CarbonShortcutRegistrar {
++        callback: Arc<dyn Fn() + Send + Sync>,
++    }
++
++    impl CarbonShortcutRegistrar {
++        pub fn new(callback: impl Fn() + Send + Sync + 'static) -> Self {
++            Self {
++                callback: Arc::new(callback),
++            }
++        }
++
++        fn install_handler(&self) -> Result<(), ShortcutError> {
++            let callback = CALLBACK.get_or_init(|| Mutex::new(None));
++            *callback.lock().map_err(|_| ShortcutError::Unavailable)? = Some(self.callback.clone());
++            if HANDLER.get().is_some() {
++                return Ok(());
++            }
++            let event_type = EventTypeSpec {
++                // kEventClassKeyboard / kEventHotKeyPressed.
++                event_class: u32::from_be_bytes(*b"keyb"),
++                event_kind: 6,
++            };
++            let mut handler = std::ptr::null_mut();
++            let result = unsafe {
++                InstallEventHandler(
++                    GetApplicationEventTarget(),
++                    hot_key_pressed,
++                    1,
++                    &event_type,
++                    std::ptr::null_mut(),
++                    &mut handler,
++                )
++            };
++            if result != 0 || handler.is_null() {
++                return Err(ShortcutError::Unavailable);
++            }
++            let _ = HANDLER.set(());
++            Ok(())
++        }
++    }
++
++    impl ShortcutRegistrar for CarbonShortcutRegistrar {
++        fn register(
++            &mut self,
++            shortcut: Shortcut,
++        ) -> Result<Box<dyn RegisteredShortcut>, ShortcutError> {
++            self.install_handler()?;
++            let mut reference = std::ptr::null_mut();
++            let status = unsafe {
++                RegisterEventHotKey(
++                    shortcut.key_code,
++                    shortcut.modifiers,
++                    EventHotKeyId {
++                        signature: u32::from_be_bytes(*b"SDTL"),
++                        id: 1,
++                    },
++                    GetApplicationEventTarget(),
++                    0,
++                    &mut reference,
++                )
++            };
++            if status != 0 || reference.is_null() {
++                return Err(ShortcutError::Unavailable);
++            }
++            Ok(Box::new(CarbonRegistration(reference)))
++        }
++    }
++
++    struct CarbonRegistration(EventHotKeyRef);
++    impl RegisteredShortcut for CarbonRegistration {}
++    impl Drop for CarbonRegistration {
++        fn drop(&mut self) {
++            unsafe { UnregisterEventHotKey(self.0) };
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[derive(Default)]
++    struct FakeRegistrar {
++        rejected: bool,
++        registrations: Vec<Shortcut>,
++    }
++
++    impl ShortcutRegistrar for FakeRegistrar {
++        fn register(
++            &mut self,
++            shortcut: Shortcut,
++        ) -> Result<Box<dyn RegisteredShortcut>, ShortcutError> {
++            self.registrations.push(shortcut);
++            if self.rejected {
++                Err(ShortcutError::Unavailable)
++            } else {
++                Ok(Box::new(FakeRegistration))
++            }
++        }
++    }
++
++    struct FakeRegistration;
++    impl RegisteredShortcut for FakeRegistration {}
++
++    #[test]
++    fn the_default_is_control_option_space() {
++        assert_eq!(Shortcut::launcher_default().display_name, "⌃⌥Space");
++        assert_eq!(Shortcut::launcher_default().key_code, 49);
++    }
++
++    #[test]
++    fn failed_replacement_keeps_the_last_working_shortcut() {
++        let mut controller = ShortcutController::new(FakeRegistrar::default());
++        assert!(controller.register(Shortcut::launcher_default()).is_ok());
++        let previous = controller.shortcut();
++        controller.registrar_mut().rejected = true;
++
++        let error = controller
++            .register(Shortcut::new(0, CONTROL, "⌃A"))
++            .unwrap_err();
++
++        assert_eq!(error, ShortcutError::Unavailable);
++        assert_eq!(controller.shortcut(), previous);
++        assert!(controller.is_registered());
++    }
++
++    #[test]
++    fn configured_shortcut_requires_a_non_modifier_key_and_primary_modifier() {
++        for key_code in [54, 55, 56, 57, 58, 59, 60, 61, 62, 63] {
++            assert!(Shortcut::new(key_code, CONTROL, "modifier")
++                .validate()
++                .is_err());
++        }
++        assert!(Shortcut::new(0, 0, "A").validate().is_err());
++        assert!(Shortcut::new(0, CONTROL, "⌃A").validate().is_ok());
++    }
++
++    #[test]
++    fn registering_the_active_chord_is_a_no_op() {
++        let mut controller = ShortcutController::new(FakeRegistrar::default());
++        let shortcut = Shortcut::launcher_default();
++        controller.register(shortcut.clone()).unwrap();
++        controller.registrar_mut().rejected = true;
++
++        controller.register(shortcut.clone()).unwrap();
++
++        assert_eq!(controller.registrar_mut().registrations.len(), 1);
++    }
++
++    #[test]
++    fn relabelling_the_active_chord_does_not_attempt_self_registration() {
++        let mut controller = ShortcutController::new(FakeRegistrar::default());
++        let shortcut = Shortcut::launcher_default();
++        controller.register(shortcut).unwrap();
++        controller.registrar_mut().rejected = true;
++
++        controller
++            .register(Shortcut::new(49, CONTROL | OPTION, "Control-Option-Space"))
++            .unwrap();
++
++        assert_eq!(controller.shortcut().display_name, "Control-Option-Space");
++        assert_eq!(controller.registrar_mut().registrations.len(), 1);
++    }
++}
+--- a/rust/crates/ui/src/lib.rs
++++ b/rust/crates/ui/src/lib.rs
+@@ -46,3 +46,14 @@
+ pub fn run(on_finish_launching: impl FnOnce(&mut gpui::App) + 'static) {
+     gpui_platform::application().run(on_finish_launching);
+ }
++
++/// Starts the platform application after callers install process-level
++/// lifecycle hooks such as macOS Dock reopen handling.
++pub fn run_with_application(
++    configure: impl FnOnce(&gpui::Application) + 'static,
++    on_finish_launching: impl FnOnce(&mut gpui::App) + 'static,
++) {
++    let application = gpui_platform::application();
++    configure(&application);
++    application.run(on_finish_launching);
++}
+--- a/rust/crates/ui/src/components/text_field.rs
++++ b/rust/crates/ui/src/components/text_field.rs
+@@ -1,5 +1,5 @@
+ use gpui::prelude::*;
+-use gpui::{App, Context, Entity, IntoElement, SharedString, Subscription, Window};
++use gpui::{App, Context, Entity, Focusable, IntoElement, SharedString, Subscription, Window};
+ use gpui_component::input::{Input, InputEvent, InputState};
+ 
+ /// A single-line text field owned by this library.
+@@ -33,6 +33,11 @@
+         self.state.read(cx).value().to_string()
+     }
+ 
++    /// Gives a host view the real editor focus after its window opens.
++    pub fn focus(&self, window: &mut Window, cx: &mut App) {
++        self.state.read(cx).focus_handle(cx).focus(window, cx);
++    }
++
+     /// Subscribe inside a view's context. The handler receives the view, window
+     /// and context so it can recompute and notify without naming the engine type.
+     pub fn on_change_in<T: 'static>(

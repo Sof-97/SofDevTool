@@ -100,3 +100,43 @@ Text Diff module, local assets and native WebView boundary. Integration and
 desktop checks remain serialized under the orchestrator. Both workers use
 separate build directories. The orchestrator owns local GitButler commits and
 independent Standards/Spec reviews.
+
+## Bounded continuation requested by owner — 2026-09-22
+
+The owner now requests stopping after the next completed ticket and reporting
+status. The next acceptance target is 02. Ticket03 remains an isolated candidate
+with native Launcher/layout failures under correction; ticket04 has preliminary
+core/session/storage work only, not accepted or integrated. No further catalog
+implementation is scheduled in this turn.
+
+Current implementers are GPT-5.6 Terra `/root/shortcut_settings` (02 renderer
+corrections and isolated preliminary04 storage) and `/root/native_lifecycle`
+(03 shell and shared layout fixes). `/root/spec_review` independently identified
+02 asynchronous feedback/protocol/license issues and03 native crash/layout
+causes. The canonical branch still contains accepted01; 02 acceptance requires
+new native evidence and final independent review, followed by local integration.
+
+## Ticket02 accepted; owner-requested stop
+
+- Terra implementers `/root/shortcut_settings` and `/root/native_lifecycle`;
+  frozen candidate `/private/tmp/sofdevtool-ticket02-final/rust`.
+- Root transferred13 source/config/assets files after checking receiving files
+  against HEAD and verifying identical resulting bytes. Renderer SHA-256:
+  `699d45439d7ee3319b0475d3651e7ae5c23ccef2862619b3330e2a8cad5b0ed3`.
+- Independent Astra Spec `/root/ticket02_spec_final`: no source defect; required
+  docs/native evidence subsequently supplied. Standards `/root/ticket02_standards`
+  rechecked final IPC/focus delta and docs: PASS, zero actionable findings.
+  Root verified the final actual callback failure/recovery; a fresh additional
+  Spec reviewer could not be allocated because the collaboration thread limit
+  was reached. No finding remains open from either completed review axis.
+- Canonical offline default gate exit0:39 tests (6app,5session,23JSONcontracts,
+  5UIhelpers), fmt, Clippy -Dwarnings, Debug app/gallery build. Existing transitive
+  block0.1.6 future-incompat notice only. Log retained in rust/artifacts.
+- Canonical Debug bundle built and uninstrumented native Error/recovery retested.
+  Native scenarios and honest limits: [ticket02 evidence](../../rust/docs/evidence/ticket-02.md).
+- Ticket01 and02 resolved.03 remains claimed with an unfinished isolated
+  implementation;04 has preliminary unintegrated storage/session work.05–22
+  remain unimplemented. Stop here as explicitly requested by the owner.
+- Unfinished03/04 deltas saved in [wip](wip/README.md); these are preservation
+  artifacts, not accepted product implementations. Resume at03 native Launcher
+  visibility/dismissal/lifecycle, then04 app History wiring.
