@@ -5,7 +5,7 @@
 - Orchestrator: `thr_54ubtn5szt`; project `proj_usp2wfnybt`; environment `env_vtngs4hpem`; host `host_re5b55pjzz`.
 - Initial product base: `4db6495` (Swift PR 5); initial GitButler workspace HEAD: `1fd92ee`.
 - Integration branch: `feat/rust-gpui-migration`.
-- Live catalog confirms `acp-opencode` / `opencode-go/deepseek-v4.1-flash` and `codex` / `gpt-6-astra`. First real worker session still needs verification.
+- Live catalog confirms `acp-opencode` / `opencode-go/deepseek-v4.1-flash` and `codex` / `gpt-6-astra`. Real worker execution was subsequently verified (see session evidence).
 - BB global concurrency unlimited; host automatic/effective limit 12. Use at most three implementation workers initially, reserving room for Astra review and integration. Desktop work is serialized.
 - GitButler status succeeds with access to its local database. Linked-worktree commits are unsupported by the installed skill contract; use independent filesystem checkout copies with their own Git directories and validate GitButler before assignment.
 - Approved spec, all 22 tickets and orchestration handoff enter the bootstrap commit. Documentation validation is the bootstrap gate; Swift tests are unnecessary for this documentation-only step.
@@ -18,10 +18,10 @@
 
 | Ticket / role | Thread | Checkout | Branch | Base | Candidate / integrated | State |
 | --- | --- | --- | --- | --- | --- | --- |
-| 01 implementation | `thr_tpymn94mfd` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/worker-01` | `feat/rust-01-json` | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | `5147c46e981dcd9e3080eee1b0e6283104dcb49f` / not integrated | claimed; correcting review findings |
-| Independent Astra reviewer | `thr_v6himghfju` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/reviewer` (reviews use immutable checkpoints below) | read-only | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | `5147c46e981dcd9e3080eee1b0e6283104dcb49f` | changes required; awaiting corrected SHA |
+| 01 implementation | `thr_tpymn94mfd` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/worker-01` | `feat/rust-01-json` | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | `c193c74b93b1b0f31ab209d00b6fe94107c4ae2c` / not integrated | claimed; code review passed, native blocked |
+| Independent Astra reviewer | `thr_v6himghfju` | `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/reviewer` (reviews use immutable checkpoints below) | read-only | `5ed34cc460d9c5cabcd0b795aab79ee25d931bf6` | `c193c74b93b1b0f31ab209d00b6fe94107c4ae2c` | Standards/Spec passed; native evidence pending |
 
-Desktop lease: worker 01 for focused editor scenarios. Other threads must coordinate before native interaction.
+Desktop lease: orchestrator; native execution suspended pending authorization after the rejected launch/screenshot tool call.
 
 ## Session evidence and current impediment
 
@@ -44,6 +44,18 @@ Desktop lease: worker 01 for focused editor scenarios. Other threads must coordi
 - Full-candidate review contexts: Standards `thr_vi5yuk8yg2`, Spec `thr_zj2zsirmup`. Confirmed findings delivered to worker while reviewer gate is still compiling: keyboard-inoperable buttons, editor dependency escaping app/library boundary, missing Clipboard adapter, missing debounce, overstated runtime wording; stale Paste/Clear output due to suppressed editor events and parser stack overflow on deeply nested input. Prior private-number and boolean fixes appear corrected in reviewer probes. Worker resumed code/test fixes; native actions remain suspended. Final full-candidate review report pending.
 - Final full review `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/review-5147c46.md`: gate independently PASS/exit 0; 22 tests. Standards 4 P2 + 1 P3 documented violations and 1 P3 suggestion. Spec 2 P1 + 1 P2 + 1 P3 (query-container formatting drift). Both axes require changes. Stack overflow reproduced at 50,000 nested arrays / 100,001 bytes with candidate opt-level=1. All finding details sent to worker.
 - Reviewer found `WindowOptions.app_id` does not establish macOS bundle identity. Worker assigned minimal local Debug bundle/Info.plist for ticket01's distinct identity proof, with no launch/installation and no full ticket22 release scope. Native permission request remains unanswered.
+- Corrected candidate: `38200476044b74ca79b76172c7f168bb3df2ee31`, stable checkpoint `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/checkpoint-3820047`. Worker reports all finding corrections and `rust/scripts/verify --full` PASS/exit0: 22 JSON + 5 session + 2 identity tests, fmt/Clippy, Debug/Release. Re-review requested; no acceptance yet.
+- Local Debug bundle exists at `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/worker-01/rust/artifacts/SofDevToolRust.app`. Orchestrator independently ran `plutil -lint`: PASS; Rust identifier `com.gerardo.sofdevtool.rust` differs from Swift source `dev.gerardo.SofDevTool`. Bundle not launched or installed; these checks do not prove native behavior.
+- Re-review `3820047` uses Astra Standards `thr_4yi4vdmvdp` and Spec `thr_jxix96hkt5`. Reviewer gate `--full` PASS, 29 tests and Debug/Release; independent parser corpus and 50,000-depth diagnostic pass. Confirmed closed in code: Paste/Clear, crash, query-container compatibility, Clipboard adapter, debounce. Residual corrections sent to worker: FocusHandle tab-stop registration, visible Primary focus, external Root re-export, depth budget consistency for scalar leaves, bundle script honoring isolated Cargo target directories. Native evidence still pending and no ticket accepted.
+
+- Third corrected candidate: `8605d6fc97a5c125fd2c385164eaa9b195380219`, immutable checkpoint `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/checkpoint-8605d6f` verified identical to the commit. Worker reports depth-container boundary regressions, tab-stop handles, distinct focus border, own AppRoot/mount boundary and Cargo artifact-based bundle path corrected. Worker gate `--full` PASS/exit0: 23 JSON + 5 session + 2 identity tests, fmt/Clippy and Debug/Release. Independent Astra re-review in progress; no native evidence or acceptance.
+
+- Final review `8605d6f`: `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/review-8605d6f.md`. All previous findings closed; Standards no open violation, Spec one nonblocking P3: wrapper root prevents the dependency input registry lookup, without a demonstrated failure in current flows. Reviewer independently passes `--full` (30 tests, Debug/Release), 236 parser cases, 15 depth-boundary cases, 50,000-level diagnostic and bundle generation in default/isolated targets. Orchestrator assigned the remaining mount concern and precise evidence wording to worker; native authorization remains unanswered.
+
+- Fourth corrected candidate: `c193c74b93b1b0f31ab209d00b6fe94107c4ae2c`, stable checkpoint `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/checkpoint-c193c74`. Delta is two files: opaque `Entity<impl Render>` mount preserving the actual dependency root and honest source-only focus evidence. Worker `--full` PASS/exit0, 30 tests and Debug/Release. Independent two-axis re-review requested.
+
+- Final candidate `c193c74`: both independent Astra axes pass with no open finding; mount concern closed by tracing the actual entity type through GPUI window construction. Reports: `/Users/gerardo/.bb/thread-storage/rust-migration-thr_54ubtn5szt/standards-review-c193c74.md` and `spec-review-c193c74.md` in the same directory. Reviewer `--full` PASS, 30 tests and Debug/Release. This is code/build evidence only.
+- Current external blocker: permission for app/gallery launch, Computer Use/screenshots and explicit editing/Clipboard scenarios has not been received after the rejected tool call. No further independent ticket is available before accepted 01. Candidate remains unintegrated, ticket01 remains claimed, 02–22 remain blocked by the approved dependency graph. Resume with authorized native verification, fix any observed failures via DeepSeek, then integrate through GitButler, run the combined gate and update acceptance. Swift remains untouched.
 
 ## Local integration transport
 
