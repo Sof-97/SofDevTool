@@ -192,9 +192,9 @@ impl JsonWorkspace {
         self.display_epoch = epoch;
         match self.session.evaluation() {
             JsonEvaluation::Valid { output } => {
-                self.result.set_text(output.clone(), window, cx);
+                self.result.assign_text(output.clone(), window, cx);
             }
-            _ => self.result.set_text("", window, cx),
+            _ => self.result.assign_text("", window, cx),
         }
     }
 
@@ -219,8 +219,7 @@ impl JsonWorkspace {
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            // replace_all records undo history and emits a change event.
-            self.input.replace_all(text, window, cx);
+            self.input.edit_text(text, window, cx);
         }
     }
 
@@ -235,7 +234,7 @@ impl JsonWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
-        self.input.replace_all("", window, cx);
+        self.input.edit_text("", window, cx);
     }
 
     /// Requests a restore. Replacing a different nonempty session is confirmed
@@ -274,9 +273,9 @@ impl JsonWorkspace {
         self.indentation = snapshot.request.indentation;
         self.sort_keys = snapshot.request.sort_keys;
         self.input
-            .set_text(snapshot.request.input.clone(), window, cx);
+            .assign_text(snapshot.request.input.clone(), window, cx);
         self.query
-            .set_text(snapshot.request.query.clone(), window, cx);
+            .assign_text(snapshot.request.query.clone(), window, cx);
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
@@ -337,7 +336,12 @@ impl JsonWorkspace {
     }
 
     fn mode_button(&self, label: &'static str, mode: JsonMode, cx: &mut Context<Self>) -> Button {
-        Button::new(label)
+        let id = match mode {
+            JsonMode::Format => "json.mode.format",
+            JsonMode::Minify => "json.mode.minify",
+            JsonMode::Query => "json.mode.query",
+        };
+        Button::with_id(id, label)
             .variant(if self.mode == mode {
                 ButtonVariant::Primary
             } else {
@@ -375,7 +379,7 @@ impl JsonWorkspace {
             .unwrap_or(false);
 
         let actions = div().flex().flex_row().gap_2().child(
-            Button::new("Restore selected")
+            Button::with_id("json.history.restore-selected", "Restore selected")
                 .disabled(!restore_enabled)
                 .focus_handle(self.focus.history_restore.clone())
                 .on_click(view_click(cx, |this, window, cx| {
@@ -434,7 +438,7 @@ impl JsonWorkspace {
                     .flex_row()
                     .gap_2()
                     .child(
-                        Button::new("Restore")
+                        Button::with_id("json.history.confirm-restore", "Restore")
                             .variant(ButtonVariant::Primary)
                             .focus_handle(self.focus.history_confirm.clone())
                             .on_click(view_click(cx, |this, window, cx| {
@@ -442,7 +446,7 @@ impl JsonWorkspace {
                             })),
                     )
                     .child(
-                        Button::new("Cancel")
+                        Button::with_id("json.history.cancel-restore", "Cancel")
                             .focus_handle(self.focus.history_cancel.clone())
                             .on_click(view_click(cx, |this, _window, cx| {
                                 this.cancel_restore(cx);
@@ -476,10 +480,13 @@ impl Render for JsonWorkspace {
 
         if self.mode == JsonMode::Format {
             toolbar = toolbar.child(
-                Button::new(match self.indentation {
-                    Indentation::TwoSpaces => "Indent: 2",
-                    Indentation::FourSpaces => "Indent: 4",
-                })
+                Button::with_id(
+                    "json.indentation",
+                    match self.indentation {
+                        Indentation::TwoSpaces => "Indent: 2",
+                        Indentation::FourSpaces => "Indent: 4",
+                    },
+                )
                 .focus_handle(self.focus.indent.clone())
                 .on_click(view_click(cx, |this, window, cx| {
                     this.toggle_indentation(window, cx);
@@ -489,11 +496,14 @@ impl Render for JsonWorkspace {
 
         toolbar = toolbar
             .child(
-                Button::new(if self.sort_keys {
-                    "Sort keys: on"
-                } else {
-                    "Sort keys: off"
-                })
+                Button::with_id(
+                    "json.sort-keys",
+                    if self.sort_keys {
+                        "Sort keys: on"
+                    } else {
+                        "Sort keys: off"
+                    },
+                )
                 .variant(if self.sort_keys {
                     ButtonVariant::Primary
                 } else {
@@ -507,11 +517,14 @@ impl Render for JsonWorkspace {
             .child(div().flex_1())
             .child(copy_feedback(self.copied, "Copied to Clipboard"))
             .child(
-                Button::new(if self.history_visible {
-                    "History: on"
-                } else {
-                    "History: off"
-                })
+                Button::with_id(
+                    "json.history.toggle",
+                    if self.history_visible {
+                        "History: on"
+                    } else {
+                        "History: off"
+                    },
+                )
                 .focus_handle(self.focus.history_toggle.clone())
                 .on_click(view_click(cx, |this, _window, cx| {
                     this.history_visible = !this.history_visible;
@@ -519,14 +532,14 @@ impl Render for JsonWorkspace {
                 })),
             )
             .child(
-                Button::new("Paste")
+                Button::with_id("json.paste", "Paste")
                     .focus_handle(self.focus.paste.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.paste(window, cx);
                     })),
             )
             .child(
-                Button::new("Copy Result")
+                Button::with_id("json.copy-result", "Copy Result")
                     .disabled(!can_copy)
                     .focus_handle(self.focus.copy.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
@@ -534,7 +547,7 @@ impl Render for JsonWorkspace {
                     })),
             )
             .child(
-                Button::new("Clear")
+                Button::with_id("json.clear", "Clear")
                     .focus_handle(self.focus.clear.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.clear(window, cx);

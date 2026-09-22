@@ -8,9 +8,9 @@ use gpui::{
 use crate::theme::ThemeTokens;
 
 /// Key context for focusable buttons; Enter and Space activate the focused one.
-pub const BUTTON_KEY_CONTEXT: &str = "SofDevToolButton";
+pub const BUTTON_KEY_CONTEXT: &str = "SofuiButton";
 
-gpui::actions!(sofdevtool_ui, [ActivateButton]);
+gpui::actions!(sofui_button, [ActivateButton]);
 
 /// A click or keyboard activation handler owned by a [`Button`].
 pub type ClickHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
@@ -32,6 +32,8 @@ pub struct Button {
 }
 
 impl Button {
+    /// Compatibility constructor for existing consumers. Prefer [`Self::with_id`]
+    /// so identity remains independent of a changing or repeated visible label.
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
@@ -43,8 +45,14 @@ impl Button {
         }
     }
 
-    /// Overrides the element id. Required when several buttons share a visible
-    /// label in one frame, otherwise GPUI aborts with a duplicate a11y node id.
+    /// Constructs a button with a caller-owned stable identity. Keep `id`
+    /// unchanged across redraws, even when the visible label changes. Distinct
+    /// controls sharing one label must use distinct ids.
+    pub fn with_id(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+        Self::new(label).id(id)
+    }
+
+    /// Overrides the element id on a compatibility-constructed button.
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.element_id = Some(id.into());
         self
@@ -52,6 +60,11 @@ impl Button {
 
     pub fn primary(label: impl Into<SharedString>) -> Self {
         Self::new(label).variant(ButtonVariant::Primary)
+    }
+
+    /// Primary variant with stable identity independent of its label.
+    pub fn primary_with_id(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+        Self::with_id(id, label).variant(ButtonVariant::Primary)
     }
 
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
@@ -65,7 +78,8 @@ impl Button {
     }
 
     /// Makes the button focusable and reachable with Tab/Shift-Tab. The handle
-    /// must be owned by the view so focus survives re-renders.
+    /// must be retained by the view so focus survives redraws. Enter and Space
+    /// invoke the same action as a pointer click. A disabled button invokes none.
     pub fn focus_handle(mut self, handle: FocusHandle) -> Self {
         self.focus = Some(handle);
         self

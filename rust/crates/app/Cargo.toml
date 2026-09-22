@@ -16,12 +16,13 @@ path = "src/main.rs"
 
 [dependencies]
 gpui.workspace = true
+gpui-platform.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 wry.workspace = true
 raw-window-handle.workspace = true
 sofdevtool-core = { path = "../core" }
-sofdevtool-ui = { path = "../ui" }
+sofdevtool-ui = { package = "sofui", path = "../ui" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc.workspace = true

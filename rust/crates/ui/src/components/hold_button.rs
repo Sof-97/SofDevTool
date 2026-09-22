@@ -8,13 +8,13 @@ use gpui::{
 
 use crate::theme::ThemeTokens;
 
-gpui::actions!(sofdevtool_hold_button, [ActivateHoldButton]);
+gpui::actions!(sofui_hold_button, [ActivateHoldButton]);
 
 /// A pointer/keyboard handler owned by a [`HoldButton`].
 type HoldHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
 
 /// Key context for a [`HoldButton`]; Enter activates the keyboard confirmation.
-pub const HOLD_BUTTON_KEY_CONTEXT: &str = "SofDevToolHoldButton";
+pub const HOLD_BUTTON_KEY_CONTEXT: &str = "SofuiHoldButton";
 
 pub(crate) fn register_key_bindings(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(

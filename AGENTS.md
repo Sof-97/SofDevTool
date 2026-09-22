@@ -2,6 +2,10 @@
 
 Read `CONTEXT.md` and `.scratch/sofdevtool/implementation-handoff.md` before changing product behavior.
 
+## Rust component ownership
+
+`rust/crates/ui` is **sofui 0.1.0**, an independently versioned GPUI component library intended for a later separate release. Keep it limited to reusable UI components and component interaction logic. The application and core own Utility execution, domain validation, persistence, History policy, and application lifecycle. Initialize and mount sofui in each consumer; start GPUI and configure process hooks in that consumer's entry point. Preserve the text-editing engine behind sofui's owned interfaces. See `.scratch/sofdevtool-rust-only/spec.md` for the current Rust-only contract.
+
 ## Source map
 
 - `SofDevTool/Application`: lifecycle and dependency composition.

@@ -1,9 +1,7 @@
-//! Owner-maintained GPUI component library.
+//! sofui: reusable GPUI components and component interaction logic.
 //!
-//! This crate must not depend on the SofDevTool application or core crates, on
-//! Utility identities, on app persistence, or on macOS service policy. The only
-//! external UI dependency is `gpui-component`, used exclusively for its text
-//! editing engine behind the [`TextEditor`] and [`TextField`] interfaces here.
+//! Consumers own process startup, product policy and persistence. The complex
+//! text-editing engine remains behind [`TextEditor`] and [`TextField`].
 
 mod components;
 pub mod theme;
@@ -40,21 +38,4 @@ pub fn init(cx: &mut gpui::App) {
 /// Applies the dark appearance used by the Workbench and gallery.
 pub fn set_dark_theme(window: Option<&mut gpui::Window>, cx: &mut gpui::App) {
     gpui_component::Theme::change(gpui_component::ThemeMode::Dark, window, cx);
-}
-
-/// Starts the GPUI application. Encapsulates the platform entry point so the
-/// application crate does not depend on the platform crate directly.
-pub fn run(on_finish_launching: impl FnOnce(&mut gpui::App) + 'static) {
-    gpui_platform::application().run(on_finish_launching);
-}
-
-/// Starts the platform application after callers install process-level
-/// lifecycle hooks such as macOS Dock reopen handling.
-pub fn run_with_application(
-    configure: impl FnOnce(&gpui::Application) + 'static,
-    on_finish_launching: impl FnOnce(&mut gpui::App) + 'static,
-) {
-    let application = gpui_platform::application();
-    configure(&application);
-    application.run(on_finish_launching);
 }

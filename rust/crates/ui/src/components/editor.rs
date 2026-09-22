@@ -2,8 +2,8 @@ use std::ops::Range;
 
 use gpui::prelude::*;
 use gpui::{
-    div, App, Context, DefiniteLength, Entity, EntityInputHandler, IntoElement, SharedString,
-    Subscription, Window,
+    div, App, Context, DefiniteLength, Entity, EntityInputHandler, Focusable, IntoElement,
+    SharedString, Subscription, Window,
 };
 use gpui_component::input::{Backspace, Delete, InputEvent, Textarea, TextareaState};
 use unicode_segmentation::UnicodeSegmentation as _;
@@ -23,20 +23,37 @@ impl TextEditor {
         }
     }
 
-    pub fn set_text(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+    /// Silently assigns text for initialization, restoration or a derived
+    /// result. This emits no change notification and clears undo history.
+    pub fn assign_text(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
         self.state
             .update(cx, |state, cx| state.set_value(text, window, cx));
     }
 
     /// Replaces the whole text as a user-style edit: recorded in the undo
     /// history and emitting a change event. Use this for explicit Paste/Clear.
-    pub fn replace_all(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+    pub fn edit_text(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
         self.state
             .update(cx, |state, cx| state.replace_all(text, window, cx));
     }
 
+    /// Compatibility alias for silent assignment.
+    pub fn set_text(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+        self.assign_text(text, window, cx);
+    }
+
+    /// Compatibility alias for a user-style edit.
+    pub fn replace_all(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+        self.edit_text(text, window, cx);
+    }
+
     pub fn text(&self, cx: &App) -> String {
         self.state.read(cx).value().to_string()
+    }
+
+    /// Focuses the retained editor state; redraws do not replace that state.
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.state.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     /// Subscribe inside a view's context. The handler receives the view, window

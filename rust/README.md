@@ -9,7 +9,7 @@ workspace; it never reads, migrates or writes Swift data.
 | Crate | Path | Role |
 | --- | --- | --- |
 | `sofdevtool-core` | `crates/core` | GPUI-independent Utility contracts and domain engines. `utility.rs`/`session.rs` hold the shared `Utility` trait and revision-gated `Session<U>`; `diagnostic.rs` holds the shared diagnostic vocabulary; `utilities/<name>.rs` owns each Utility's request/result/snapshot and tests. |
-| `sofdevtool-ui` | `crates/ui` | Owner-maintained GPUI component library: semantic theme tokens (`theme.rs`), `Button`, `HoldButton`, `LabeledField`, `TextEditor`, `TextField`, `panel`, `HistoryPanel`, diagnostics, copy feedback. Must not depend on either SofDevTool crate, on Utility IDs, app persistence, or macOS service policy. |
+| `sofui` 0.1.0 | `crates/ui` | Independently versioned GPUI component library: semantic theme tokens (`theme.rs`), `Button`, `HoldButton`, `LabeledField`, `TextEditor`, `TextField`, `panel`, `HistoryPanel`, diagnostics, copy feedback. It owns reusable components and component logic; the application owns lifecycle and product policy. |
 | `sofdevtool-app` | `crates/app` | The application: identity, Registry, Workbench, Launcher, Settings, preferences, fresh Rust History, and one workspace per Utility (`utilities/<name>.rs`, plus `json_workspace.rs` and `text_diff/`). Binary `sofdevtool`. |
 | gallery | `crates/ui/examples/gallery.rs` | Executable demonstration of the exported components in their normal, focused, disabled, invalid, empty, list, hold, confirmation and theme states. Builds without the application crate. |
 
@@ -20,8 +20,8 @@ Random String and Text Diff.
 
 ### Component consumption and extraction
 
-The application consumes components only through the `sofdevtool_ui` public
-surface; it never names `gpui-component` types directly. `sofdevtool-ui` wraps
+The application temporarily imports `sofui` under the `sofdevtool_ui` alias
+while other workspaces migrate; it never names `gpui-component` types directly. `sofui` wraps
 `gpui-component`'s text-editing engine behind `TextEditor`/`TextField` and owns
 everything else. Extraction to a separate repository is deferred until a second
 consuming application makes the reusable boundary concrete; the crate already
@@ -50,7 +50,7 @@ Exact versions live in `Cargo.lock`. First-party crates depend only on:
 | --- | --- | --- | --- |
 | `gpui-pre` (lib `gpui`) | `=0.3.6` | Apache-2.0 | GPUI snapshot of `zed-industries/zed`; the version the component ecosystem targets. |
 | `gpui-pre-platform` | `=0.3.6` | Apache-2.0 | The `gpui_platform` entry point. |
-| `gpui-component` | `=0.6.6` | Apache-2.0 | Used **only** for its text editing engine, wrapped by `sofdevtool-ui`. Not adopted as the visual system. |
+| `gpui-component` | `=0.6.6` | Apache-2.0 | Used **only** for its text editing engine, wrapped by `sofui`. Not adopted as the visual system. |
 | `unicode-segmentation` | `=1.13.3` | MIT OR Apache-2.0 | Grapheme boundaries for editor deletion and case segmentation. |
 | `serde` / `serde_json` | `1.x` | MIT OR Apache-2.0 | Contract derives and the local Text Diff bridge. |
 | `digest`, `sha1`, `sha2`, `md-5`, `hex` | pinned | MIT OR Apache-2.0 | Hash Utility. |
@@ -68,7 +68,7 @@ v0.1.6` crate (an `objc` dependency); it is not first-party code.
 
 ```sh
 cargo run -p sofdevtool-app --bin sofdevtool   # the full Developer Toolbox
-cargo run -p sofdevtool-ui --example gallery   # the component gallery
+cargo run -p sofui --example gallery            # the component gallery
 ```
 
 ### Bundles

@@ -9,10 +9,11 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    div, App, Context, FocusHandle, IntoElement, Render, Subscription, Window, WindowOptions,
+    div, App, ClipboardItem, Context, FocusHandle, IntoElement, Render, Subscription, Window,
+    WindowOptions,
 };
-use sofdevtool_ui::{
-    active_theme, copy_feedback, diagnostic_banner, empty_state, init, mount, panel, run,
+use sofui::{
+    active_theme, copy_feedback, diagnostic_banner, empty_state, init, mount, panel,
     set_active_theme, set_dark_theme, view_click, Button, ButtonVariant, DiagnosticSeverity,
     HistoryItem, HistoryPanel, HoldButton, LabeledField, TextEditor, TextField, ThemeTokens,
     ThemeVariant,
@@ -45,6 +46,9 @@ impl Gallery {
         let field = TextField::new(window, cx);
         let input = TextEditor::new(window, cx);
         let result = TextEditor::new(window, cx);
+        field.assign_text("café", window, cx);
+        input.assign_text("👨‍👩‍👧‍👦 and e\u{301} stay editable", window, cx);
+        result.assign_text("Selectable result", window, cx);
         let subscriptions = vec![
             field.on_change_in(window, cx, |this, _window, cx| {
                 this.copied = false;
@@ -169,14 +173,11 @@ impl Render for Gallery {
                 div()
                     .text_lg()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child("SofDevTool component gallery"),
+                    .child("sofui component gallery"),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(tokens.text_muted())
-                    .child("Components are consumed from sofdevtool-ui; the gallery never imports the application."),
-            )
+            .child(div().text_xs().text_color(tokens.text_muted()).child(
+                "Components are consumed from sofui; the gallery does not import the application.",
+            ))
             .child(
                 div()
                     .flex()
@@ -184,21 +185,30 @@ impl Render for Gallery {
                     .items_center()
                     .gap_2()
                     .child(
-                        Button::primary("Primary action")
+                        Button::primary_with_id("gallery.copy.primary", "Copy sample")
                             .focus_handle(self.primary_focus.clone())
                             .on_click(view_click(cx, |this, _window, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    this.field.text(cx),
+                                ));
                                 this.copied = true;
                                 cx.notify();
                             })),
                     )
                     .child(
-                        Button::new("Secondary")
+                        Button::with_id("gallery.copy.secondary", "Copy sample")
                             .focus_handle(self.secondary_focus.clone())
-                            .on_click(view_click(cx, |_this, _window, _cx| {})),
+                            .on_click(view_click(cx, |this, _window, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    this.input.text(cx),
+                                ));
+                                this.copied = true;
+                                cx.notify();
+                            })),
                     )
-                    .child(Button::new("Disabled").disabled(true))
+                    .child(Button::with_id("gallery.disabled", "Disabled").disabled(true))
                     .child(
-                        Button::new("Selected")
+                        Button::with_id("gallery.selected", "Selected")
                             .variant(ButtonVariant::Primary)
                             .focus_handle(self.variant_focus.clone())
                             .on_click(view_click(cx, |_this, _window, _cx| {})),
@@ -212,17 +222,19 @@ impl Render for Gallery {
                     .items_center()
                     .gap_2()
                     .child(
-                        Button::new(format!("Theme: {}", active_theme().label()))
-                            .id("gallery-theme")
-                            .focus_handle(self.theme_focus.clone())
-                            .on_click(view_click(cx, |_this, _window, cx| {
-                                let next = match active_theme() {
-                                    ThemeVariant::Graphite => ThemeVariant::CatppuccinFrappe,
-                                    ThemeVariant::CatppuccinFrappe => ThemeVariant::Graphite,
-                                };
-                                set_active_theme(next);
-                                cx.notify();
-                            })),
+                        Button::with_id(
+                            "gallery.theme",
+                            format!("Theme: {}", active_theme().label()),
+                        )
+                        .focus_handle(self.theme_focus.clone())
+                        .on_click(view_click(cx, |_this, _window, cx| {
+                            let next = match active_theme() {
+                                ThemeVariant::Graphite => ThemeVariant::CatppuccinFrappe,
+                                ThemeVariant::CatppuccinFrappe => ThemeVariant::Graphite,
+                            };
+                            set_active_theme(next);
+                            cx.notify();
+                        })),
                     )
                     .child(
                         HoldButton::new("gallery-clear", "Clear (hold 1s)")
@@ -266,7 +278,7 @@ impl Render for Gallery {
                                 .flex_row()
                                 .gap_2()
                                 .child(
-                                    Button::primary("Confirm")
+                                    Button::primary_with_id("gallery.confirm", "Confirm")
                                         .focus_handle(self.confirm_focus.clone())
                                         .on_click(view_click(cx, |this, _window, cx| {
                                             this.confirmed = true;
@@ -275,7 +287,7 @@ impl Render for Gallery {
                                         })),
                                 )
                                 .child(
-                                    Button::new("Cancel")
+                                    Button::with_id("gallery.cancel", "Cancel")
                                         .focus_handle(self.cancel_focus.clone())
                                         .on_click(view_click(cx, |this, _window, cx| {
                                             this.confirm_visible = false;
@@ -286,52 +298,15 @@ impl Render for Gallery {
                 )
             })
             .child(
-                div()
-                    .text_xs()
-                    .text_color(tokens.text_muted())
-                    .child("Tab/Shift-Tab move focus; Enter or Space activates the focused control."),
+                div().text_xs().text_color(tokens.text_muted()).child(
+                    "Tab/Shift-Tab move focus; Enter or Space activates the focused control.",
+                ),
             )
             .child(
-                div()
-                    .w_full()
-                    .child(
-                        LabeledField::new("Single-line field", self.field.render("gallery.field"))
-                            .hint("normal and focused"),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_4()
-                    .h_48()
-                    .flex_shrink_0()
-                    .child(panel("Input", "multiline editor", self.input.render(false, "gallery.input")))
-                    .child(panel("Result", "readonly, selectable", self.result.render(true, "gallery.result"))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_4()
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(diagnostic_banner(
-                                DiagnosticSeverity::Error,
-                                "Unexpected token at the end of the document.",
-                                Some((3, 8)),
-                            )),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(diagnostic_banner(
-                                DiagnosticSeverity::Warning,
-                                "Large input is not truncated silently.",
-                                None,
-                            )),
-                    ),
+                div().w_full().child(
+                    LabeledField::new("Single-line field", self.field.render("gallery.field"))
+                        .hint("normal and focused"),
+                ),
             )
             .child(
                 div()
@@ -340,12 +315,45 @@ impl Render for Gallery {
                     .gap_4()
                     .h_48()
                     .flex_shrink_0()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .child(panel("History list", "select + unavailable", history_panel)),
-                    )
+                    .child(panel(
+                        "Input",
+                        "multiline editor",
+                        self.input.render(false, "gallery.input"),
+                    ))
+                    .child(panel(
+                        "Result",
+                        "readonly, selectable",
+                        self.result.render(true, "gallery.result"),
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_4()
+                    .child(div().flex_1().child(diagnostic_banner(
+                        DiagnosticSeverity::Error,
+                        "Unexpected token at the end of the document.",
+                        Some((3, 8)),
+                    )))
+                    .child(div().flex_1().child(diagnostic_banner(
+                        DiagnosticSeverity::Warning,
+                        "Large input is not truncated silently.",
+                        None,
+                    ))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_4()
+                    .h_48()
+                    .flex_shrink_0()
+                    .child(div().flex_1().min_h_0().child(panel(
+                        "History list",
+                        "select + unavailable",
+                        history_panel,
+                    )))
                     .child(div().flex_1().min_h_0().child(panel(
                         "Empty state",
                         "neutral",
@@ -356,7 +364,7 @@ impl Render for Gallery {
 }
 
 fn main() {
-    run(|cx: &mut App| {
+    gpui_platform::application().run(|cx: &mut App| {
         init(cx);
         set_dark_theme(None, cx);
         cx.open_window(WindowOptions::default(), |window, cx| {
