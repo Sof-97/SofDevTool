@@ -5,8 +5,9 @@ This is the separate planning package for completing the Rust application, prepa
 - [Complete specification](spec.md): agreed product scope, the six review findings, architecture, testing and delivery contract.
 - [Approved ticket index](ticket-proposal.md): 22 published tickets with blocking edges and story coverage. Each linked ticket contains its accepted criteria and testing guidance.
 - [Project tracker conventions](../../docs/agents/issue-tracker.md): local Markdown and triage vocabulary.
+- [pi trial and dispatch register](operations.md): current execution authorization, selected model and launch state. A dedicated worker prompt exists for each ticket in `prompts`.
 
-The current assignment is documentation only. No implementation, native preview, installation, commit or remote publication is part of preparing this package.
+The specification and ticket publication were completed as documentation-only work. The owner subsequently authorized a pi/Kimi trial in the order 08, 05, 01, with review between tickets. The owner explicitly approved sending necessary private repository context to OpenCode Go / Kimi K3 for these tickets. The [dispatch register](operations.md) owns current worker, review and acceptance state; credentials and personal application data are excluded.
 
 ## Publication and execution boundaries
 

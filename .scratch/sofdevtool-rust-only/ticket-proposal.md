@@ -1,6 +1,6 @@
 # Approved tickets: Rust-only SofDevTool and sofui
 
-Status: approved breakdown; 22 individual tickets published as ready-for-agent. Implementation has not started.
+Status: approved breakdown; 22 individual tickets published. The owner subsequently authorized the pi/Kimi trial; see the [dispatch register](operations.md) and each ticket's current status.
 
 Source: the [complete specification](spec.md). The owner approved the proposed granularity and blocking edges with “si” on 2026-09-22. This approval covers ticket publication; it does not authorize implementation. The parent specification's scope and status are unchanged.
 
@@ -8,7 +8,7 @@ This document retains its original proposal filename so existing references rema
 
 ## Execution boundaries
 
-- The current assignment is documentation only. Do not start implementation, native preview creation, installation or version-control delivery from a triage label alone.
+- Publication was documentation only. The later execution authorization covers explicitly dispatched trial tickets; the [dispatch register](operations.md) records that authorization and each worker's state. A triage label alone does not start work.
 - 01 and 02 expand shared interfaces with working first consumers; 03/04 and 13–18 migrate bounded groups while compatibility adapters keep other consumers working. 19 removes those adapters after migration. Each batch must remain green.
 - 20 delivers root relocation with functioning run/install commands. 21 retires Swift only after replacement resource and build ownership is functional.
 - The initial frontier is 01, 02, 05, 07, 08 and 17. Technical independence does not authorize concurrent writers in a shared checkout. Begin work only after a separate execution instruction and completion of the selected ticket's blockers.
