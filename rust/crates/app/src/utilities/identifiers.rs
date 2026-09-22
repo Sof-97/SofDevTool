@@ -11,8 +11,9 @@ use gpui::{
 };
 use sofdevtool_core::session::{Session, SubmitOutcome};
 use sofdevtool_core::utilities::identifiers::{
-    IdentifierAction, IdentifierFormat, Identifiers, IdentifiersRequest, IdentifiersSnapshot,
-    UuidVersion, DEFAULT_NAMESPACE, MAXIMUM_GENERATED_COUNT,
+    decode_ulid, IdentifierAction, IdentifierFormat, Identifiers, IdentifiersRequest,
+    IdentifiersSnapshot, UlidMode, UuidVersion, DEFAULT_NAMESPACE, MAXIMUM_GENERATED_COUNT,
+    MAXIMUM_ORDERED_KSUID_COUNT,
 };
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
@@ -42,7 +43,10 @@ pub fn construct(
 /// handle across two visible buttons aborts GPUI when both request focus in a
 /// single frame.
 struct ButtonFocus {
+    formats: [FocusHandle; 3],
     versions: [FocusHandle; 6],
+    ulid_modes: [FocusHandle; 2],
+    ordered_ksuid: FocusHandle,
     uppercase: FocusHandle,
     hyphens: FocusHandle,
     count_decrement: FocusHandle,
@@ -66,6 +70,9 @@ pub struct IdentifiersWorkspace {
     count: u32,
     uppercase: bool,
     hyphenated: bool,
+    ulid_mode: UlidMode,
+    ordered_ksuid: bool,
+    previous_ulid: Option<[u8; 16]>,
     namespace: TextField,
     name: TextField,
     inspect: TextField,
@@ -112,6 +119,9 @@ impl IdentifiersWorkspace {
             count: 1,
             uppercase: false,
             hyphenated: true,
+            ulid_mode: UlidMode::Random,
+            ordered_ksuid: false,
+            previous_ulid: None,
             namespace,
             name,
             inspect,
@@ -127,7 +137,10 @@ impl IdentifiersWorkspace {
             pending_restore: None,
             copy_focus: Vec::new(),
             focus: ButtonFocus {
+                formats: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
                 versions: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
+                ulid_modes: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
+                ordered_ksuid: cx.focus_handle().tab_stop(true).tab_index(0),
                 uppercase: cx.focus_handle().tab_stop(true).tab_index(0),
                 hyphens: cx.focus_handle().tab_stop(true).tab_index(0),
                 count_decrement: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -157,6 +170,9 @@ impl IdentifiersWorkspace {
             namespace: self.namespace.text(cx),
             name: self.name.text(cx),
             input: self.inspect.text(cx),
+            ulid_mode: self.ulid_mode,
+            ordered_ksuid: self.ordered_ksuid,
+            previous_ulid: self.previous_ulid,
             generation: self.generation,
         }
     }
@@ -168,9 +184,21 @@ impl IdentifiersWorkspace {
             count: self.count,
             uppercase: self.uppercase,
             hyphenated: self.hyphenated,
+            ulid_mode: self.ulid_mode,
+            ordered_ksuid: self.ordered_ksuid,
             namespace: self.namespace.text(cx),
             name: self.name.text(cx),
             input: self.inspect.text(cx),
+        }
+    }
+
+    /// The largest batch the active format allows. Only an explicit ordered
+    /// KSUID batch may use the 16-bit sequence space.
+    fn maximum_count(&self) -> u32 {
+        if self.format == IdentifierFormat::Ksuid && self.ordered_ksuid {
+            MAXIMUM_ORDERED_KSUID_COUNT
+        } else {
+            MAXIMUM_GENERATED_COUNT
         }
     }
 
@@ -193,6 +221,19 @@ impl IdentifiersWorkspace {
             return;
         };
         self.session.resolve(revision);
+        if action == IdentifierAction::Generate
+            && self.format == IdentifierFormat::Ulid
+            && self.ulid_mode == UlidMode::Monotonic
+        {
+            // Carry the last value forward so a later deliberate batch keeps
+            // process-local ordering within the same millisecond.
+            self.previous_ulid = self
+                .session
+                .evaluation()
+                .values()
+                .last()
+                .and_then(|value| decode_ulid(value));
+        }
         self.copied_all = false;
         self.copied_index = None;
         self.record_settled(cx);
@@ -219,8 +260,25 @@ impl IdentifiersWorkspace {
         }
     }
 
+    fn set_format(&mut self, format: IdentifierFormat, cx: &mut Context<Self>) {
+        self.format = format;
+        self.count = self.count.clamp(1, self.maximum_count());
+        self.invalidate(cx);
+    }
+
     fn set_version(&mut self, version: UuidVersion, cx: &mut Context<Self>) {
         self.version = version;
+        self.invalidate(cx);
+    }
+
+    fn set_ulid_mode(&mut self, mode: UlidMode, cx: &mut Context<Self>) {
+        self.ulid_mode = mode;
+        self.invalidate(cx);
+    }
+
+    fn toggle_ordered_ksuid(&mut self, cx: &mut Context<Self>) {
+        self.ordered_ksuid = !self.ordered_ksuid;
+        self.count = self.count.clamp(1, self.maximum_count());
         self.invalidate(cx);
     }
 
@@ -235,7 +293,7 @@ impl IdentifiersWorkspace {
     }
 
     fn adjust_count(&mut self, delta: i64, cx: &mut Context<Self>) {
-        let next = (i64::from(self.count) + delta).clamp(1, i64::from(MAXIMUM_GENERATED_COUNT));
+        let next = (i64::from(self.count) + delta).clamp(1, i64::from(self.maximum_count()));
         let next = next as u32;
         if next != self.count {
             self.count = next;
@@ -316,6 +374,17 @@ impl IdentifiersWorkspace {
         self.count = snapshot.request.count;
         self.uppercase = snapshot.request.uppercase;
         self.hyphenated = snapshot.request.hyphenated;
+        self.ulid_mode = snapshot.request.ulid_mode;
+        self.ordered_ksuid = snapshot.request.ordered_ksuid;
+        // Continue monotonic ordering from the restored final value. This is a
+        // pure decode, so restore reads no clock and no randomness.
+        self.previous_ulid = if snapshot.request.format == IdentifierFormat::Ulid
+            && snapshot.request.ulid_mode == UlidMode::Monotonic
+        {
+            snapshot.values.last().and_then(|value| decode_ulid(value))
+        } else {
+            None
+        };
         self.namespace
             .set_text(snapshot.request.namespace.clone(), window, cx);
         self.name
@@ -397,6 +466,32 @@ impl IdentifiersWorkspace {
             .focus_handle(self.focus.versions[version.index()].clone())
             .on_click(view_click(cx, move |this, _window, cx| {
                 this.set_version(version, cx);
+            }))
+    }
+
+    fn format_button(&self, format: IdentifierFormat, cx: &mut Context<Self>) -> Button {
+        Button::new(format.label())
+            .variant(if self.format == format {
+                ButtonVariant::Primary
+            } else {
+                ButtonVariant::Secondary
+            })
+            .focus_handle(self.focus.formats[format.index()].clone())
+            .on_click(view_click(cx, move |this, _window, cx| {
+                this.set_format(format, cx);
+            }))
+    }
+
+    fn ulid_mode_button(&self, mode: UlidMode, cx: &mut Context<Self>) -> Button {
+        Button::new(mode.label())
+            .variant(if self.ulid_mode == mode {
+                ButtonVariant::Primary
+            } else {
+                ButtonVariant::Secondary
+            })
+            .focus_handle(self.focus.ulid_modes[mode.index()].clone())
+            .on_click(view_click(cx, move |this, _window, cx| {
+                this.set_ulid_mode(mode, cx);
             }))
     }
 
@@ -554,11 +649,80 @@ impl Render for IdentifiersWorkspace {
         self.ensure_copy_focus(values.len(), cx);
         let can_copy = !values.is_empty();
 
-        let mut versions = div().flex().flex_row().gap_1();
-        for version in UuidVersion::ALL {
-            versions = versions.child(self.version_button(version, cx));
+        let mut formats = div().flex().flex_row().gap_1();
+        for format in IdentifierFormat::ALL {
+            formats = formats.child(self.format_button(format, cx));
         }
 
+        // Only the controls that belong to the active format are rendered.
+        let mut format_controls = div().flex().flex_row().items_center().gap_2();
+        match self.format {
+            IdentifierFormat::Uuid => {
+                let mut versions = div().flex().flex_row().gap_1();
+                for version in UuidVersion::ALL {
+                    versions = versions.child(self.version_button(version, cx));
+                }
+                format_controls = format_controls
+                    .child(versions)
+                    .child(
+                        Button::new(if self.uppercase {
+                            "Uppercase: on"
+                        } else {
+                            "Uppercase: off"
+                        })
+                        .variant(if self.uppercase {
+                            ButtonVariant::Primary
+                        } else {
+                            ButtonVariant::Secondary
+                        })
+                        .focus_handle(self.focus.uppercase.clone())
+                        .on_click(view_click(cx, |this, _window, cx| {
+                            this.toggle_uppercase(cx);
+                        })),
+                    )
+                    .child(
+                        Button::new(if self.hyphenated {
+                            "Hyphens: on"
+                        } else {
+                            "Hyphens: off"
+                        })
+                        .variant(if self.hyphenated {
+                            ButtonVariant::Primary
+                        } else {
+                            ButtonVariant::Secondary
+                        })
+                        .focus_handle(self.focus.hyphens.clone())
+                        .on_click(view_click(cx, |this, _window, cx| {
+                            this.toggle_hyphens(cx);
+                        })),
+                    );
+            }
+            IdentifierFormat::Ulid => {
+                for mode in UlidMode::ALL {
+                    format_controls = format_controls.child(self.ulid_mode_button(mode, cx));
+                }
+            }
+            IdentifierFormat::Ksuid => {
+                format_controls = format_controls.child(
+                    Button::new(if self.ordered_ksuid {
+                        "Ordered batch: on"
+                    } else {
+                        "Ordered batch: off"
+                    })
+                    .variant(if self.ordered_ksuid {
+                        ButtonVariant::Primary
+                    } else {
+                        ButtonVariant::Secondary
+                    })
+                    .focus_handle(self.focus.ordered_ksuid.clone())
+                    .on_click(view_click(cx, |this, _window, cx| {
+                        this.toggle_ordered_ksuid(cx);
+                    })),
+                );
+            }
+        }
+
+        let maximum = self.maximum_count();
         let count_controls = div()
             .flex()
             .flex_row()
@@ -580,7 +744,7 @@ impl Render for IdentifiersWorkspace {
             )
             .child(
                 Button::new("+")
-                    .disabled(self.count >= MAXIMUM_GENERATED_COUNT)
+                    .disabled(self.count >= maximum)
                     .focus_handle(self.focus.count_increment.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
                         this.adjust_count(1, cx);
@@ -593,39 +757,14 @@ impl Render for IdentifiersWorkspace {
             .flex_wrap()
             .items_center()
             .gap_2()
-            .child(versions)
             .child(
-                Button::new(if self.uppercase {
-                    "Uppercase: on"
-                } else {
-                    "Uppercase: off"
-                })
-                .variant(if self.uppercase {
-                    ButtonVariant::Primary
-                } else {
-                    ButtonVariant::Secondary
-                })
-                .focus_handle(self.focus.uppercase.clone())
-                .on_click(view_click(cx, |this, _window, cx| {
-                    this.toggle_uppercase(cx);
-                })),
+                div()
+                    .text_xs()
+                    .text_color(tokens.text_muted())
+                    .child("Format"),
             )
-            .child(
-                Button::new(if self.hyphenated {
-                    "Hyphens: on"
-                } else {
-                    "Hyphens: off"
-                })
-                .variant(if self.hyphenated {
-                    ButtonVariant::Primary
-                } else {
-                    ButtonVariant::Secondary
-                })
-                .focus_handle(self.focus.hyphens.clone())
-                .on_click(view_click(cx, |this, _window, cx| {
-                    this.toggle_hyphens(cx);
-                })),
-            )
+            .child(formats)
+            .child(format_controls)
             .child(count_controls)
             .child(
                 Button::new("Generate")
@@ -666,13 +805,13 @@ impl Render for IdentifiersWorkspace {
                         div()
                             .text_xs()
                             .text_color(tokens.text_muted())
-                            .child("RFC 9562 UUIDs, local and offline"),
+                            .child("UUID, ULID and KSUID, local and offline"),
                     ),
             )
             .child(toolbar)
             .child(collision_note);
 
-        if self.version.requires_namespace() {
+        if self.format == IdentifierFormat::Uuid && self.version.requires_namespace() {
             column = column.child(
                 div()
                     .flex()
@@ -782,7 +921,8 @@ impl Render for IdentifiersWorkspace {
 }
 
 /// Inputs and options that define a workspace session, excluding the generation
-/// nonce so a repeat of the same settings is not treated as different content.
+/// nonce and the derived previous-ULID carry so a repeat of the same settings
+/// is not treated as different content.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WorkspaceSignature {
     format: IdentifierFormat,
@@ -790,6 +930,8 @@ struct WorkspaceSignature {
     count: u32,
     uppercase: bool,
     hyphenated: bool,
+    ulid_mode: UlidMode,
+    ordered_ksuid: bool,
     namespace: String,
     name: String,
     input: String,
@@ -803,6 +945,8 @@ impl WorkspaceSignature {
             count: request.count,
             uppercase: request.uppercase,
             hyphenated: request.hyphenated,
+            ulid_mode: request.ulid_mode,
+            ordered_ksuid: request.ordered_ksuid,
             namespace: request.namespace.clone(),
             name: request.name.clone(),
             input: request.input.clone(),
@@ -863,5 +1007,27 @@ mod tests {
             ..request
         });
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn workspace_signature_ignores_the_derived_ulid_carry_but_not_the_format_controls() {
+        let request = IdentifiersRequest {
+            format: IdentifierFormat::Ulid,
+            ulid_mode: UlidMode::Monotonic,
+            previous_ulid: Some([1u8; 16]),
+            generation: 3,
+            ..IdentifiersRequest::default()
+        };
+        let carried = WorkspaceSignature::of(&IdentifiersRequest {
+            previous_ulid: Some([9u8; 16]),
+            ..request.clone()
+        });
+        assert_eq!(WorkspaceSignature::of(&request), carried);
+
+        let other_mode = WorkspaceSignature::of(&IdentifiersRequest {
+            ulid_mode: UlidMode::Random,
+            ..request.clone()
+        });
+        assert_ne!(WorkspaceSignature::of(&request), other_mode);
     }
 }

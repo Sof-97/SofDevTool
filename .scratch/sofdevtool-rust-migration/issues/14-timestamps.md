@@ -1,7 +1,7 @@
 # 14: Convert timestamps without timezone guesses
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 04
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -19,4 +19,4 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Resolved. See [`rust/docs/evidence/ticket-14.md`](../../../rust/docs/evidence/ticket-14.md) for the gate results, smoke checks and limits (macOS 14/15 runtime remain unverified).

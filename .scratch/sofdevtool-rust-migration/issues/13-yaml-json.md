@@ -1,7 +1,7 @@
 # 13: Convert YAML and JSON with fidelity diagnostics
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 04
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -19,4 +19,4 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Resolved. One YAML 1.2 Core-oriented document with anchors/aliases, strict rejection of multiple documents, duplicate/non-string keys, unsupported tags and nonfinite values, disclosed fidelity loss, and full Registry/session/Clipboard/History behavior. See [`rust/docs/evidence/ticket-13.md`](../../../rust/docs/evidence/ticket-13.md).

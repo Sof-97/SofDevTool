@@ -27,6 +27,9 @@ pub enum UtilityId {
     Jwt,
     Identifiers,
     Regex,
+    Timestamps,
+    SampleData,
+    YamlJson,
 }
 
 impl UtilityId {
@@ -45,6 +48,9 @@ impl UtilityId {
             UtilityId::Jwt => "jwt-decoder",
             UtilityId::Identifiers => "identifiers",
             UtilityId::Regex => "rust-regex",
+            UtilityId::Timestamps => "timestamps",
+            UtilityId::SampleData => "sample-data",
+            UtilityId::YamlJson => "yaml-json",
         }
     }
 }
@@ -231,6 +237,42 @@ impl UtilityDefinition {
             construct: Some(crate::utilities::regex::construct),
         }
     }
+
+    pub const fn timestamps() -> Self {
+        Self {
+            id: UtilityId::Timestamps,
+            name: "Timestamps",
+            summary: "Interpret Unix, ISO 8601 and named-zone local time",
+            category: "Format & Convert",
+            aliases: &["time", "date", "unix", "epoch", "iso8601", "timezone"],
+            history_enabled_by_default: true,
+            construct: Some(crate::utilities::timestamps::construct),
+        }
+    }
+
+    pub const fn sample_data() -> Self {
+        Self {
+            id: UtilityId::SampleData,
+            name: "Sample Data",
+            summary: "Generate fictional typed JSON or CSV rows",
+            category: "Generate",
+            aliases: &["fixture", "mock", "csv", "rows", "test data"],
+            history_enabled_by_default: true,
+            construct: Some(crate::utilities::sample_data::construct),
+        }
+    }
+
+    pub const fn yaml_json() -> Self {
+        Self {
+            id: UtilityId::YamlJson,
+            name: "YAML / JSON",
+            summary: "Convert one YAML 1.2 document to or from JSON",
+            category: "Format & Convert",
+            aliases: &["yaml", "yml", "convert", "anchors"],
+            history_enabled_by_default: true,
+            construct: Some(crate::utilities::yaml_json::construct),
+        }
+    }
 }
 
 /// The authoritative, source-defined Utility catalog.
@@ -255,6 +297,9 @@ impl UtilityRegistry {
                 UtilityDefinition::jwt(),
                 UtilityDefinition::identifiers(),
                 UtilityDefinition::regex(),
+                UtilityDefinition::timestamps(),
+                UtilityDefinition::sample_data(),
+                UtilityDefinition::yaml_json(),
             ],
         }
     }
@@ -324,6 +369,9 @@ mod tests {
                 UtilityDefinition::jwt(),
                 UtilityDefinition::identifiers(),
                 UtilityDefinition::regex(),
+                UtilityDefinition::timestamps(),
+                UtilityDefinition::sample_data(),
+                UtilityDefinition::yaml_json(),
             ]
         );
     }
@@ -332,7 +380,10 @@ mod tests {
     fn search_matches_name_summary_and_aliases_using_all_terms() {
         let registry = UtilityRegistry::initial();
 
-        assert_eq!(registry.search("format json"), vec![UtilityId::Json]);
+        assert_eq!(
+            registry.search("format json"),
+            vec![UtilityId::Json, UtilityId::YamlJson]
+        );
         assert_eq!(registry.search("validate"), vec![UtilityId::Json]);
         assert_eq!(registry.search("compare text"), vec![UtilityId::TextDiff]);
         assert_eq!(registry.search("base64url"), vec![UtilityId::Base64]);

@@ -1,7 +1,7 @@
 # 20: Generate fictional structured sample data
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 10
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -19,4 +19,4 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Resolved. See [`rust/docs/evidence/ticket-20.md`](../../../rust/docs/evidence/ticket-20.md) for the gate results, smoke checks and limits (macOS 14/15 runtime remain unverified).

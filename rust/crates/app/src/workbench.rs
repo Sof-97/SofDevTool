@@ -54,7 +54,8 @@ impl Workbench {
         history: Rc<HistoryRecorder>,
     ) -> Self {
         let json = cx.new(|cx| JsonWorkspace::new(window, cx, clipboard.clone(), history.clone()));
-        let text_diff = cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard.clone()));
+        let text_diff =
+            cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard.clone(), history.clone()));
         text_diff.read(cx).set_active(false);
         let shortcut_requested = Arc::new(AtomicBool::new(false));
         #[cfg(target_os = "macos")]

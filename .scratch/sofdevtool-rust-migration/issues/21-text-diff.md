@@ -1,7 +1,7 @@
 # 21: Complete Text Diff sessions and History
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 04
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -19,4 +19,4 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Resolved. The renderer is integrated with Registry metadata, explicit Clipboard actions, loading/ready/error states and versioned snapshots; one completed current comparison is recorded once and restores the exact old/new texts without rerunning. See [`rust/docs/evidence/ticket-21.md`](../../../rust/docs/evidence/ticket-21.md).
