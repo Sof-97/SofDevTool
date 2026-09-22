@@ -145,3 +145,37 @@ Integrated ticket02 commit: `50f2b05` on `feat/rust-gpui-migration`.
 The working tree was clean after that local integration commit. The generated
 app is `rust/artifacts/SofDevToolRust.app`; no remote publication or installation
 was performed. Owner-requested stop is now effective.
+
+## Owner-directed completion — 2026-09-22
+
+The owner asked to continue all remaining tickets with the `implement` skill and
+parallel subagents, and to stop and ask on any issue. Screen Recording was
+granted, so native verification used Accessibility automation plus HID-level
+`CGEvent` clicks and screenshots. Work happened on `feat/rust-gpui-migration`
+via GitButler; no remote publication.
+
+Foundation: a shared strongly typed `Utility` trait and revision-gated
+`Session<U>`, an app-owned per-Utility `HistoryStore` (atomic writes,
+newest-25 retention, corruption isolation, pause-on-failure), a reusable
+`HistoryPanel` and `HoldButton`, shared diagnostic types, and a Workbench that
+constructs Utility workspaces lazily from Registry constructors.
+
+All twenty-two tickets are resolved. Tickets 03–22 were implemented here: 03/04
+(the Launcher shell and History) and 06/08/09/10/11/12/13/14/15/16/17/18/19/20/21
+(one slice per Utility) plus 05/07 (History management and catalog
+navigation/themes) and 22 (release packaging and acceptance). Several Utility
+slices were implemented by parallel DeepSeek subagents on disjoint files;
+registration and integration were serialized in the orchestrator.
+
+Native testing found and fixed four real defects: a duplicated confirmation
+focus handle that aborted GPUI, a Launcher that never became key so its search
+field could not be typed into, a duplicate a11y node id from repeated
+channel-button labels, and non-deterministic JWT key ordering under
+`serde_json`'s `preserve_order` feature. A fifth (HoldButton not taking focus on
+click) was found during the final native pass.
+
+Gate: `CARGO_TARGET_DIR=/private/tmp/sofdevtool-terra-target rust/scripts/verify
+--full` exit 0, 257 tests (43 app, 186 core, 23 JSON contract, 5 UI), rustfmt,
+Clippy `-D warnings`, Debug/Release and the gallery example. Evidence per ticket
+is under `rust/docs/evidence/`. macOS 14/15 runtime and IME composition remain
+the recorded unverified limits.

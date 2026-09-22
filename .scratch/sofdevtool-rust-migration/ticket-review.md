@@ -1,6 +1,6 @@
 # Rust migration ticket review
 
-Status: approved — all 22 tickets published locally as ready-for-agent
+Status: complete — all 22 tickets resolved
 
 The owner approved the specification, testing boundaries, ticket granularity and blocking edges. Implementation is delegated to a new orchestrator session; no ticket has been started here.
 
