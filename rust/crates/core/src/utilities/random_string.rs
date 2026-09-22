@@ -79,6 +79,17 @@ impl RandomStringRequest {
             ..self.clone()
         }
     }
+
+    /// Whether the control values are inside the supported length/count
+    /// ranges.
+    ///
+    /// Persistence loading uses this to reject out-of-range stored controls
+    /// before they reach the workspace. Generation performs the fuller
+    /// validation (including the alphabet) separately.
+    pub fn has_supported_ranges(&self) -> bool {
+        (MIN_LENGTH..=MAX_LENGTH).contains(&self.length)
+            && (MIN_COUNT..=MAX_COUNT).contains(&self.count)
+    }
 }
 
 /// The typed outcome shown to the user.
@@ -579,6 +590,22 @@ mod tests {
             &<RandomString as Utility>::neutral()
         )
         .is_none());
+    }
+
+    #[test]
+    fn supported_ranges_cover_only_the_documented_length_and_count_bounds() {
+        let supported = |length, count| RandomStringRequest {
+            length,
+            count,
+            ..RandomStringRequest::default()
+        };
+        assert!(supported(MIN_LENGTH, MIN_COUNT).has_supported_ranges());
+        assert!(supported(MAX_LENGTH, MAX_COUNT).has_supported_ranges());
+        assert!(supported(20, 1).has_supported_ranges());
+        assert!(!supported(0, 1).has_supported_ranges());
+        assert!(!supported(MAX_LENGTH + 1, 1).has_supported_ranges());
+        assert!(!supported(20, 0).has_supported_ranges());
+        assert!(!supported(20, MAX_COUNT + 1).has_supported_ranges());
     }
 
     #[test]

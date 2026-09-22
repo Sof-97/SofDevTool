@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::identity;
 use crate::shortcut::Shortcut;
+use crate::utilities::random_string::RandomStringControls;
 
 const SHORTCUT_FILE: &str = "launcher-shortcut.v1.json";
 const SHORTCUT_SCHEMA_VERSION: u8 = 1;
@@ -20,6 +21,8 @@ const HISTORY_FILE: &str = "history-preferences.v1.json";
 const HISTORY_SCHEMA_VERSION: u8 = 1;
 const WORKSPACE_FILE: &str = "workspace-preferences.v1.json";
 const WORKSPACE_SCHEMA_VERSION: u8 = 1;
+const RANDOM_STRING_CONTROLS_FILE: &str = "random-string-controls.v1.json";
+const RANDOM_STRING_CONTROLS_SCHEMA_VERSION: u8 = 1;
 
 /// Fresh Rust-only persistence for the Workbench catalog and theme.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +169,114 @@ struct HistoryRecord {
     policy: crate::history::HistoryPolicy,
 }
 
+/// Fresh Rust-only persistence for the Random String Utility's saved controls.
+///
+/// Ordinary preferences carry the control configuration only: generated
+/// values and generation bookkeeping never appear here, and loading never
+/// generates output or records History. Missing data is a neutral first-run
+/// state; malformed, version-invalid or out-of-range data falls back to the
+/// defaults with an honest diagnostic and is left untouched on disk.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RandomStringControlsPreferences {
+    root: PathBuf,
+}
+
+impl RandomStringControlsPreferences {
+    pub fn application_support() -> Result<Self, PreferenceError> {
+        identity::application_support_root()
+            .map(Self::new)
+            .ok_or(PreferenceError::UnavailableRoot)
+    }
+
+    /// Test and composition seam for a caller-owned Rust-only directory.
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Loads the stored controls for startup, converting every unusable state
+    /// into the defaults plus a readable diagnostic.
+    pub fn load_for_startup(&self) -> RandomStringControlsStartup {
+        match self.load() {
+            Ok(controls) => RandomStringControlsStartup {
+                controls,
+                diagnostic: None,
+            },
+            Err(error) => RandomStringControlsStartup {
+                controls: RandomStringControls::default(),
+                diagnostic: Some(format!(
+                    "Random String controls could not be loaded; using the defaults for this launch because {error}"
+                )),
+            },
+        }
+    }
+
+    /// Loads the stored controls. A missing file yields the defaults; a
+    /// malformed, unsupported-version or out-of-range file is an error and is
+    /// never silently overwritten.
+    pub fn load(&self) -> Result<RandomStringControls, PreferenceError> {
+        let contents = match fs::read_to_string(self.path()) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(RandomStringControls::default());
+            }
+            Err(error) => return Err(PreferenceError::Read(error)),
+        };
+        let record: RandomStringControlsRecord =
+            serde_json::from_str(&contents).map_err(PreferenceError::Decode)?;
+        if record.version != RANDOM_STRING_CONTROLS_SCHEMA_VERSION {
+            return Err(PreferenceError::UnsupportedVersion(record.version));
+        }
+        if !record.controls.is_supported() {
+            return Err(PreferenceError::InvalidControls);
+        }
+        Ok(record.controls)
+    }
+
+    /// Persists the latest controls atomically in the same directory. A failed
+    /// write leaves any previously valid file in place and is reported, never
+    /// presented as a successful save.
+    pub fn save(&self, controls: &RandomStringControls) -> Result<(), PreferenceError> {
+        if !controls.is_supported() {
+            return Err(PreferenceError::InvalidControls);
+        }
+        fs::create_dir_all(&self.root).map_err(PreferenceError::CreateDirectory)?;
+        let record = RandomStringControlsRecord {
+            version: RANDOM_STRING_CONTROLS_SCHEMA_VERSION,
+            controls: controls.clone(),
+        };
+        let serialized = serde_json::to_vec_pretty(&record).map_err(PreferenceError::Encode)?;
+        let path = self.path();
+        let temporary = self.root.join(format!(
+            ".{RANDOM_STRING_CONTROLS_FILE}.{}.tmp",
+            std::process::id()
+        ));
+        fs::write(&temporary, serialized).map_err(PreferenceError::Write)?;
+        fs::rename(&temporary, &path).map_err(PreferenceError::Replace)
+    }
+
+    fn path(&self) -> PathBuf {
+        self.root.join(RANDOM_STRING_CONTROLS_FILE)
+    }
+}
+
+/// The startup outcome for Random String controls: the configuration to apply
+/// (stored or default) and an honest diagnostic when stored data was unusable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RandomStringControlsStartup {
+    pub controls: RandomStringControls,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct RandomStringControlsRecord {
+    version: u8,
+    controls: RandomStringControls,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShortcutPreferences {
     root: PathBuf,
@@ -265,6 +376,8 @@ pub enum PreferenceError {
     Decode(serde_json::Error),
     UnsupportedVersion(u8),
     InvalidShortcut(crate::shortcut::ShortcutError),
+    /// The stored control configuration is outside the supported ranges.
+    InvalidControls,
     CreateDirectory(io::Error),
     Encode(serde_json::Error),
     Write(io::Error),
@@ -287,6 +400,12 @@ impl fmt::Display for PreferenceError {
             }
             Self::InvalidShortcut(error) => {
                 write!(formatter, "it contains an invalid shortcut: {error}")
+            }
+            Self::InvalidControls => {
+                write!(
+                    formatter,
+                    "it declares controls outside the supported ranges"
+                )
             }
             Self::CreateDirectory(error) => {
                 write!(formatter, "could not create its directory: {error}")
@@ -350,6 +469,55 @@ mod tests {
             .expect("diagnostic")
             .contains("could not be loaded"));
         fs::remove_dir_all(preferences.root()).expect("remove test directory");
+    }
+
+    #[test]
+    fn random_string_controls_round_trip_and_default_safely() {
+        let root = std::env::temp_dir().join(format!(
+            "sofdevtool-rust-rs-controls-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        let preferences = RandomStringControlsPreferences::new(root.clone());
+
+        // A missing file is the neutral first-run state: defaults, no diagnostic.
+        let startup = preferences.load_for_startup();
+        assert_eq!(startup.controls, RandomStringControls::default());
+        assert_eq!(startup.diagnostic, None);
+
+        let controls = RandomStringControls {
+            length: 64,
+            count: 3,
+            uppercase: false,
+            lowercase: true,
+            digits: false,
+            symbols: true,
+            exclude_ambiguous: false,
+            custom_alphabet: "αβ".to_owned(),
+        };
+        preferences.save(&controls).expect("save controls");
+        let startup = preferences.load_for_startup();
+        assert_eq!(startup.controls, controls);
+        assert_eq!(startup.diagnostic, None);
+
+        // Malformed data falls back to defaults with a diagnostic, untouched.
+        fs::write(root.join(RANDOM_STRING_CONTROLS_FILE), "not json")
+            .expect("write malformed data");
+        let startup = preferences.load_for_startup();
+        assert_eq!(startup.controls, RandomStringControls::default());
+        assert!(startup
+            .diagnostic
+            .expect("diagnostic")
+            .contains("could not be loaded"));
+        assert_eq!(
+            fs::read_to_string(root.join(RANDOM_STRING_CONTROLS_FILE))
+                .expect("malformed file remains"),
+            "not json"
+        );
+        fs::remove_dir_all(root).expect("remove test directory");
     }
 
     #[test]

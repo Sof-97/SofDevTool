@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Persist all specified controls, including custom alphabet and ambiguous-character exclusion, with validated/versioned loading and the agreed defaults/ranges.
-- [ ] Reconstruct the workspace under an isolated profile and recover controls without generating output or recording History.
-- [ ] Keep generated values and operation bookkeeping out of ordinary preferences; distinguish missing, malformed and failed-save states honestly.
-- [ ] Use the existing profile/data-root seam so final Debug/Release isolation can be exercised by ticket 20 without adding migration of legacy user data.
+- [x] Persist all specified controls, including custom alphabet and ambiguous-character exclusion, with validated/versioned loading and the agreed defaults/ranges.
+- [x] Reconstruct the workspace under an isolated profile and recover controls without generating output or recording History.
+- [x] Keep generated values and operation bookkeeping out of ordinary preferences; distinguish missing, malformed and failed-save states honestly.
+- [x] Use the existing profile/data-root seam so final Debug/Release isolation can be exercised by ticket 20 without adding migration of legacy user data.
 
 ## Testing
 
@@ -26,3 +26,5 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+**Acceptance evidence:** [ticket 08](../evidence/ticket-08.md); independently reviewed and verified with the native app on 2026-09-23.
