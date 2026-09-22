@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Expand application-owned coordination and adapt JSON, Base64 and Settings first; retain an adapter for the other workspaces while they migrate.
 - [ ] Clear one/all removes affected retained entries, selection and pending restore in both open workspaces, including a hidden one, while preserving current workspace content.

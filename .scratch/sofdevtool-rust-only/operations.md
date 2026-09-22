@@ -49,3 +49,34 @@ The owner authorized dedicated pi prompts with Kimi K3 after approving and commi
 - No remote push, pull request or merge. No real application data was used.
 - Only ticket 08 is resolved in this initiative; 05 and 01 still require the
   remaining trial implementation/review, and the rest remain undispatched.
+
+
+## Parallel completion authorization — 2026-09-23
+
+The owner superseded the pi trial with implementation of all remaining tickets
+using parallel GPT-6 Sol/Luna subagents, followed by one comprehensive GPT-6
+Astra review after all implementations. See [current execution contract](parallel-execution.md).
+The native preview gate, local-only delivery and privacy boundaries remain.
+
+Initial assignments from `54be475`:
+- 01: GPT-6 Sol, sofui owned interfaces and JSON/gallery first consumers.
+- 05: GPT-6 Sol, bounded background Regex execution and revision safety.
+- 07: queued for GPT-6 Luna, generator restore protection (third worker dispatch awaiting an available agent slot).
+
+All workers have disjoint file ownership, leave candidates uncommitted and do
+not modify ticket statuses. The coordinator integrates and runs shared gates.
+
+### Integration wave 1 and wave 2
+
+- 01: Sol candidate complete; 7 sofui public/grapheme tests and 57 app tests,
+  app/gallery compile and owned formatting passed. Native acceptance and final
+  Astra review pending. Package rename retains the temporary app dependency alias.
+- 05: Sol candidate complete; 20 core Regex, 9 shared session and 6 app Regex
+  tests passed. Coordinator requested finite idle polling and a completion-race
+  correction; both are included. Native acceptance/final Astra review pending.
+- 02: assigned to the Regex worker (GPT-6 Sol), History coordination and first
+  JSON/Base64/Settings consumers. JSON ownership handed over after01 completion.
+- 10: next UI-lane assignment after01 integration, application-wide themes;
+  Settings/History/JSON remain owned by02.
+- The service refused a third agent thread; two Sol implementation lanes continue.
+  07 remains queued; no third worker or early Astra review was started.
