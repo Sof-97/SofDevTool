@@ -2,104 +2,113 @@
 
 The Rust rewrite of the Developer Toolbox, built alongside the existing Swift
 application in the same repository. This directory is a self-contained Cargo
-workspace; it does not read, migrate or write Swift data.
+workspace; it never reads, migrates or writes Swift data.
 
-## Crates
+## Crates and module ownership
 
 | Crate | Path | Role |
 | --- | --- | --- |
-| `sofdevtool-core` | `crates/core` | GPUI-independent Utility contracts and domain engines. Owns the JSON request/result/diagnostic/snapshot types. |
-| `sofdevtool-ui` | `crates/ui` | Owner-maintained GPUI component library: theme tokens, buttons, labelled fields, multiline editor, panels, diagnostics. Must not depend on either SofDevTool crate, on Utility IDs, app persistence, or macOS service policy. |
-| `sofdevtool-app` | `crates/app` | The application: identity, composition, and the JSON/Text Diff workspaces. Binary `sofdevtool`. |
-| gallery | `crates/ui/examples/gallery.rs` | Executable demonstration of the exported components. Builds without the application crate. |
+| `sofdevtool-core` | `crates/core` | GPUI-independent Utility contracts and domain engines. `utility.rs`/`session.rs` hold the shared `Utility` trait and revision-gated `Session<U>`; `diagnostic.rs` holds the shared diagnostic vocabulary; `utilities/<name>.rs` owns each Utility's request/result/snapshot and tests. |
+| `sofdevtool-ui` | `crates/ui` | Owner-maintained GPUI component library: semantic theme tokens (`theme.rs`), `Button`, `HoldButton`, `LabeledField`, `TextEditor`, `TextField`, `panel`, `HistoryPanel`, diagnostics, copy feedback. Must not depend on either SofDevTool crate, on Utility IDs, app persistence, or macOS service policy. |
+| `sofdevtool-app` | `crates/app` | The application: identity, Registry, Workbench, Launcher, Settings, preferences, fresh Rust History, and one workspace per Utility (`utilities/<name>.rs`, plus `json_workspace.rs` and `text_diff/`). Binary `sofdevtool`. |
+| gallery | `crates/ui/examples/gallery.rs` | Executable demonstration of the exported components in their normal, focused, disabled, invalid, empty, list, hold, confirmation and theme states. Builds without the application crate. |
 
-## Toolchain
+All fifteen Utilities are implemented and registered: JSON, YAML/JSON, Base64,
+URL Encoding, Hashes, Identifier Generator (UUID/ULID/KSUID), Timestamps, JWT
+Decoder, Regex, Case Conversion, Whitespace, Color Conversion, Sample Data,
+Random String and Text Diff.
 
-Pinned in `rust-toolchain.toml`:
+### Component consumption and extraction
 
-- Rust `1.98.1` (aarch64-apple-darwin), `rustfmt` and `clippy`.
+The application consumes components only through the `sofdevtool_ui` public
+surface; it never names `gpui-component` types directly. `sofdevtool-ui` wraps
+`gpui-component`'s text-editing engine behind `TextEditor`/`TextField` and owns
+everything else. Extraction to a separate repository is deferred until a second
+consuming application makes the reusable boundary concrete; the crate already
+has no SofDevTool dependencies, so extraction is a repository move rather than a
+refactor.
 
-## Dependency provenance and licenses
+## Toolchain and gate
 
-Only the GPUI family used by `gpui-component` is pinned, as a single compatible
-set. Exact versions live in `Cargo.lock`.
-
-| Dependency | Version | License | Provenance / why |
-| --- | --- | --- | --- |
-| `gpui-pre` (lib `gpui`) | `=0.3.6` | Apache-2.0 | Snapshot of `zed-industries/zed` `gpui` `0.2.2` (`zed-rev bcf6582`). The GPUI version the component ecosystem is built against. |
-| `gpui-pre-platform` | `=0.3.6` | Apache-2.0 | The `gpui_platform` entry point (`application()`), same snapshot. |
-| `gpui-component` | `=0.6.6` | Apache-2.0 | `longbridge/gpui-kit`. Used **only** for its text editing engine, wrapped by `sofdevtool-ui`'s `TextEditor`/`TextField`. It is not adopted as the application's visual system: theme tokens and all other controls are owner-maintained. |
-| `gpui-base` | `0.6.6` | Apache-2.0 | Transitive foundation of `gpui-component`. |
-| `unicode-segmentation` | `=1.13.3` | MIT OR Apache-2.0 | Unicode extended-grapheme boundaries for `TextEditor` Backspace/Delete. This exact version was already present in the lockfile through the GPUI dependency graph; the direct pin makes that editor contract explicit. |
-| `serde` / `serde_json` | `1.x` | MIT OR Apache-2.0 | Derives for contract types; `serde_json` also serializes the local Text Diff bridge requests. |
-
-The JSON engine does **not** use `serde_json`'s `arbitrary_precision` mode: it
-has a small literal-preserving parser, so numbers keep their exact spelling and
-a user object keyed `$serde_json::private::Number` is never rewritten into a
-number.
-
-`cargo` reports a future-incompatibility warning for the transitive `block
-v0.1.6` crate (an `objc` dependency). It is not first-party code and does not
-affect the current toolchain.
-
-## Gate
-
-The authoritative Rust gate is `scripts/verify`; formatting is applied with
-`scripts/format`. Both run with `set -euo pipefail`, so the first failing command
-determines the exit status and no step is hidden by a pipeline.
+Pinned in `rust-toolchain.toml`: Rust `1.98.1` (aarch64-apple-darwin) with
+`rustfmt` and `clippy`.
 
 ```sh
 rust/scripts/format            # cargo fmt --all
 rust/scripts/verify            # fmt check, clippy -D warnings, tests, debug build
-rust/scripts/verify --full     # adds a release build
+rust/scripts/verify --full     # adds a release build (the authoritative gate)
 ```
+
+The gate runs each command with `set -euo pipefail`; the first failure is the
+exit status and no step is hidden by a pipeline.
+
+## Dependency provenance and licenses
+
+Exact versions live in `Cargo.lock`. First-party crates depend only on:
+
+| Dependency | Version | License | Why |
+| --- | --- | --- | --- |
+| `gpui-pre` (lib `gpui`) | `=0.3.6` | Apache-2.0 | GPUI snapshot of `zed-industries/zed`; the version the component ecosystem targets. |
+| `gpui-pre-platform` | `=0.3.6` | Apache-2.0 | The `gpui_platform` entry point. |
+| `gpui-component` | `=0.6.6` | Apache-2.0 | Used **only** for its text editing engine, wrapped by `sofdevtool-ui`. Not adopted as the visual system. |
+| `unicode-segmentation` | `=1.13.3` | MIT OR Apache-2.0 | Grapheme boundaries for editor deletion and case segmentation. |
+| `serde` / `serde_json` | `1.x` | MIT OR Apache-2.0 | Contract derives and the local Text Diff bridge. |
+| `digest`, `sha1`, `sha2`, `md-5`, `hex` | pinned | MIT OR Apache-2.0 | Hash Utility. |
+| `rand`, `uuid` | pinned | MIT OR Apache-2.0 | Identifier, random-string and sample-data generation. |
+| `regex` | `=1.11.3` | MIT OR Apache-2.0 | The Rust regex dialect. |
+| `chrono`, `chrono-tz` | pinned | MIT OR Apache-2.0 | Timestamps. |
+| `saphyr`, `saphyr-parser` | `=0.0.3` | MIT OR Apache-2.0 | YAML 1.2 parsing; the event-level parser is required so duplicate keys and tags are rejected rather than silently accepted. |
+| `wry` | `=0.53.5` | MIT OR Apache-2.0 | Embedded WKWebView for the Text Diff renderer. |
+
+The JSON engine deliberately avoids `serde_json`'s `arbitrary_precision` mode.
+`cargo` reports a future-incompatibility warning for the transitive `block
+v0.1.6` crate (an `objc` dependency); it is not first-party code.
 
 ## Running
 
 ```sh
-cargo run -p sofdevtool-app --bin sofdevtool   # JSON and Text Diff technical workbench
+cargo run -p sofdevtool-app --bin sofdevtool   # the full Developer Toolbox
 cargo run -p sofdevtool-ui --example gallery   # the component gallery
 ```
 
-Prebuilt Debug binaries (build/test host macOS 26.2, arm64):
-
-- `target/debug/sofdevtool`
-- `target/debug/examples/gallery`
-
-To produce a locally identified Debug bundle (it is **not** installed, launched
-or notarized):
+### Bundles
 
 ```sh
-rust/scripts/bundle-debug   # -> rust/artifacts/SofDevToolRust.app
+rust/scripts/bundle-debug     # -> rust/artifacts/SofDevToolRust.app (Debug)
+rust/scripts/bundle-release   # -> rust/artifacts/SofDevToolRust.app (Release)
 ```
 
-The bundle carries `CFBundleIdentifier com.gerardo.sofdevtool.rust` and
-`LSMinimumSystemVersion 14.0`. `WindowOptions.app_id` is a no-op on the macOS
-backend, so the bundle's `Info.plist` — not an in-process constant — is what
-identifies the application.
+Both carry `CFBundleIdentifier com.gerardo.sofdevtool.rust` and
+`LSMinimumSystemVersion 14.0`. The Release bundle additionally embeds a
+generated `AppIcon.icns`, version `0.1.0` (build `1`) and
+`THIRD_PARTY_NOTICES.md`. Neither installs, launches or notarizes anything.
+
+### Owner installation and launch
+
+1. `rust/scripts/bundle-release`
+2. Move `rust/artifacts/SofDevToolRust.app` to `/Applications` (or anywhere) if
+   you want it outside the checkout.
+3. Launch it from Finder or `open /Applications/SofDevToolRust.app`.
+
+The Rust app writes only under `~/Library/Application Support/SofDevToolRust`
+(History and preferences) and the `com.gerardo.sofdevtool.rust` preference
+domain. The Swift app's `~/Library/Application Support/SofDevTool` data and
+`dev.gerardo.SofDevTool` preferences are never read or written. Installing or
+replacing the Swift app is a separate owner action and is not performed here.
+
+WebView assets and third-party notices are compiled into the binary, so the
+packaged app resolves everything locally with no network access.
 
 ## macOS deployment
 
-`.cargo/config.toml` sets `MACOSX_DEPLOYMENT_TARGET=14.0`, preserving the
-migration specification's macOS 14 baseline. The linked binaries report
-`minos 14.0` (verified with `otool`). That is compatibility evidence only: the
-host that builds and runs the gate is macOS 26.2. macOS 14 and 15 runtime
-verification remain pending until the gate and native scenarios run there.
+`.cargo/config.toml` sets `MACOSX_DEPLOYMENT_TARGET=14.0`, preserving the macOS
+14 baseline; the linked binaries report `minos 14.0`. That is compatibility
+evidence only. All native verification to date ran on macOS 26.2 (arm64);
+**macOS 14 and 15 runtime remain unverified**.
 
-## Embedded Text Diff
+## Verification evidence
 
-The technical workbench opens JSON by default and retains both JSON and Text
-Diff sessions when switching with the sidebar. This is the ticket02 proof;
-Launcher, History and the remaining catalog are subsequent slices.
-
-Wry **0.53.5** (MIT OR Apache-2.0) hosts a WKWebView child inside the GPUI
-window. Native types stay behind `crates/app/src/text_diff/renderer.rs`.
-The checked-in Pierre bundle and the complete JavaScript license inventory in
-`crates/app/src/text_diff/assets/THIRD_PARTY_NOTICES.md` are embedded in the
-local HTML. CSP rejects remote subresources and navigation is restricted.
-Readiness and completion callbacks are revision-gated; renderer errors appear
-in the workspace. Complex emoji use a visibly disclosed whole-line fallback.
-
-Native verification and remaining platform limits are recorded in
-[the ticket02 evidence](docs/evidence/ticket-02.md). Compilation is not evidence
-of native interaction or macOS14/15 runtime compatibility.
+Per-ticket native scenarios, commands, host details and honest limits live in
+[`docs/evidence/`](docs/evidence/). Compilation and unit tests are never
+presented as runtime evidence. The IME composition check remains a recorded
+nonblocking evidence exception.

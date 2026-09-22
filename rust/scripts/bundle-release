@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Assemble a locally identified Release bundle for the Rust application.
+#
+# It does not install, launch or notarize anything. WebView assets and
+# third-party notices are compiled into the binary; the notices are also copied
+# into the bundle for inspection. The bundle identifier is distinct from the
+# Swift product.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+bundle_id="com.gerardo.sofdevtool.rust"
+version="0.1.0"
+build="1"
+app_dir="artifacts/SofDevToolRust.app"
+
+exe="$(
+    cargo build --release -p sofdevtool-app --bin sofdevtool --message-format=json |
+        python3 -c '
+import json, sys
+for line in sys.stdin:
+    try:
+        message = json.loads(line)
+    except ValueError:
+        continue
+    target = message.get("target", {})
+    if (
+        message.get("reason") == "compiler-artifact"
+        and message.get("executable")
+        and target.get("name") == "sofdevtool"
+    ):
+        print(message["executable"])
+        break
+'
+)"
+
+if [ -z "$exe" ] || [ ! -f "$exe" ]; then
+    echo "could not resolve the built sofdevtool executable" >&2
+    exit 1
+fi
+
+rm -rf "$app_dir"
+mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
+cp "$exe" "$app_dir/Contents/MacOS/sofdevtool"
+cp crates/app/src/text_diff/assets/THIRD_PARTY_NOTICES.md "$app_dir/Contents/Resources/THIRD_PARTY_NOTICES.md"
+
+# A deterministic, locally generated icon (no network, no external assets).
+iconset="$(mktemp -d)/AppIcon.iconset"
+mkdir -p "$iconset"
+python3 scripts/make-icon.py "$iconset/icon_1024x1024.png"
+for size in 16 32 128 256 512; do
+    /usr/bin/sips -z "$size" "$size" "$iconset/icon_1024x1024.png" \
+        --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    double=$((size * 2))
+    /usr/bin/sips -z "$double" "$double" "$iconset/icon_1024x1024.png" \
+        --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+/usr/bin/iconutil -c icns "$iconset" -o "$app_dir/Contents/Resources/AppIcon.icns"
+
+cat > "$app_dir/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>sofdevtool</string>
+    <key>CFBundleIdentifier</key>
+    <string>${bundle_id}</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>SofDevToolRust</string>
+    <key>CFBundleDisplayName</key>
+    <string>SofDevTool (Rust)</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${version}</string>
+    <key>CFBundleVersion</key>
+    <string>${build}</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+
+echo "built $app_dir"
+echo "CFBundleIdentifier: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_dir/Contents/Info.plist")"
+echo "CFBundleShortVersionString: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_dir/Contents/Info.plist")"
+echo "icon: $app_dir/Contents/Resources/AppIcon.icns"

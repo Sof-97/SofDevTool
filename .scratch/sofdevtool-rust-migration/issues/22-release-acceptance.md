@@ -1,7 +1,7 @@
 # 22: Package and verify the complete Rust Developer Toolbox
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 05, 07, 08, 09, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -20,4 +20,4 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Resolved. All fifteen Utilities and the shared shell/History behavior are verified; the Release bundle has a distinct identity, icon, version and bundled notices, runs outside the checkout with fresh-then-persistent Rust data and leaves Swift data untouched. Native scenarios, gate results and the explicit untested list are in [`rust/docs/evidence/ticket-22.md`](../../../rust/docs/evidence/ticket-22.md). macOS 14/15 runtime remain unverified.
