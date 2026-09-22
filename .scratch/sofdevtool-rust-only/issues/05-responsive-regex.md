@@ -26,3 +26,8 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+**Execution note (2026-09-23):** The first pi/Kimi attempt stopped during source
+inspection because OpenCode Go returned HTTP 429 `GoUsageLimitError`. No product
+files changed. The preserved session can be resumed when that provider is
+available; acceptance remains open. See [attempt evidence](../evidence/ticket-05.md).
