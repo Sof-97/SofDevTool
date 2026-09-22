@@ -1,8 +1,12 @@
 # Rust migration ticket review
 
-Status: complete — all 22 tickets resolved
+Status: original tickets 01–22 recorded resolved; Rust-only completion planning moved to a separate initiative
 
-The owner approved the specification, testing boundaries, ticket granularity and blocking edges. Implementation is delegated to a new orchestrator session; no ticket has been started here.
+The original migration specification, testing boundaries, ticket granularity and blocking edges were approved. The original register below is historical. The owner has since agreed a Rust-only completion scope, maintained in a separate planning folder. The current request is documentation only, and no follow-up implementation has started.
+
+## Separate Rust-only completion initiative
+
+Read the [Rust-only planning index](../sofdevtool-rust-only/README.md), its [complete specification](../sofdevtool-rust-only/spec.md) and the [proposed ticket breakdown](../sofdevtool-rust-only/ticket-proposal.md). The specification previously placed here as follow-up 23 has moved; it is not another ticket in the original migration series. New ticket numbers belong to the new initiative, start at 01, and require breakdown approval before publication. The original 01–22 ticket bodies and states are unchanged.
 
 ## Approved test boundaries
 
