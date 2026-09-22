@@ -4,20 +4,22 @@
 //!
 //! This workspace never emulates ICU: unsupported look-around and
 //! backreferences surface as diagnostics. Evaluation is bounded by the named
-//! limits in the core contract, debounced off the UI thread and revision-gated
+//! limits in the core contract, evaluated off the UI thread and revision-gated
 //! through the shared [`Session`], so only the current revision publishes a
 //! result or a History snapshot.
 
 use std::rc::Rc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{div, AnyView, App, Context, FocusHandle, IntoElement, Render, Subscription, Window};
 use sofdevtool_core::session::{Session, SubmitOutcome};
 use sofdevtool_core::utilities::regex::{
-    CaptureInfo, Regex, RegexEvaluation, RegexFlags, RegexRequest, RegexSnapshot,
-    RUST_REGEX_DIALECT_NOTE, RUST_REGEX_ENGINE_LABEL, RUST_REGEX_FLAGS_NOTE,
-    RUST_REGEX_REPLACEMENT_NOTE,
+    evaluate_with_cancellation, CaptureInfo, Regex, RegexEvaluation, RegexFlags, RegexLimits,
+    RegexRequest, RegexSnapshot, RUST_REGEX_DIALECT_NOTE, RUST_REGEX_ENGINE_LABEL,
+    RUST_REGEX_FLAGS_NOTE, RUST_REGEX_REPLACEMENT_NOTE,
 };
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
@@ -30,8 +32,157 @@ use crate::history::{HistoryEntry, HistoryRecorder};
 use crate::workbench::Workbench;
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
+const COMPLETION_POLL: Duration = Duration::from_millis(30);
 
 type RegexSession = Session<Regex>;
+
+struct WorkRequest {
+    revision: u64,
+    request: RegexRequest,
+    ready_at: Instant,
+}
+
+#[derive(Default)]
+struct WorkState {
+    pending: Option<WorkRequest>,
+    running_revision: Option<u64>,
+    stopped: bool,
+}
+
+/// Exactly one engine thread and one replaceable pending request per workspace.
+/// The engine may finish an individual call after cancellation, but no obsolete
+/// result escapes the worker or the session's final revision check.
+struct RegexWorker {
+    state: Arc<(Mutex<WorkState>, Condvar)>,
+    current_revision: Arc<AtomicU64>,
+    completed: Arc<Mutex<Option<(u64, RegexEvaluation)>>>,
+}
+
+impl RegexWorker {
+    fn new() -> Self {
+        Self::with_evaluator(|request, cancelled| {
+            evaluate_with_cancellation(request, &RegexLimits::default(), cancelled)
+        })
+    }
+
+    fn with_evaluator(
+        evaluator: impl Fn(&RegexRequest, &dyn Fn() -> bool) -> Option<RegexEvaluation> + Send + 'static,
+    ) -> Self {
+        let state = Arc::new((Mutex::new(WorkState::default()), Condvar::new()));
+        let current_revision = Arc::new(AtomicU64::new(0));
+        let completed = Arc::new(Mutex::new(None));
+        let thread_state = Arc::clone(&state);
+        let thread_revision = Arc::clone(&current_revision);
+        let thread_completed = Arc::clone(&completed);
+        std::thread::Builder::new()
+            .name("sofdevtool-regex".to_owned())
+            .spawn(move || {
+                let (lock, wake) = &*thread_state;
+                loop {
+                    let mut work = lock.lock().expect("Regex worker state poisoned");
+                    while work.pending.is_none() && !work.stopped {
+                        work = wake.wait(work).expect("Regex worker state poisoned");
+                    }
+                    if work.stopped {
+                        break;
+                    }
+                    let wait = work
+                        .pending
+                        .as_ref()
+                        .expect("pending request")
+                        .ready_at
+                        .saturating_duration_since(Instant::now());
+                    if !wait.is_zero() {
+                        drop(
+                            wake.wait_timeout(work, wait)
+                                .expect("Regex worker state poisoned"),
+                        );
+                        continue;
+                    }
+                    let request = work.pending.take().expect("pending request");
+                    work.running_revision = Some(request.revision);
+                    drop(work);
+
+                    let obsolete = || thread_revision.load(Ordering::Acquire) != request.revision;
+                    let result = if obsolete() {
+                        None
+                    } else {
+                        evaluator(&request.request, &obsolete)
+                    };
+                    if let Some(evaluation) = result {
+                        if !obsolete() {
+                            let mut slot = thread_completed.lock().expect("Regex result poisoned");
+                            *slot = Some((request.revision, evaluation));
+                        }
+                    }
+                    lock.lock()
+                        .expect("Regex worker state poisoned")
+                        .running_revision = None;
+                }
+            })
+            .expect("Regex worker thread must start");
+        Self {
+            state,
+            current_revision,
+            completed,
+        }
+    }
+
+    fn submit(&self, revision: u64, request: RegexRequest) {
+        self.current_revision.store(revision, Ordering::Release);
+        self.completed.lock().expect("Regex result poisoned").take();
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().expect("Regex worker state poisoned");
+        state.pending = Some(WorkRequest {
+            revision,
+            request,
+            ready_at: Instant::now() + DEBOUNCE,
+        });
+        wake.notify_one();
+    }
+
+    fn invalidate(&self, revision: u64) {
+        self.current_revision.store(revision, Ordering::Release);
+        self.completed.lock().expect("Regex result poisoned").take();
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().expect("Regex worker state poisoned");
+        state.pending = None;
+        wake.notify_one();
+    }
+
+    fn take_completed(&self) -> Option<(u64, RegexEvaluation)> {
+        self.completed.lock().expect("Regex result poisoned").take()
+    }
+
+    fn has_current_work(&self) -> bool {
+        let revision = self.current_revision.load(Ordering::Acquire);
+        let (lock, _) = &*self.state;
+        let active = {
+            let state = lock.lock().expect("Regex worker state poisoned");
+            state.pending.as_ref().map(|job| job.revision) == Some(revision)
+                || state.running_revision == Some(revision)
+        };
+        // Completion is published before running_revision is cleared. Read
+        // this slot second, so a completion between observations stays visible.
+        active
+            || self
+                .completed
+                .lock()
+                .expect("Regex result poisoned")
+                .is_some()
+    }
+}
+
+impl Drop for RegexWorker {
+    fn drop(&mut self) {
+        self.current_revision.store(u64::MAX, Ordering::Release);
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().expect("Regex worker state poisoned");
+        state.pending = None;
+        state.stopped = true;
+        wake.notify_one();
+    }
+}
 
 /// One boolean flag this workspace can set on the Rust regex engine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +286,8 @@ pub struct RegexWorkspace {
     history: Rc<HistoryRecorder>,
     flags: RegexFlags,
     session: RegexSession,
+    worker: RegexWorker,
+    poller_started: bool,
     display_epoch: u64,
     copied: bool,
     suppress_changes: bool,
@@ -182,6 +335,8 @@ impl RegexWorkspace {
             history,
             flags: RegexFlags::default(),
             session: RegexSession::new(),
+            worker: RegexWorker::new(),
+            poller_started: false,
             display_epoch: u64::MAX,
             copied: false,
             suppress_changes: false,
@@ -214,9 +369,7 @@ impl RegexWorkspace {
     }
 
     /// Submits the current request. A changed request clears the visible result
-    /// immediately and schedules a debounced, revision-gated evaluation. The
-    /// debounce wait runs on the background executor, and a stale revision can
-    /// never settle because the shared session rejects it.
+    /// immediately and replaces the worker's single pending request.
     fn schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.suppress_changes {
             return;
@@ -224,20 +377,37 @@ impl RegexWorkspace {
         let SubmitOutcome::Scheduled(revision) = self.session.submit(self.request(cx)) else {
             return;
         };
+        self.copied = false;
+        self.worker.submit(
+            revision,
+            self.session.request().expect("submitted request").clone(),
+        );
         self.sync_display(window, cx);
         cx.notify();
-        let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
-            executor.timer(DEBOUNCE).await;
-            this.update(cx, |this, cx| {
-                if this.session.resolve(revision).is_some() {
-                    this.record_settled(cx);
-                    cx.notify();
+        if !self.poller_started {
+            self.poller_started = true;
+            let executor = cx.background_executor().clone();
+            cx.spawn(async move |this, cx| loop {
+                executor.timer(COMPLETION_POLL).await;
+                let keep_polling = this.update(cx, |this, cx| {
+                    if let Some((revision, evaluation)) = this.worker.take_completed() {
+                        if this.session.publish(revision, evaluation).is_some() {
+                            this.record_settled(cx);
+                            cx.notify();
+                        }
+                    }
+                    let active = this.worker.has_current_work();
+                    if !active {
+                        this.poller_started = false;
+                    }
+                    active
+                });
+                if !matches!(keep_polling, Ok(true)) {
+                    break;
                 }
             })
-            .ok();
-        })
-        .detach();
+            .detach();
+        }
     }
 
     /// Records the one settled valid operation for the current revision, if any.
@@ -307,6 +477,7 @@ impl RegexWorkspace {
         self.replacement.replace_all("", window, cx);
         self.suppress_changes = false;
         self.session.clear();
+        self.worker.invalidate(self.session.revision());
         self.display_epoch = u64::MAX;
         self.copied = false;
         self.sync_display(window, cx);
@@ -352,6 +523,7 @@ impl RegexWorkspace {
             .set_text(snapshot.request.replacement.clone(), window, cx);
         self.flags = snapshot.request.flags;
         self.session.restore(snapshot);
+        self.worker.invalidate(self.session.revision());
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
         self.pending_restore = None;
@@ -864,6 +1036,179 @@ fn preview_line(output: &str) -> String {
 mod tests {
     use super::*;
     use sofdevtool_core::utilities::regex::evaluate;
+
+    fn await_completion(worker: &RegexWorker) -> (u64, RegexEvaluation) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(completion) = worker.take_completed() {
+                return completion;
+            }
+            assert!(Instant::now() < deadline, "Regex worker did not finish");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn unread_completion_keeps_the_poller_active_after_engine_work_ends() {
+        let worker = RegexWorker::new();
+        worker.submit(1, RegexRequest::new("word", "word"));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let (lock, _) = &*worker.state;
+            let running = lock.lock().expect("worker state").running_revision;
+            let completed = worker.completed.lock().expect("result slot").is_some();
+            if running.is_none() && completed {
+                break;
+            }
+            assert!(Instant::now() < deadline, "worker did not complete");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(worker.has_current_work(), "UI must still read completion");
+        assert_eq!(worker.take_completed().expect("completion").0, 1);
+        assert!(!worker.has_current_work(), "idle poller may now stop");
+    }
+
+    #[test]
+    fn worker_keeps_one_running_and_one_replaceable_pending_request() {
+        use std::sync::mpsc;
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let calls_in_worker = Arc::clone(&calls);
+        let worker = RegexWorker::with_evaluator(move |request, cancelled| {
+            calls_in_worker
+                .lock()
+                .expect("call log")
+                .push(request.pattern.clone());
+            if request.pattern == "slow" {
+                started_tx.send(()).expect("start observer");
+                release_rx.recv().expect("release slow evaluation");
+            }
+            if cancelled() {
+                None
+            } else {
+                Some(evaluate(request))
+            }
+        });
+        let mut session = RegexSession::new();
+        let SubmitOutcome::Scheduled(slow) = session.submit(RegexRequest::new("slow", "slow"))
+        else {
+            panic!("slow revision");
+        };
+        worker.submit(slow, session.request().expect("request").clone());
+        started_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("slow work starts on engine thread");
+        assert!(worker.has_current_work());
+
+        for index in 0..40 {
+            let request = RegexRequest::new(format!("intermediate-{index}"), "text");
+            let SubmitOutcome::Scheduled(revision) = session.submit(request.clone()) else {
+                panic!("new intermediate revision");
+            };
+            worker.submit(revision, request);
+        }
+        let winner = RegexRequest::new("winner", "winner");
+        let SubmitOutcome::Scheduled(winning_revision) = session.submit(winner.clone()) else {
+            panic!("winning revision");
+        };
+        worker.submit(winning_revision, winner);
+        assert_eq!(session.evaluation(), &RegexEvaluation::Empty);
+        assert!(session.take_snapshot().is_none());
+        release_tx.send(()).expect("release slow work");
+
+        let (revision, evaluation) = await_completion(&worker);
+        assert_eq!(revision, winning_revision);
+        assert_eq!(evaluation.matches().len(), 1);
+        assert!(session
+            .publish(slow, evaluate(&RegexRequest::new("slow", "slow")))
+            .is_none());
+        assert!(session.publish(revision, evaluation).is_some());
+        assert!(session.take_snapshot().is_some());
+        assert!(session.take_snapshot().is_none());
+        assert_eq!(
+            *calls.lock().expect("call log"),
+            vec!["slow".to_owned(), "winner".to_owned()]
+        );
+    }
+
+    #[test]
+    fn clear_and_restore_invalidate_running_or_pending_work() {
+        use std::sync::mpsc;
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = RegexWorker::with_evaluator(move |request, cancelled| {
+            started_tx.send(()).expect("start observer");
+            release_rx.recv().expect("release evaluation");
+            if cancelled() {
+                None
+            } else {
+                Some(evaluate(request))
+            }
+        });
+        let mut session = RegexSession::new();
+        let request = RegexRequest::new("first", "first");
+        let SubmitOutcome::Scheduled(first) = session.submit(request.clone()) else {
+            panic!("first revision");
+        };
+        worker.submit(first, request);
+        started_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("running work starts");
+
+        session.clear();
+        worker.invalidate(session.revision());
+        assert_eq!(session.evaluation(), &RegexEvaluation::Empty);
+        assert!(
+            !worker.has_current_work(),
+            "obsolete running work needs no UI poller"
+        );
+        let pending = RegexRequest::new("pending", "pending");
+        let SubmitOutcome::Scheduled(pending_revision) = session.submit(pending.clone()) else {
+            panic!("pending revision");
+        };
+        worker.submit(pending_revision, pending);
+
+        let restored_request = RegexRequest::new("restored", "restored");
+        let restored_evaluation = evaluate(&restored_request);
+        let snapshot = <Regex as Utility>::snapshot(&restored_request, &restored_evaluation)
+            .expect("valid snapshot");
+        session.restore(snapshot);
+        worker.invalidate(session.revision());
+        assert!(
+            !worker.has_current_work(),
+            "restore has no current engine work"
+        );
+        release_tx.send(()).expect("release running work");
+
+        assert!(session
+            .publish(first, evaluate(&RegexRequest::new("first", "first")))
+            .is_none());
+        assert!(session
+            .publish(
+                pending_revision,
+                evaluate(&RegexRequest::new("pending", "pending"))
+            )
+            .is_none());
+        assert_eq!(session.evaluation().matches()[0].value, "restored");
+        assert!(session.take_snapshot().is_none());
+        // A fresh request proves the worker drained the old call and did not
+        // retain the cancelled pending request.
+        let fresh = RegexRequest::new("fresh", "fresh");
+        let SubmitOutcome::Scheduled(fresh_revision) = session.submit(fresh.clone()) else {
+            panic!("fresh revision");
+        };
+        worker.submit(fresh_revision, fresh);
+        started_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("fresh work starts");
+        release_tx.send(()).expect("release fresh work");
+        let (revision, evaluation) = await_completion(&worker);
+        assert_eq!(revision, fresh_revision);
+        assert!(session.publish(revision, evaluation).is_some());
+    }
 
     #[test]
     fn history_snapshot_decoding_rejects_unknown_versions() {

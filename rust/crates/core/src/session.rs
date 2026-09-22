@@ -80,7 +80,18 @@ impl<U: Utility> Session<U> {
             return None;
         }
         let request = self.request.as_ref()?;
-        self.evaluation = U::evaluate(request);
+        let evaluation = U::evaluate(request);
+        self.publish(revision, evaluation)
+    }
+
+    /// Publishes a completed evaluation produced outside the UI thread. The
+    /// caller still has to check the revision here, even if it cancelled old
+    /// work earlier: an engine call may finish after a newer request arrives.
+    pub fn publish(&mut self, revision: u64, evaluation: U::Evaluation) -> Option<&U::Evaluation> {
+        if revision != self.revision || self.request.is_none() {
+            return None;
+        }
+        self.evaluation = evaluation;
         self.evaluation_epoch += 1;
         Some(&self.evaluation)
     }
@@ -171,6 +182,33 @@ mod tests {
         );
         let settled = session.resolve(second).expect("current revision settles");
         assert_eq!(settled.output(), Some("{\n  \"b\": 2\n}"));
+    }
+
+    #[test]
+    fn externally_completed_evaluation_obeys_revision_and_snapshot_gate() {
+        let mut session = JsonSession::new();
+        let SubmitOutcome::Scheduled(first) = session.submit(request("1")) else {
+            panic!("expected first revision");
+        };
+        let old = <Json as Utility>::evaluate(&request("1"));
+        let SubmitOutcome::Scheduled(second) = session.submit(request("2")) else {
+            panic!("expected second revision");
+        };
+        assert!(session.publish(first, old).is_none());
+        assert_eq!(session.evaluation(), &JsonEvaluation::Empty);
+        assert!(session.take_snapshot().is_none());
+
+        let current = <Json as Utility>::evaluate(&request("2"));
+        assert!(session.publish(second, current).is_some());
+        assert_eq!(session.evaluation().output(), Some("2"));
+        assert!(session.take_snapshot().is_some());
+        assert!(session.take_snapshot().is_none());
+
+        session.clear();
+        assert!(session
+            .publish(second, <Json as Utility>::evaluate(&request("2")))
+            .is_none());
+        assert_eq!(session.evaluation(), &JsonEvaluation::Empty);
     }
 
     #[test]

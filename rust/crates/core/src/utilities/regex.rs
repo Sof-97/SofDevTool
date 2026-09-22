@@ -1,8 +1,8 @@
 //! The Regex Utility's GPUI-independent request/result/snapshot contract.
 //!
 //! This Utility intentionally uses the pinned Rust `regex` crate dialect. It is
-//! not ICU and no ICU behavior is emulated. The dialect is linear time in the
-//! input and rejects look-around (look-ahead/look-behind) and backreferences at
+//! not ICU and no ICU behavior is emulated. It rejects look-around
+//! (look-ahead/look-behind) and backreferences at
 //! compile time; those failures become explicit diagnostics rather than being
 //! translated.
 //!
@@ -64,7 +64,7 @@ pub const REGEX_UTILITY_ID: &str = "rust-regex";
 pub const REGEX_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
 /// The visible engine label shown next to the Regex workspace.
-pub const RUST_REGEX_ENGINE_LABEL: &str = "Rust regex engine (regex crate, linear time)";
+pub const RUST_REGEX_ENGINE_LABEL: &str = "Rust regex engine (regex crate)";
 
 /// The visible dialect note: what this engine deliberately does not support.
 pub const RUST_REGEX_DIALECT_NOTE: &str = "Rust regex crate dialect, not ICU. Look-around \
@@ -247,49 +247,66 @@ pub fn evaluate(request: &RegexRequest) -> RegexEvaluation {
 /// count or replacement output produces [`RegexEvaluation::Invalid`] with no
 /// partial success.
 pub fn evaluate_with_limits(request: &RegexRequest, limits: &RegexLimits) -> RegexEvaluation {
+    evaluate_with_cancellation(request, limits, || false).expect("non-cancellable evaluation")
+}
+
+/// Evaluates with stage-level cancellation. `None` means the result is obsolete
+/// and must never be shown or recorded. The callback runs between operations
+/// controlled by this Utility; it cannot interrupt one `regex` engine call.
+pub fn evaluate_with_cancellation(
+    request: &RegexRequest,
+    limits: &RegexLimits,
+    cancelled: impl Fn() -> bool,
+) -> Option<RegexEvaluation> {
+    if cancelled() {
+        return None;
+    }
     if request.pattern.is_empty() {
         if request.text.is_empty() {
-            return RegexEvaluation::Empty;
+            return Some(RegexEvaluation::Empty);
         }
-        return RegexEvaluation::Invalid {
+        return Some(RegexEvaluation::Invalid {
             diagnostics: vec![Diagnostic::error(
                 "Enter a pattern to test against the text.",
             )],
-        };
+        });
     }
     if request.pattern.len() > limits.max_pattern_bytes {
-        return RegexEvaluation::Invalid {
+        return Some(RegexEvaluation::Invalid {
             diagnostics: vec![too_large(format!(
                 "The pattern exceeds the {}-byte pattern limit.",
                 limits.max_pattern_bytes
             ))],
-        };
+        });
     }
     if request.text.len() > limits.max_text_bytes {
-        return RegexEvaluation::Invalid {
+        return Some(RegexEvaluation::Invalid {
             diagnostics: vec![too_large(format!(
                 "The test text exceeds the {}-byte input limit.",
                 limits.max_text_bytes
             ))],
-        };
+        });
     }
     if request.replacement.len() > limits.max_replacement_bytes {
-        return RegexEvaluation::Invalid {
+        return Some(RegexEvaluation::Invalid {
             diagnostics: vec![too_large(format!(
                 "The replacement template exceeds the {}-byte limit.",
                 limits.max_replacement_bytes
             ))],
-        };
+        });
     }
 
     let regex = match build_regex(request, limits) {
         Ok(regex) => regex,
         Err(diagnostic) => {
-            return RegexEvaluation::Invalid {
+            return Some(RegexEvaluation::Invalid {
                 diagnostics: vec![diagnostic],
-            }
+            })
         }
     };
+    if cancelled() {
+        return None;
+    }
 
     let names: Vec<Option<String>> = regex
         .capture_names()
@@ -302,23 +319,33 @@ pub fn evaluate_with_limits(request: &RegexRequest, limits: &RegexLimits) -> Reg
     let mut last_end = 0usize;
     let mut capture_slots = 0usize;
 
-    for captures in regex.captures_iter(&request.text) {
+    let mut capture_iter = regex.captures_iter(&request.text);
+    loop {
+        if cancelled() {
+            return None;
+        }
+        let Some(captures) = capture_iter.next() else {
+            break;
+        };
+        if cancelled() {
+            return None;
+        }
         if matches.len() >= limits.max_matches {
-            return RegexEvaluation::Invalid {
+            return Some(RegexEvaluation::Invalid {
                 diagnostics: vec![too_large(format!(
                     "The match count exceeds the limit of {} matches.",
                     limits.max_matches
                 ))],
-            };
+            });
         }
         let prospective_slots = capture_slots.saturating_add(captures_per_match);
         if prospective_slots > limits.max_captures {
-            return RegexEvaluation::Invalid {
+            return Some(RegexEvaluation::Invalid {
                 diagnostics: vec![too_large(format!(
                     "The capture count exceeds the limit of {} capture slots.",
                     limits.max_captures
                 ))],
-            };
+            });
         }
         capture_slots = prospective_slots;
 
@@ -328,34 +355,46 @@ pub fn evaluate_with_limits(request: &RegexRequest, limits: &RegexLimits) -> Reg
             .get(0)
             .expect("capture group 0 always participates in a match");
         replacement_output.push_str(&request.text[last_end..whole.start()]);
+        if cancelled() {
+            return None;
+        }
         captures.expand(&request.replacement, &mut replacement_output);
+        if cancelled() {
+            return None;
+        }
         last_end = whole.end();
         if replacement_output.len() > limits.max_replacement_output_bytes {
-            return RegexEvaluation::Invalid {
+            return Some(RegexEvaluation::Invalid {
                 diagnostics: vec![too_large(format!(
                     "The replacement preview exceeds the {}-byte output limit.",
                     limits.max_replacement_output_bytes
                 ))],
-            };
+            });
         }
 
-        matches.push(match_info(matches.len(), &captures, &names));
+        matches.push(match_info(matches.len(), &captures, &names, &cancelled)?);
     }
 
+    if cancelled() {
+        return None;
+    }
     replacement_output.push_str(&request.text[last_end..]);
     if replacement_output.len() > limits.max_replacement_output_bytes {
-        return RegexEvaluation::Invalid {
+        return Some(RegexEvaluation::Invalid {
             diagnostics: vec![too_large(format!(
                 "The replacement preview exceeds the {}-byte output limit.",
                 limits.max_replacement_output_bytes
             ))],
-        };
+        });
     }
 
-    RegexEvaluation::Valid {
+    if cancelled() {
+        return None;
+    }
+    Some(RegexEvaluation::Valid {
         matches,
         replacement: Some(replacement_output),
-    }
+    })
 }
 
 fn build_regex(request: &RegexRequest, limits: &RegexLimits) -> Result<regex::Regex, Diagnostic> {
@@ -410,12 +449,16 @@ fn match_info(
     ordinal: usize,
     captures: &regex::Captures<'_>,
     names: &[Option<String>],
-) -> MatchInfo {
+    cancelled: &impl Fn() -> bool,
+) -> Option<MatchInfo> {
     let whole = captures
         .get(0)
         .expect("capture group 0 always participates in a match");
     let mut groups = Vec::with_capacity(captures.len());
     for index in 0..captures.len() {
+        if cancelled() {
+            return None;
+        }
         let matched = captures.get(index);
         groups.push(CaptureInfo {
             index,
@@ -427,7 +470,7 @@ fn match_info(
             }),
         });
     }
-    MatchInfo {
+    Some(MatchInfo {
         ordinal,
         value: whole.as_str().to_owned(),
         range: TextRange {
@@ -435,7 +478,7 @@ fn match_info(
             end: whole.end(),
         },
         captures: groups,
-    }
+    })
 }
 
 /// The Regex Utility's identity for the shared [`Utility`] trait.
@@ -525,6 +568,43 @@ mod tests {
         assert_eq!(MAX_MATCHES, 10_000);
         assert_eq!(MAX_CAPTURE_SLOTS, 50_000);
         assert_eq!(MAX_REPLACEMENT_OUTPUT_BYTES, 2_097_152);
+    }
+
+    #[test]
+    fn demanding_real_engine_capture_and_replacement_work_completes() {
+        // Exercises the actual regex engine and capture/replacement loop near
+        // the match budget without asserting a machine-dependent duration.
+        let text = format!("{} ", "a".repeat(30)).repeat(8_192);
+        let mut request = request(r"(?P<word>\w+)", &text);
+        request.replacement = "[$word]".to_owned();
+        let evaluation = evaluate(&request);
+        assert!(evaluation.is_valid_operation());
+        assert_eq!(evaluation.matches().len(), 8_192);
+        assert_eq!(evaluation.matches()[8_191].captures.len(), 2);
+        assert_eq!(
+            evaluation
+                .replacement()
+                .expect("complete replacement")
+                .len(),
+            text.len() + 2 * 8_192
+        );
+    }
+
+    #[test]
+    fn cancellation_discards_partial_engine_work() {
+        use std::cell::Cell;
+
+        let checks = Cell::new(0);
+        let request = request(r"(\w+)", &"word ".repeat(1_000));
+        let result = evaluate_with_cancellation(&request, &RegexLimits::default(), || {
+            checks.set(checks.get() + 1);
+            checks.get() > 40
+        });
+        assert!(
+            result.is_none(),
+            "cancelled work cannot publish partial matches"
+        );
+        assert!(checks.get() > 40);
     }
 
     #[test]

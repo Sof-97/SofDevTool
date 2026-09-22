@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Move actual compilation, matching, capture collection and replacement off the UI thread; bound running work and pending requests.
 - [ ] New edits, clear and restore invalidate old work. Reject obsolete results and snapshots, and check cancellation between controllable stages.
@@ -31,3 +31,5 @@ Publication is documentation only. Begin implementation only under a subsequent 
 inspection because OpenCode Go returned HTTP 429 `GoUsageLimitError`. No product
 files changed. The preserved session can be resumed when that provider is
 available; acceptance remains open. See [attempt evidence](../evidence/ticket-05.md).
+
+**Implementation:** GPT-6 Sol candidate integrated with focused checks on 2026-09-23; see [evidence](../evidence/ticket-05.md). Native acceptance and final Astra review remain open; status stays claimed.
