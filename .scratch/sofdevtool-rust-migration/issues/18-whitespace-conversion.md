@@ -1,7 +1,7 @@
 # 18: Transform whitespace with explicit actions
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 04
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -18,4 +18,9 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Resolved. Nine separate named actions with LF default, LF/CRLF/CR targets, tab
+width 1–8 default 4, tab-stop expansion and leading-indent-only spaces-to-tabs;
+explicit trim/collapse/blank-line/dedent rules with Unicode-aware fixtures and
+no silent partial processing. Full Registry/session/Clipboard/History flow.
+Evidence:
+[`rust/docs/evidence/ticket-18.md`](../../../rust/docs/evidence/ticket-18.md).

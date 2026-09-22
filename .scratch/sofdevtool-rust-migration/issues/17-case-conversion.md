@@ -1,7 +1,7 @@
 # 17: Convert text case with inspectable words
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 04
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -18,4 +18,8 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Resolved. Nine styles share one deterministic, locale-independent segmentation
+that preserves complete graphemes and Unicode; Detected Words are shown; acronym
+and digit behavior is pinned (`HTTPServer`, `version2Value`). Full
+Registry/session/Clipboard/snapshot/History flow with exact restore. Evidence:
+[`rust/docs/evidence/ticket-17.md`](../../../rust/docs/evidence/ticket-17.md).

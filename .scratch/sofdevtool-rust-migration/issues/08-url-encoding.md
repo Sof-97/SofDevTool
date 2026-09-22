@@ -1,7 +1,7 @@
 # 08: Encode path segments and query values
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 04
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -18,4 +18,9 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Resolved. Path Segment and Query Value modes preserve the contract-defined
+characters, encode literal percent and delimiters with uppercase UTF-8 percent
+bytes, use `%20` for spaces, keep decode `+` literal and reject malformed
+triplets or invalid UTF-8. Full Registry/session/Clipboard/versioned-snapshot/
+History flow with preview and exact restore. Evidence:
+[`rust/docs/evidence/ticket-08.md`](../../../rust/docs/evidence/ticket-08.md).

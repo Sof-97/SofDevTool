@@ -18,6 +18,9 @@ pub enum UtilityId {
     Json,
     TextDiff,
     Base64,
+    UrlEncoding,
+    CaseConversion,
+    Whitespace,
 }
 
 /// A request from a discovery surface to reveal one registered Utility.
@@ -89,6 +92,39 @@ impl UtilityDefinition {
             construct: Some(crate::utilities::base64::construct),
         }
     }
+
+    pub const fn url_encoding() -> Self {
+        Self {
+            id: UtilityId::UrlEncoding,
+            name: "URL Encoding",
+            summary: "Percent-encode path segments and query values",
+            category: "Format & Convert",
+            aliases: &["percent", "urlencode", "escape", "uri"],
+            construct: Some(crate::utilities::url_encoding::construct),
+        }
+    }
+
+    pub const fn case_conversion() -> Self {
+        Self {
+            id: UtilityId::CaseConversion,
+            name: "Case Conversion",
+            summary: "Convert text through nine developer case styles",
+            category: "Text",
+            aliases: &["camel", "snake", "kebab", "pascal", "title"],
+            construct: Some(crate::utilities::case_conversion::construct),
+        }
+    }
+
+    pub const fn whitespace() -> Self {
+        Self {
+            id: UtilityId::Whitespace,
+            name: "Whitespace",
+            summary: "Trim, collapse, normalize and dedent whitespace",
+            category: "Text",
+            aliases: &["trim", "tabs", "indent", "line endings"],
+            construct: Some(crate::utilities::whitespace::construct),
+        }
+    }
 }
 
 /// The authoritative, source-defined Utility catalog.
@@ -104,6 +140,9 @@ impl UtilityRegistry {
                 UtilityDefinition::json(),
                 UtilityDefinition::text_diff(),
                 UtilityDefinition::base64(),
+                UtilityDefinition::url_encoding(),
+                UtilityDefinition::case_conversion(),
+                UtilityDefinition::whitespace(),
             ],
         }
     }
@@ -164,6 +203,9 @@ mod tests {
                 UtilityDefinition::json(),
                 UtilityDefinition::text_diff(),
                 UtilityDefinition::base64(),
+                UtilityDefinition::url_encoding(),
+                UtilityDefinition::case_conversion(),
+                UtilityDefinition::whitespace(),
             ]
         );
     }

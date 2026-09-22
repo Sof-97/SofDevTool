@@ -16,6 +16,14 @@ gpui-component = "=0.6.6"
 gpui-platform = { package = "gpui-pre-platform", version = "=0.3.6", features = ["font-kit", "runtime_shaders"] }
 unicode-segmentation = "=1.13.3"
 wry = "=0.53.5"
+digest = "=0.10.7"
+sha1 = "=0.10.6"
+sha2 = "=0.10.9"
+md-5 = "=0.10.6"
+hex = "=0.4.3"
+rand = "=0.8.5"
+uuid = { version = "=1.18.1", features = ["v1", "v3", "v4", "v5", "v6", "v7"] }
+regex = "=1.11.3"
 raw-window-handle = "=0.6.2"
 objc = "=0.2.7"
 
