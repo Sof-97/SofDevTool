@@ -1,7 +1,7 @@
 # 03: Open Utilities through the macOS Launcher
 
 Type: task
-Status: claimed
+Status: resolved
 Blocked by: 01
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -19,4 +19,14 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Resolved. Control-Option-Space registers by default through Carbon behind the
+app-owned `ShortcutRegistrar`; Settings captures and persists a replacement
+under the fresh Rust namespace and keeps the working chord on invalid input with
+an inline error. The nonactivating Launcher searches the shared Registry with
+keyboard selection; Escape, click-away and a repeated shortcut dismiss it
+without activating the main window, and it appears over a full-screen app.
+Selection activates the Workbench and opens the Utility. Closing the last
+window keeps the process alive and reopening restores the same window and
+selection. Native scenarios, limits and the gate are recorded in
+[`rust/docs/evidence/ticket-03.md`](../../../rust/docs/evidence/ticket-03.md).
+macOS 14/15 runtime remain unverified; the 14.0 baseline is unchanged.

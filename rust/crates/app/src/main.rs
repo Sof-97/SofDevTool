@@ -1,30 +1,26 @@
-//! Ticket 02 native proof application.
-//!
-//! This composes only the two concrete workspaces needed for the migration
-//! check. Launcher, shortcuts, lifecycle and history remain outside its scope.
+//! Entry point for the Rust Developer Toolbox.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    div, App, Context, FocusHandle, Menu, MenuItem, OsAction, Render, TitlebarOptions, Window,
+    AnyWindowHandle, App, Entity, Menu, MenuItem, OsAction, TitlebarOptions, WindowBounds,
     WindowOptions,
 };
 use sofdevtool_app::clipboard::{Clipboard, GpuiClipboard};
+use sofdevtool_app::history::{HistoryRecorder, HistoryStore, SystemClock};
 use sofdevtool_app::identity;
-use sofdevtool_app::json_workspace::JsonWorkspace;
-use sofdevtool_app::text_diff::TextDiffWorkspace;
-use sofdevtool_ui::{
-    init, mount, panel, run, set_dark_theme, view_click, Button, ButtonVariant, ThemeTokens,
-};
+use sofdevtool_app::preferences::{ShortcutPreferences, StartupShortcut};
+use sofdevtool_app::registry::{OpenUtility, UtilityId};
+use sofdevtool_app::workbench::Workbench;
+use sofdevtool_ui::{init, mount, run_with_application, set_dark_theme};
 
-gpui::actions!(ticket02_actions, [Quit, Copy, Paste]);
-#[cfg(debug_assertions)]
-gpui::actions!(ticket02_debug_actions, [SimulateRendererFailure]);
+gpui::actions!(application_actions, [Quit, Copy, Paste]);
 
-fn window_options() -> WindowOptions {
+fn window_options(bounds: Option<WindowBounds>) -> WindowOptions {
     WindowOptions {
+        window_bounds: bounds,
         titlebar: Some(TitlebarOptions {
             title: Some(identity::APP_DISPLAY_NAME.into()),
             ..Default::default()
@@ -34,175 +30,114 @@ fn window_options() -> WindowOptions {
     }
 }
 
-struct Ticket02Workbench {
-    json: gpui::Entity<JsonWorkspace>,
-    text_diff: gpui::Entity<TextDiffWorkspace>,
-    text_diff_selected: bool,
-    json_focus: FocusHandle,
-    text_diff_focus: FocusHandle,
-}
-
-impl Ticket02Workbench {
-    fn new(window: &mut Window, cx: &mut Context<Self>, clipboard: Rc<dyn Clipboard>) -> Self {
-        let json = cx.new(|cx| JsonWorkspace::new(window, cx, clipboard.clone()));
-        let text_diff = cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard));
-        text_diff.read(cx).set_active(false);
-        Self {
-            json,
-            text_diff,
-            text_diff_selected: false,
-            json_focus: cx.focus_handle().tab_stop(true).tab_index(0),
-            text_diff_focus: cx.focus_handle().tab_stop(true).tab_index(0),
-        }
-    }
-
-    fn select_json(&mut self, cx: &mut Context<Self>) {
-        self.text_diff.read(cx).focus_parent();
-        self.text_diff.read(cx).set_active(false);
-        self.text_diff_selected = false;
-        cx.notify();
-    }
-
-    fn select_text_diff(&mut self, cx: &mut Context<Self>) {
-        self.text_diff.read(cx).focus_parent();
-        self.text_diff.read(cx).set_active(true);
-        self.text_diff_selected = true;
-        cx.notify();
-    }
-}
-
-impl Render for Ticket02Workbench {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
-        let text_diff_selected = self.text_diff_selected;
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .bg(tokens.background())
-            .text_color(tokens.text())
-            .child(
-                div()
-                    .px_4()
-                    .py_3()
-                    .border_b_1()
-                    .border_color(tokens.border())
-                    .text_lg()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child("Developer Toolbox"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .w_56()
-                            .p_3()
-                            .gap_2()
-                            .border_r_1()
-                            .border_color(tokens.border())
-                            .child(
-                                Button::new("JSON")
-                                    .focus_handle(self.json_focus.clone())
-                                    .variant(if text_diff_selected {
-                                        ButtonVariant::Secondary
-                                    } else {
-                                        ButtonVariant::Primary
-                                    })
-                                    .on_click(view_click(cx, |this, _window, cx| {
-                                        this.select_json(cx)
-                                    })),
-                            )
-                            .child(
-                                Button::new("Text Diff")
-                                    .focus_handle(self.text_diff_focus.clone())
-                                    .variant(if text_diff_selected {
-                                        ButtonVariant::Primary
-                                    } else {
-                                        ButtonVariant::Secondary
-                                    })
-                                    .on_click(view_click(cx, |this, _window, cx| {
-                                        this.select_text_diff(cx)
-                                    })),
-                            ),
-                    )
-                    .child(if text_diff_selected {
-                        div().m_3().flex().flex_1().min_w_0().min_h_0().child(panel(
-                            "Text Diff",
-                            "persistent session",
-                            div()
-                                .flex()
-                                .flex_1()
-                                .min_h_0()
-                                .child(self.text_diff.clone()),
-                        ))
-                    } else {
-                        div().m_3().flex().flex_1().min_w_0().min_h_0().child(panel(
-                            "JSON",
-                            "persistent session",
-                            div().flex().flex_1().min_h_0().child(self.json.clone()),
-                        ))
-                    }),
-            )
-    }
-}
-
 fn main() {
-    #[cfg(debug_assertions)]
-    let text_diff_for_diagnostics: Rc<RefCell<Option<gpui::Entity<TextDiffWorkspace>>>> =
-        Rc::new(RefCell::new(None));
-    run(move |cx: &mut App| {
-        init(cx);
-        set_dark_theme(None, cx);
-        // GPUI uses these bindings to assign Cmd-C/V key equivalents to the
-        // native selectors. AppKit then delivers them to WKWebView's first
-        // responder, while GPUI inputs retain their own copy/paste routing.
-        cx.bind_keys([
-            gpui::KeyBinding::new("cmd-q", Quit, None),
-            gpui::KeyBinding::new("cmd-c", Copy, None),
-            gpui::KeyBinding::new("cmd-v", Paste, None),
-        ]);
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        #[cfg(debug_assertions)]
-        {
-            let text_diff_for_diagnostics = text_diff_for_diagnostics.clone();
-            cx.on_action(move |_: &SimulateRendererFailure, cx| {
-                if let Some(text_diff) = text_diff_for_diagnostics.borrow().clone() {
-                    text_diff.update(cx, |workspace, cx| {
-                        workspace.simulate_renderer_failure(cx);
-                    });
+    // A deterministic native Ticket 02 check: launches the ordinary
+    // application composition with Text Diff selected, without requiring the
+    // Ticket 03 launcher panel or a registered global shortcut.
+    let text_diff_proof = std::env::args().any(|argument| argument == "--text-diff-proof");
+    let workbench: Rc<RefCell<Option<Entity<Workbench>>>> = Rc::new(RefCell::new(None));
+    let visible = Rc::new(Cell::new(true));
+    let native_window: Rc<RefCell<Option<AnyWindowHandle>>> = Rc::new(RefCell::new(None));
+    let previous_bounds: Rc<RefCell<Option<WindowBounds>>> = Rc::new(RefCell::new(None));
+    let preferences = ShortcutPreferences::application_support().ok();
+    let history = Rc::new(HistoryRecorder::new(
+        HistoryStore::new(
+            identity::application_support_root()
+                .map(|root| root.join("History"))
+                .unwrap_or_else(|| std::env::temp_dir().join("SofDevToolRustHistory")),
+        ),
+        Box::new(SystemClock::new()),
+    ));
+    let startup = preferences
+        .as_ref()
+        .map(ShortcutPreferences::load_for_startup)
+        .unwrap_or(StartupShortcut {
+            shortcut: None,
+            diagnostic: Some(
+                "Launcher settings are unavailable because the Rust Application Support directory could not be resolved."
+                    .into(),
+            ),
+        });
+
+    let reopen_visible = visible.clone();
+    let reopen_native_window = native_window.clone();
+    let launch_preferences = preferences.clone();
+    run_with_application(
+        move |application| {
+            // Closing the Workbench hides its retained native window. Dock
+            // reopen orders that same window front, preserving its bounds,
+            // selected Utility, and child native views. Cmd-Q and the
+            // application menu are the only explicit process exit paths.
+            application.on_reopen(move |cx| {
+                cx.activate(true);
+                if !reopen_visible.get() {
+                    if let Some(handle) = *reopen_native_window.borrow() {
+                        let restored = handle.update(cx, |_, window, _| {
+                            sofdevtool_app::native_window::show(window);
+                            window.activate_window();
+                        });
+                        if restored.is_ok() {
+                            reopen_visible.set(true);
+                        }
+                    }
                 }
             });
-        }
-        let mut menus = vec![
-            Menu::new(identity::APP_DISPLAY_NAME)
-                .items([MenuItem::action("Quit SofDevTool", Quit)]),
-            Menu::new("Edit").items([
-                MenuItem::os_action("Copy", Copy, OsAction::Copy),
-                MenuItem::os_action("Paste", Paste, OsAction::Paste),
-            ]),
-        ];
-        #[cfg(debug_assertions)]
-        menus.push(Menu::new("Renderer diagnostics").items([MenuItem::action(
-            "Test renderer failure",
-            SimulateRendererFailure,
-        )]));
-        cx.set_menus(menus);
-        let clipboard: Rc<dyn Clipboard> = Rc::new(GpuiClipboard);
-        #[cfg(debug_assertions)]
-        let text_diff_for_diagnostics = text_diff_for_diagnostics.clone();
-        cx.open_window(window_options(), move |window, cx| {
-            let view = cx.new(|cx| Ticket02Workbench::new(window, cx, clipboard.clone()));
-            #[cfg(debug_assertions)]
-            {
-                *text_diff_for_diagnostics.borrow_mut() = Some(view.read(cx).text_diff.clone());
-            }
-            mount(view, window, cx)
-        })
-        .expect("open the Ticket 02 proof window");
-    });
+        },
+        move |cx: &mut App| {
+            init(cx);
+            sofdevtool_app::launcher::init(cx);
+            set_dark_theme(None, cx);
+            // `MenuItem::os_action` gives macOS the responder-chain selector,
+            // while these bindings give its menu item the standard key
+            // equivalent. The selector is therefore delivered to a focused
+            // WKWebView (and remains available to GPUI controls).
+            cx.bind_keys([
+                gpui::KeyBinding::new("cmd-q", Quit, None),
+                gpui::KeyBinding::new("cmd-c", Copy, None),
+                gpui::KeyBinding::new("cmd-v", Paste, None),
+            ]);
+            cx.on_action(|_: &Quit, cx| cx.quit());
+            cx.set_menus([
+                Menu::new(identity::APP_DISPLAY_NAME)
+                    .items([MenuItem::action("Quit SofDevTool", Quit)]),
+                Menu::new("Edit").items([
+                    MenuItem::os_action("Copy", Copy, OsAction::Copy),
+                    MenuItem::os_action("Paste", Paste, OsAction::Paste),
+                ]),
+            ]);
+            let clipboard: Rc<dyn Clipboard> = Rc::new(GpuiClipboard);
+            let initial_workbench = workbench.clone();
+            let initial_visible = visible.clone();
+            let initial_bounds = previous_bounds.clone();
+            let initial_native_window = native_window.clone();
+            let preferences = launch_preferences.clone();
+            let startup = startup.clone();
+            let history = history.clone();
+            cx.open_window(window_options(None), move |window, cx| {
+                let visible = initial_visible.clone();
+                let bounds = initial_bounds.clone();
+                window.on_window_should_close(cx, move |window, _cx| {
+                    *bounds.borrow_mut() = Some(window.window_bounds());
+                    sofdevtool_app::native_window::hide(window);
+                    visible.set(false);
+                    // Retain this GPUI/NSWindow and its Wry child. Dock reopen
+                    // orders the same window front, avoiding an unsupported
+                    // reparent of WKWebView into a replacement NSWindow.
+                    false
+                });
+                let view =
+                    cx.new(|cx| Workbench::new(window, cx, clipboard.clone(), history.clone()));
+                view.update(cx, |workbench, cx| {
+                    workbench.restore_shortcut_preferences(preferences, startup, cx);
+                    if text_diff_proof {
+                        workbench.open(OpenUtility(UtilityId::TextDiff), cx);
+                    }
+                });
+                *initial_native_window.borrow_mut() = Some(window.window_handle());
+                *initial_workbench.borrow_mut() = Some(view.clone());
+                mount(view, window, cx)
+            })
+            .expect("open the workbench window");
+        },
+    );
 }

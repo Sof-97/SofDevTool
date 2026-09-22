@@ -46,3 +46,14 @@ pub fn set_dark_theme(window: Option<&mut gpui::Window>, cx: &mut gpui::App) {
 pub fn run(on_finish_launching: impl FnOnce(&mut gpui::App) + 'static) {
     gpui_platform::application().run(on_finish_launching);
 }
+
+/// Starts the platform application after callers install process-level
+/// lifecycle hooks such as macOS Dock reopen handling.
+pub fn run_with_application(
+    configure: impl FnOnce(&gpui::Application) + 'static,
+    on_finish_launching: impl FnOnce(&mut gpui::App) + 'static,
+) {
+    let application = gpui_platform::application();
+    configure(&application);
+    application.run(on_finish_launching);
+}

@@ -6974,6 +6974,11 @@ name = "sofdevtool-app"
 version = "0.1.0"
 dependencies = [
  "gpui-pre",
+ "objc",
+ "objc2-app-kit 0.2.2",
+ "objc2-foundation 0.2.2",
+ "raw-window-handle",
+ "serde",
  "serde_json",
  "sofdevtool-core",
  "sofdevtool-ui",

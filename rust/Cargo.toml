@@ -16,6 +16,8 @@ gpui-component = "=0.6.6"
 gpui-platform = { package = "gpui-pre-platform", version = "=0.3.6", features = ["font-kit", "runtime_shaders"] }
 unicode-segmentation = "=1.13.3"
 wry = "=0.53.5"
+raw-window-handle = "=0.6.2"
+objc = "=0.2.7"
 
 [profile.dev]
 # GPUI debug builds are large; keep debug info but avoid the slowest codegen.

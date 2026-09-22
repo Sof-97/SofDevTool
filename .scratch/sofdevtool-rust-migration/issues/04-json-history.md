@@ -1,7 +1,7 @@
 # 04: Record and restore JSON operations in fresh Rust History
 
 Type: task
-Status: ready-for-agent
+Status: resolved
 Blocked by: 02, 03
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -20,4 +20,12 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Resolved. JSON records one settled valid operation through the shared
+`Session<U>` into a versioned per-Utility History file with atomic replacement,
+stable ids, timestamps and newest-25 retention. Preview and restore never rerun;
+restore confirms before replacing a different non-empty session and records
+nothing. History survives relaunch in the isolated Rust namespace. A native
+crash from a duplicated confirmation focus handle was found and fixed. Native
+scenarios, limits and the gate are recorded in
+[`rust/docs/evidence/ticket-04.md`](../../../rust/docs/evidence/ticket-04.md).
+macOS 14/15 runtime remain unverified.

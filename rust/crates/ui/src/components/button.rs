@@ -120,6 +120,8 @@ impl RenderOnce for Button {
         let id = ElementId::Name(label.clone());
         let mut element = div()
             .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
             .flex()
             .items_center()
             .justify_center()

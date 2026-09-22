@@ -1,5 +1,5 @@
 use gpui::prelude::*;
-use gpui::{App, Context, Entity, IntoElement, SharedString, Subscription, Window};
+use gpui::{App, Context, Entity, Focusable, IntoElement, SharedString, Subscription, Window};
 use gpui_component::input::{Input, InputEvent, InputState};
 
 /// A single-line text field owned by this library.
@@ -31,6 +31,11 @@ impl TextField {
 
     pub fn text(&self, cx: &App) -> String {
         self.state.read(cx).value().to_string()
+    }
+
+    /// Gives a host view the real editor focus after its window opens.
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.state.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     /// Subscribe inside a view's context. The handler receives the view, window

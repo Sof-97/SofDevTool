@@ -131,6 +131,60 @@ pub struct JsonSnapshot {
     pub request: JsonRequest,
 }
 
+impl JsonSnapshot {
+    /// Captures the already-settled result; restore never reevaluates input.
+    pub fn from_settled(request: JsonRequest, evaluation: &JsonEvaluation) -> Option<Self> {
+        evaluation.output().map(|output| Self {
+            output: output.to_owned(),
+            request,
+        })
+    }
+
+    pub fn restore(&self) -> (&JsonRequest, &str) {
+        (&self.request, &self.output)
+    }
+}
+
+/// The JSON Utility's identity for the shared [`crate::utility::Utility`] trait.
+pub struct Json;
+
+impl crate::utility::Utility for Json {
+    type Request = JsonRequest;
+    type Evaluation = JsonEvaluation;
+    type Snapshot = JsonSnapshot;
+
+    const ID: &'static str = JSON_UTILITY_ID;
+    const SNAPSHOT_VERSION: u32 = JSON_SNAPSHOT_SCHEMA_VERSION;
+
+    fn neutral() -> JsonEvaluation {
+        JsonEvaluation::Empty
+    }
+
+    fn evaluate(request: &JsonRequest) -> JsonEvaluation {
+        evaluate(request)
+    }
+
+    fn is_neutral(evaluation: &JsonEvaluation) -> bool {
+        matches!(evaluation, JsonEvaluation::Empty)
+    }
+
+    fn snapshot(request: &JsonRequest, evaluation: &JsonEvaluation) -> Option<JsonSnapshot> {
+        JsonSnapshot::from_settled(request.clone(), evaluation)
+    }
+
+    fn restore(snapshot: &JsonSnapshot) -> (JsonRequest, JsonEvaluation) {
+        (
+            snapshot.request.clone(),
+            JsonEvaluation::Valid {
+                output: snapshot.output.clone(),
+            },
+        )
+    }
+}
+
+/// The JSON Utility's revision-gated session.
+pub type JsonSession = crate::session::Session<Json>;
+
 pub fn evaluate(request: &JsonRequest) -> JsonEvaluation {
     if request.input.trim().is_empty() {
         return JsonEvaluation::Empty;

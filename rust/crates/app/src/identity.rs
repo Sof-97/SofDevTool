@@ -19,8 +19,13 @@ pub const APPLICATION_SUPPORT_NAMESPACE: &str = "SofDevToolRust";
 
 /// Resolves the Rust product's Application Support root.
 ///
-/// Nothing writes here yet; History and preferences arrive in later tickets.
+/// An explicit `SOFDEVTOOL_RUST_SUPPORT_ROOT` overrides the location for
+/// isolated native checks; production leaves it unset and uses the fresh Rust
+/// namespace. Nothing here ever resolves a Swift location.
 pub fn application_support_root() -> Option<PathBuf> {
+    if let Some(override_root) = std::env::var_os("SOFDEVTOOL_RUST_SUPPORT_ROOT") {
+        return Some(PathBuf::from(override_root));
+    }
     let home = std::env::var_os("HOME")?;
     Some(
         PathBuf::from(home)
