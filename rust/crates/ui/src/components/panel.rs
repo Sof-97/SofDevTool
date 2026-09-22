@@ -9,7 +9,7 @@ pub fn panel(
     caption: impl Into<SharedString>,
     content: impl IntoElement,
 ) -> impl IntoElement {
-    let tokens = ThemeTokens::graphite();
+    let tokens = ThemeTokens::active();
     let title = title.into();
     let caption = caption.into();
     div()
@@ -77,7 +77,7 @@ impl LabeledField {
 
 impl RenderOnce for LabeledField {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let mut header = div()
             .flex()
             .flex_row()

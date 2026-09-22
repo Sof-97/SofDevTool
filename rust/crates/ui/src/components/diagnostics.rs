@@ -16,7 +16,7 @@ pub fn diagnostic_banner(
     message: &str,
     location: Option<(u32, u32)>,
 ) -> impl IntoElement {
-    let tokens = ThemeTokens::graphite();
+    let tokens = ThemeTokens::active();
     let (accent, prefix) = match severity {
         DiagnosticSeverity::Error => (tokens.danger(), "Error"),
         DiagnosticSeverity::Warning => (tokens.warning(), "Warning"),
@@ -62,7 +62,7 @@ pub fn diagnostic_banner(
 
 /// A neutral placeholder shown when there is nothing to display.
 pub fn empty_state(message: &str) -> impl IntoElement {
-    let tokens = ThemeTokens::graphite();
+    let tokens = ThemeTokens::active();
     div()
         .flex()
         .items_center()
@@ -75,7 +75,7 @@ pub fn empty_state(message: &str) -> impl IntoElement {
 
 /// An unobtrusive confirmation shown after a successful copy.
 pub fn copy_feedback(visible: bool, message: &str) -> impl IntoElement {
-    let tokens = ThemeTokens::graphite();
+    let tokens = ThemeTokens::active();
     div()
         .text_xs()
         .text_color(tokens.accent())

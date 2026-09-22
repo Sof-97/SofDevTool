@@ -106,7 +106,7 @@ impl RenderOnce for Button {
             focus,
             on_click,
         } = self;
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let (background, foreground, base_border) = match variant {
             ButtonVariant::Primary => (tokens.accent(), tokens.accent_text(), tokens.accent()),
             ButtonVariant::Secondary => (tokens.surface_raised(), tokens.text(), tokens.border()),

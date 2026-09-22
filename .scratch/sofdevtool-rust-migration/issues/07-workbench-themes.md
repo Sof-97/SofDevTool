@@ -1,7 +1,7 @@
 # 07: Navigate retained Utility sessions with themed components
 
 Type: task
-Status: ready-for-agent
+Status: claimed
 Blocked by: 06
 
 Parent: [Rust and GPUI migration specification](../spec.md)
@@ -20,4 +20,4 @@ Parent: [Rust and GPUI migration specification](../spec.md)
 
 ## Completion evidence
 
-Pending implementation. The parent specification supplies shared behavior; this ticket makes no completion or runtime claim.
+Implemented; automated gate passes and evidence is recorded in [`rust/docs/evidence/ticket-07.md`](../../../rust/docs/evidence/ticket-07.md). Native host verification (pointer hold, keyboard confirmation, theme/scope/session preservation) is pending the final ticket-22 pass; macOS 14/15 runtime remain unverified.

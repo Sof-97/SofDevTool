@@ -312,7 +312,7 @@ impl ColorWorkspace {
             | (channel(color.green) << 16)
             | (channel(color.blue) << 8)
             | channel(color.alpha);
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         div()
             .w_16()
             .h_16()
@@ -356,7 +356,7 @@ impl ColorWorkspace {
                 div()
                     .w_10()
                     .text_xs()
-                    .text_color(ThemeTokens::graphite().text_muted())
+                    .text_color(ThemeTokens::active().text_muted())
                     .child(format!("{value}")),
             )
             .child(
@@ -378,7 +378,7 @@ impl ColorWorkspace {
         value: Option<&str>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let text = value.unwrap_or("").to_owned();
         let copy_value = text.clone();
         div()
@@ -443,12 +443,12 @@ impl ColorWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::graphite().border())
+            .border_color(ThemeTokens::active().border())
             .child(panel)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         div()
             .flex()
             .flex_row()
@@ -495,7 +495,7 @@ impl ColorWorkspace {
 impl Render for ColorWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_display(window, cx);
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let outputs: Option<ColorOutputs> = self.session.evaluation().outputs().cloned();
         let pending = matches!(self.session.evaluation(), ColorEvaluation::Empty)
             && self

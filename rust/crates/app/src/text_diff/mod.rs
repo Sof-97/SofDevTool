@@ -404,12 +404,12 @@ impl TextDiffWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::graphite().border())
+            .border_color(ThemeTokens::active().border())
             .child(panel)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         div()
             .flex()
             .flex_row()
@@ -461,7 +461,7 @@ impl Render for TextDiffWorkspace {
         let mode = self.mode;
         let old = self.old.render(false, "text-diff.original");
         let new = self.new.render(false, "text-diff.updated");
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let mut main = div()
             .flex()
             .flex_col()

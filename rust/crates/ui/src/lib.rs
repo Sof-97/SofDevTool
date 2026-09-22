@@ -9,7 +9,7 @@ mod components;
 pub mod theme;
 
 pub use components::*;
-pub use theme::{ThemeTokens, ThemeVariant};
+pub use theme::{active_theme, set_active_theme, ThemeTokens, ThemeVariant};
 
 use gpui::{AnyView, App, AppContext as _, Entity, Render, Window};
 
@@ -33,7 +33,8 @@ fn mount_root(
 /// Initialises the component library and its text engine.
 pub fn init(cx: &mut gpui::App) {
     gpui_component::init(cx);
-    components::register_key_bindings(cx);
+    components::register_button_key_bindings(cx);
+    components::register_hold_button_key_bindings(cx);
 }
 
 /// Applies the dark appearance used by the Workbench and gallery.

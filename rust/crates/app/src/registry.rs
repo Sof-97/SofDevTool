@@ -315,6 +315,13 @@ impl UtilityRegistry {
             .find(|definition| definition.id == id)
     }
 
+    pub fn definition_by_slug(&self, slug: &str) -> Option<UtilityDefinition> {
+        self.definitions
+            .iter()
+            .copied()
+            .find(|definition| definition.id.slug() == slug)
+    }
+
     pub fn search(&self, query: &str) -> Vec<UtilityId> {
         let terms: Vec<_> = query
             .split_whitespace()

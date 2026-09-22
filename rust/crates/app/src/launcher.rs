@@ -197,7 +197,7 @@ impl LauncherView {
 
 impl Render for LauncherView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let results = self.results(cx);
         let mut list = div().flex().flex_col().gap_2().flex_1().min_h_0();
         for id in results {

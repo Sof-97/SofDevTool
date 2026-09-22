@@ -364,12 +364,12 @@ impl CaseConversionWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::graphite().border())
+            .border_color(ThemeTokens::active().border())
             .child(panel)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         div()
             .flex()
             .flex_row()
@@ -413,7 +413,7 @@ impl CaseConversionWorkspace {
 impl Render for CaseConversionWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_display(window, cx);
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let can_copy = self.session.evaluation().is_valid_operation();
         let pending = matches!(self.session.evaluation(), CaseConversionEvaluation::Empty)
             && self

@@ -18,6 +18,90 @@ const SHORTCUT_FILE: &str = "launcher-shortcut.v1.json";
 const SHORTCUT_SCHEMA_VERSION: u8 = 1;
 const HISTORY_FILE: &str = "history-preferences.v1.json";
 const HISTORY_SCHEMA_VERSION: u8 = 1;
+const WORKSPACE_FILE: &str = "workspace-preferences.v1.json";
+const WORKSPACE_SCHEMA_VERSION: u8 = 1;
+
+/// Fresh Rust-only persistence for the Workbench catalog and theme.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspacePreferencesData {
+    #[serde(default)]
+    pub theme: String,
+    #[serde(default)]
+    pub favorites: Vec<String>,
+    #[serde(default)]
+    pub recents: Vec<String>,
+}
+
+impl Default for WorkspacePreferencesData {
+    fn default() -> Self {
+        Self {
+            theme: "graphite".to_owned(),
+            favorites: Vec::new(),
+            recents: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspacePreferences {
+    root: PathBuf,
+}
+
+impl WorkspacePreferences {
+    pub fn application_support() -> Result<Self, PreferenceError> {
+        identity::application_support_root()
+            .map(Self::new)
+            .ok_or(PreferenceError::UnavailableRoot)
+    }
+
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Loads the stored preferences. Missing or malformed data yields safe
+    /// defaults (Graphite, no favorites, no recents).
+    pub fn load(&self) -> WorkspacePreferencesData {
+        let Ok(contents) = fs::read_to_string(self.path()) else {
+            return WorkspacePreferencesData::default();
+        };
+        let Ok(record) = serde_json::from_str::<WorkspaceRecord>(&contents) else {
+            return WorkspacePreferencesData::default();
+        };
+        if record.version != WORKSPACE_SCHEMA_VERSION {
+            return WorkspacePreferencesData::default();
+        }
+        record.data
+    }
+
+    pub fn save(&self, data: &WorkspacePreferencesData) -> Result<(), PreferenceError> {
+        fs::create_dir_all(&self.root).map_err(PreferenceError::CreateDirectory)?;
+        let record = WorkspaceRecord {
+            version: WORKSPACE_SCHEMA_VERSION,
+            data: data.clone(),
+        };
+        let serialized = serde_json::to_vec_pretty(&record).map_err(PreferenceError::Encode)?;
+        let path = self.path();
+        let temporary = self
+            .root
+            .join(format!(".{WORKSPACE_FILE}.{}.tmp", std::process::id()));
+        fs::write(&temporary, serialized).map_err(PreferenceError::Write)?;
+        fs::rename(&temporary, &path).map_err(PreferenceError::Replace)
+    }
+
+    fn path(&self) -> PathBuf {
+        self.root.join(WORKSPACE_FILE)
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct WorkspaceRecord {
+    version: u8,
+    data: WorkspacePreferencesData,
+}
 
 /// Fresh Rust-only persistence for History recording preferences.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -266,5 +350,34 @@ mod tests {
             .expect("diagnostic")
             .contains("could not be loaded"));
         fs::remove_dir_all(preferences.root()).expect("remove test directory");
+    }
+
+    #[test]
+    fn workspace_preferences_round_trip_and_default_safely() {
+        let root = std::env::temp_dir().join(format!(
+            "sofdevtool-rust-workspace-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        let preferences = WorkspacePreferences::new(root.clone());
+
+        // Missing data yields safe defaults (Graphite, no favorites/recents).
+        assert_eq!(preferences.load(), WorkspacePreferencesData::default());
+
+        let data = WorkspacePreferencesData {
+            theme: "catppuccin".to_owned(),
+            favorites: vec!["json".to_owned()],
+            recents: vec!["base64".to_owned(), "json".to_owned()],
+        };
+        preferences.save(&data).expect("save workspace preferences");
+        assert_eq!(preferences.load(), data);
+
+        // Malformed data falls back to defaults rather than failing startup.
+        fs::write(preferences.path(), "not json").expect("write malformed data");
+        assert_eq!(preferences.load(), WorkspacePreferencesData::default());
+        fs::remove_dir_all(root).expect("remove test directory");
     }
 }

@@ -496,7 +496,7 @@ impl IdentifiersWorkspace {
     }
 
     fn render_values(&self, values: &[String], cx: &mut Context<Self>) -> AnyElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         if values.is_empty() {
             return empty_state("Generate identifiers or validate one to begin").into_any_element();
         }
@@ -596,12 +596,12 @@ impl IdentifiersWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::graphite().border())
+            .border_color(ThemeTokens::active().border())
             .child(panel)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         div()
             .flex()
             .flex_row()
@@ -644,7 +644,7 @@ impl IdentifiersWorkspace {
 
 impl Render for IdentifiersWorkspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let values = self.session.evaluation().values().to_vec();
         self.ensure_copy_focus(values.len(), cx);
         let can_copy = !values.is_empty();

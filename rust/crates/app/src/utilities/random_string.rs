@@ -372,7 +372,7 @@ impl RandomStringWorkspace {
     }
 
     fn render_results(&self, cx: &mut Context<Self>) -> AnyElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let values = self.session.evaluation().values();
         if values.is_empty() {
             return empty_state("Configure an alphabet, then choose Generate").into_any_element();
@@ -463,12 +463,12 @@ impl RandomStringWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::graphite().border())
+            .border_color(ThemeTokens::active().border())
             .child(panel)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         div()
             .flex()
             .flex_row()
@@ -514,7 +514,7 @@ impl RandomStringWorkspace {
 
 impl Render for RandomStringWorkspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let needed = self.session.evaluation().values().len();
         while self.item_focus.len() < needed {
             self.item_focus

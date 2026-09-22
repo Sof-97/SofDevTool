@@ -65,7 +65,7 @@ impl HistoryPanel {
 
 impl RenderOnce for HistoryPanel {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let tokens = ThemeTokens::graphite();
+        let tokens = ThemeTokens::active();
         let count = self.items.len();
         let mut list = div()
             .id("history-list")

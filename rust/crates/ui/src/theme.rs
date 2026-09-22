@@ -1,5 +1,7 @@
 //! Semantic theme tokens owned by the component library.
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use gpui::{rgb, Hsla};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -8,6 +10,43 @@ pub enum ThemeVariant {
     Graphite,
     /// The retained alternate dark theme.
     CatppuccinFrappe,
+}
+
+impl ThemeVariant {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Graphite => "Graphite",
+            Self::CatppuccinFrappe => "Catppuccin Frappé",
+        }
+    }
+
+    fn code(self) -> u8 {
+        match self {
+            Self::Graphite => 0,
+            Self::CatppuccinFrappe => 1,
+        }
+    }
+
+    fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::CatppuccinFrappe,
+            _ => Self::Graphite,
+        }
+    }
+}
+
+/// The application's active theme. The component library is single-window and
+/// UI-threaded, so one process-wide selection is sufficient and lets every
+/// semantic token call site stay free of an explicit context argument.
+static ACTIVE_THEME: AtomicU8 = AtomicU8::new(0);
+
+/// Selects the process-wide theme. Callers must request a redraw.
+pub fn set_active_theme(variant: ThemeVariant) {
+    ACTIVE_THEME.store(variant.code(), Ordering::Release);
+}
+
+pub fn active_theme() -> ThemeVariant {
+    ThemeVariant::from_code(ACTIVE_THEME.load(Ordering::Acquire))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -70,6 +109,11 @@ impl ThemeTokens {
         Self::for_variant(ThemeVariant::Graphite)
     }
 
+    /// The currently active theme's tokens.
+    pub fn active() -> Self {
+        Self::for_variant(active_theme())
+    }
+
     pub fn background(&self) -> Hsla {
         color(self.palette.background)
     }
@@ -104,7 +148,7 @@ impl ThemeTokens {
 
 impl Default for ThemeTokens {
     fn default() -> Self {
-        Self::graphite()
+        Self::active()
     }
 }
 
