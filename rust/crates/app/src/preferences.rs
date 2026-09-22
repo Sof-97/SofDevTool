@@ -16,6 +16,71 @@ use crate::shortcut::Shortcut;
 
 const SHORTCUT_FILE: &str = "launcher-shortcut.v1.json";
 const SHORTCUT_SCHEMA_VERSION: u8 = 1;
+const HISTORY_FILE: &str = "history-preferences.v1.json";
+const HISTORY_SCHEMA_VERSION: u8 = 1;
+
+/// Fresh Rust-only persistence for History recording preferences.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryPreferences {
+    root: PathBuf,
+}
+
+impl HistoryPreferences {
+    pub fn application_support() -> Result<Self, PreferenceError> {
+        identity::application_support_root()
+            .map(Self::new)
+            .ok_or(PreferenceError::UnavailableRoot)
+    }
+
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Loads the stored policy. A missing or malformed file falls back to the
+    /// safe default (recording enabled) rather than failing startup.
+    pub fn load(&self) -> crate::history::HistoryPolicy {
+        let Ok(contents) = fs::read_to_string(self.path()) else {
+            return crate::history::HistoryPolicy::default();
+        };
+        let Ok(record) = serde_json::from_str::<HistoryRecord>(&contents) else {
+            return crate::history::HistoryPolicy::default();
+        };
+        if record.version != HISTORY_SCHEMA_VERSION {
+            return crate::history::HistoryPolicy::default();
+        }
+        record.policy
+    }
+
+    /// Replaces the policy atomically in the same directory.
+    pub fn save(&self, policy: &crate::history::HistoryPolicy) -> Result<(), PreferenceError> {
+        fs::create_dir_all(&self.root).map_err(PreferenceError::CreateDirectory)?;
+        let record = HistoryRecord {
+            version: HISTORY_SCHEMA_VERSION,
+            policy: policy.clone(),
+        };
+        let serialized = serde_json::to_vec_pretty(&record).map_err(PreferenceError::Encode)?;
+        let path = self.path();
+        let temporary = self
+            .root
+            .join(format!(".{HISTORY_FILE}.{}.tmp", std::process::id()));
+        fs::write(&temporary, serialized).map_err(PreferenceError::Write)?;
+        fs::rename(&temporary, &path).map_err(PreferenceError::Replace)
+    }
+
+    fn path(&self) -> PathBuf {
+        self.root.join(HISTORY_FILE)
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct HistoryRecord {
+    version: u8,
+    policy: crate::history::HistoryPolicy,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShortcutPreferences {

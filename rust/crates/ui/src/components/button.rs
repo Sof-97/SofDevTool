@@ -24,6 +24,7 @@ pub enum ButtonVariant {
 #[derive(IntoElement)]
 pub struct Button {
     label: SharedString,
+    element_id: Option<ElementId>,
     variant: ButtonVariant,
     disabled: bool,
     focus: Option<FocusHandle>,
@@ -34,11 +35,19 @@ impl Button {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
+            element_id: None,
             variant: ButtonVariant::Secondary,
             disabled: false,
             focus: None,
             on_click: None,
         }
+    }
+
+    /// Overrides the element id. Required when several buttons share a visible
+    /// label in one frame, otherwise GPUI aborts with a duplicate a11y node id.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.element_id = Some(id.into());
+        self
     }
 
     pub fn primary(label: impl Into<SharedString>) -> Self {
@@ -91,6 +100,7 @@ impl RenderOnce for Button {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Button {
             label,
+            element_id,
             variant,
             disabled,
             focus,
@@ -117,7 +127,7 @@ impl RenderOnce for Button {
             base_border
         };
 
-        let id = ElementId::Name(label.clone());
+        let id = element_id.unwrap_or_else(|| ElementId::Name(label.clone()));
         let mut element = div()
             .id(id)
             .role(gpui::Role::Button)

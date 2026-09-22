@@ -6,7 +6,8 @@
 //! a failed write keeps the last valid file, pauses that Utility and never
 //! overwrites a malformed file.
 
-use std::collections::BTreeSet;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -336,35 +337,122 @@ fn civil_from_days(days_since_epoch: i64) -> (i64, u32, u32) {
     (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
+/// A callback that persists the recording policy after a change.
+pub type PolicyPersister = Box<dyn Fn(&HistoryPolicy)>;
+
 /// Application-owned recording facade over [`HistoryStore`].
 ///
 /// A Utility records through this type; it owns the entry identity and
-/// timestamp so the storage layer stays free of clock/random policy.
+/// timestamp so the storage layer stays free of clock/random policy. Recording
+/// is gated by [`HistoryPolicy`]: a global switch plus per-Utility overrides,
+/// with a per-Utility default supplied by the Registry.
 pub struct HistoryRecorder {
     store: HistoryStore,
     clock: Box<dyn HistoryClock>,
+    policy: RefCell<HistoryPolicy>,
+    persist: Option<PolicyPersister>,
+}
+
+/// Global and per-Utility recording preferences. Disabling recording never
+/// deletes existing entries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryPolicy {
+    pub global_enabled: bool,
+    #[serde(default)]
+    pub per_utility: BTreeMap<String, bool>,
+    /// Registry-provided defaults, keyed by Utility id. JWT opts out.
+    #[serde(default)]
+    pub defaults: BTreeMap<String, bool>,
+}
+
+impl Default for HistoryPolicy {
+    fn default() -> Self {
+        Self {
+            global_enabled: true,
+            per_utility: BTreeMap::new(),
+            defaults: BTreeMap::new(),
+        }
+    }
+}
+
+impl HistoryPolicy {
+    pub fn is_recording(&self, utility_id: &str) -> bool {
+        if !self.global_enabled {
+            return false;
+        }
+        self.per_utility
+            .get(utility_id)
+            .or_else(|| self.defaults.get(utility_id))
+            .copied()
+            .unwrap_or(true)
+    }
 }
 
 impl HistoryRecorder {
     pub fn new(store: HistoryStore, clock: Box<dyn HistoryClock>) -> Self {
-        Self { store, clock }
+        Self::with_policy(store, clock, HistoryPolicy::default(), None)
+    }
+
+    pub fn with_policy(
+        store: HistoryStore,
+        clock: Box<dyn HistoryClock>,
+        policy: HistoryPolicy,
+        persist: Option<PolicyPersister>,
+    ) -> Self {
+        Self {
+            store,
+            clock,
+            policy: RefCell::new(policy),
+            persist,
+        }
     }
 
     pub fn store(&self) -> &HistoryStore {
         &self.store
     }
 
+    pub fn policy(&self) -> HistoryPolicy {
+        self.policy.borrow().clone()
+    }
+
+    pub fn is_recording(&self, utility_id: &str) -> bool {
+        self.policy.borrow().is_recording(utility_id)
+    }
+
+    pub fn set_global_enabled(&self, enabled: bool) {
+        self.policy.borrow_mut().global_enabled = enabled;
+        self.persist();
+    }
+
+    pub fn set_utility_enabled(&self, utility_id: &str, enabled: bool) {
+        self.policy
+            .borrow_mut()
+            .per_utility
+            .insert(utility_id.to_owned(), enabled);
+        self.persist();
+    }
+
     pub fn load(&self, utility_id: &str) -> Result<Vec<HistoryEntry>, HistoryError> {
         self.store.load(utility_id)
     }
 
-    /// Records one settled operation with a fresh id and timestamp.
+    fn persist(&self) {
+        if let Some(persist) = &self.persist {
+            persist(&self.policy.borrow());
+        }
+    }
+
+    /// Records one settled operation with a fresh id and timestamp. Recording a
+    /// disabled Utility is a no-op that returns the retained entries unchanged.
     pub fn record(
         &self,
         utility_id: &str,
         snapshot_version: u32,
         payload: serde_json::Value,
     ) -> Result<Vec<HistoryEntry>, HistoryError> {
+        if !self.is_recording(utility_id) {
+            return self.store.load(utility_id);
+        }
         self.store.record(HistoryEntry {
             id: self.clock.next_id(),
             captured_at: self.clock.captured_at(),

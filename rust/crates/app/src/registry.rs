@@ -21,6 +21,32 @@ pub enum UtilityId {
     UrlEncoding,
     CaseConversion,
     Whitespace,
+    Hashes,
+    RandomString,
+    Color,
+    Jwt,
+    Identifiers,
+    Regex,
+}
+
+impl UtilityId {
+    /// Stable History filename / preference key for this Utility.
+    pub const fn slug(self) -> &'static str {
+        match self {
+            UtilityId::Json => "json",
+            UtilityId::TextDiff => "text-diff",
+            UtilityId::Base64 => "base64",
+            UtilityId::UrlEncoding => "url-encoding",
+            UtilityId::CaseConversion => "case-conversion",
+            UtilityId::Whitespace => "whitespace-conversion",
+            UtilityId::Hashes => "hashes",
+            UtilityId::RandomString => "random-string",
+            UtilityId::Color => "color-conversion",
+            UtilityId::Jwt => "jwt-decoder",
+            UtilityId::Identifiers => "identifiers",
+            UtilityId::Regex => "rust-regex",
+        }
+    }
 }
 
 /// A request from a discovery surface to reveal one registered Utility.
@@ -41,6 +67,8 @@ pub struct UtilityDefinition {
     pub summary: &'static str,
     pub category: &'static str,
     pub aliases: &'static [&'static str],
+    /// Whether History records this Utility by default. JWT opts out.
+    pub history_enabled_by_default: bool,
     /// `None` for the two workspaces the Workbench keeps strongly typed.
     pub construct: Option<WorkspaceConstructor>,
 }
@@ -67,6 +95,7 @@ impl UtilityDefinition {
             summary: "Format, minify, validate, and query JSON",
             category: "Format & Convert",
             aliases: &["format", "validate", "minify", "query"],
+            history_enabled_by_default: true,
             construct: None,
         }
     }
@@ -78,6 +107,7 @@ impl UtilityDefinition {
             summary: "Compare text with split or unified output",
             category: "Text",
             aliases: &["diff", "compare", "patch"],
+            history_enabled_by_default: true,
             construct: None,
         }
     }
@@ -89,6 +119,7 @@ impl UtilityDefinition {
             summary: "Encode and decode UTF-8 with explicit alphabet and padding",
             category: "Format & Convert",
             aliases: &["encode", "decode", "base64url"],
+            history_enabled_by_default: true,
             construct: Some(crate::utilities::base64::construct),
         }
     }
@@ -100,6 +131,7 @@ impl UtilityDefinition {
             summary: "Percent-encode path segments and query values",
             category: "Format & Convert",
             aliases: &["percent", "urlencode", "escape", "uri"],
+            history_enabled_by_default: true,
             construct: Some(crate::utilities::url_encoding::construct),
         }
     }
@@ -111,6 +143,7 @@ impl UtilityDefinition {
             summary: "Convert text through nine developer case styles",
             category: "Text",
             aliases: &["camel", "snake", "kebab", "pascal", "title"],
+            history_enabled_by_default: true,
             construct: Some(crate::utilities::case_conversion::construct),
         }
     }
@@ -122,7 +155,80 @@ impl UtilityDefinition {
             summary: "Trim, collapse, normalize and dedent whitespace",
             category: "Text",
             aliases: &["trim", "tabs", "indent", "line endings"],
+            history_enabled_by_default: true,
             construct: Some(crate::utilities::whitespace::construct),
+        }
+    }
+
+    pub const fn hashes() -> Self {
+        Self {
+            id: UtilityId::Hashes,
+            name: "Hashes",
+            summary: "SHA-256/384/512, SHA-1 and MD5 with hex or Base64 output",
+            category: "Format & Convert",
+            aliases: &["sha256", "sha1", "md5", "digest", "checksum"],
+            history_enabled_by_default: true,
+            construct: Some(crate::utilities::hashes::construct),
+        }
+    }
+
+    pub const fn random_string() -> Self {
+        Self {
+            id: UtilityId::RandomString,
+            name: "Random String",
+            summary: "Cryptographically random strings with explicit character controls",
+            category: "Generate",
+            aliases: &["random", "password", "token", "entropy"],
+            history_enabled_by_default: true,
+            construct: Some(crate::utilities::random_string::construct),
+        }
+    }
+
+    pub const fn color() -> Self {
+        Self {
+            id: UtilityId::Color,
+            name: "Color Conversion",
+            summary: "Convert and select bounded sRGB HEX, RGB(A) and HSL(A)",
+            category: "Format & Convert",
+            aliases: &["hex", "rgb", "hsl", "colour"],
+            history_enabled_by_default: true,
+            construct: Some(crate::utilities::color::construct),
+        }
+    }
+
+    pub const fn jwt() -> Self {
+        Self {
+            id: UtilityId::Jwt,
+            name: "JWT Decoder",
+            summary: "Inspect readable JWT header and payload segments",
+            category: "Inspect",
+            aliases: &["token", "jwt", "claims", "bearer"],
+            history_enabled_by_default: false,
+            construct: Some(crate::utilities::jwt::construct),
+        }
+    }
+
+    pub const fn identifiers() -> Self {
+        Self {
+            id: UtilityId::Identifiers,
+            name: "Identifier Generator",
+            summary: "Generate and inspect UUID identifiers",
+            category: "Generate",
+            aliases: &["uuid", "guid", "v4", "v7"],
+            history_enabled_by_default: true,
+            construct: Some(crate::utilities::identifiers::construct),
+        }
+    }
+
+    pub const fn regex() -> Self {
+        Self {
+            id: UtilityId::Regex,
+            name: "Regex",
+            summary: "Test patterns and replacements with the Rust regex engine",
+            category: "Text",
+            aliases: &["regexp", "pattern", "capture", "replace"],
+            history_enabled_by_default: true,
+            construct: Some(crate::utilities::regex::construct),
         }
     }
 }
@@ -143,6 +249,12 @@ impl UtilityRegistry {
                 UtilityDefinition::url_encoding(),
                 UtilityDefinition::case_conversion(),
                 UtilityDefinition::whitespace(),
+                UtilityDefinition::hashes(),
+                UtilityDefinition::random_string(),
+                UtilityDefinition::color(),
+                UtilityDefinition::jwt(),
+                UtilityDefinition::identifiers(),
+                UtilityDefinition::regex(),
             ],
         }
     }
@@ -206,6 +318,12 @@ mod tests {
                 UtilityDefinition::url_encoding(),
                 UtilityDefinition::case_conversion(),
                 UtilityDefinition::whitespace(),
+                UtilityDefinition::hashes(),
+                UtilityDefinition::random_string(),
+                UtilityDefinition::color(),
+                UtilityDefinition::jwt(),
+                UtilityDefinition::identifiers(),
+                UtilityDefinition::regex(),
             ]
         );
     }

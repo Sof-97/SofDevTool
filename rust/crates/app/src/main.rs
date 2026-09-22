@@ -9,10 +9,10 @@ use gpui::{
     WindowOptions,
 };
 use sofdevtool_app::clipboard::{Clipboard, GpuiClipboard};
-use sofdevtool_app::history::{HistoryRecorder, HistoryStore, SystemClock};
+use sofdevtool_app::history::{HistoryPolicy, HistoryRecorder, HistoryStore, SystemClock};
 use sofdevtool_app::identity;
-use sofdevtool_app::preferences::{ShortcutPreferences, StartupShortcut};
-use sofdevtool_app::registry::{OpenUtility, UtilityId};
+use sofdevtool_app::preferences::{HistoryPreferences, ShortcutPreferences, StartupShortcut};
+use sofdevtool_app::registry::{OpenUtility, UtilityId, UtilityRegistry};
 use sofdevtool_app::workbench::Workbench;
 use sofdevtool_ui::{init, mount, run_with_application, set_dark_theme};
 
@@ -40,13 +40,31 @@ fn main() {
     let native_window: Rc<RefCell<Option<AnyWindowHandle>>> = Rc::new(RefCell::new(None));
     let previous_bounds: Rc<RefCell<Option<WindowBounds>>> = Rc::new(RefCell::new(None));
     let preferences = ShortcutPreferences::application_support().ok();
-    let history = Rc::new(HistoryRecorder::new(
+    let history_preferences = HistoryPreferences::application_support().ok();
+    let mut history_policy = history_preferences
+        .as_ref()
+        .map(HistoryPreferences::load)
+        .unwrap_or_default();
+    for definition in UtilityRegistry::initial().definitions() {
+        history_policy.defaults.insert(
+            definition.id.slug().to_owned(),
+            definition.history_enabled_by_default,
+        );
+    }
+    let persist_preferences = history_preferences.clone();
+    let history = Rc::new(HistoryRecorder::with_policy(
         HistoryStore::new(
             identity::application_support_root()
                 .map(|root| root.join("History"))
                 .unwrap_or_else(|| std::env::temp_dir().join("SofDevToolRustHistory")),
         ),
         Box::new(SystemClock::new()),
+        history_policy,
+        persist_preferences.map(|preferences| {
+            Box::new(move |policy: &HistoryPolicy| {
+                let _ = preferences.save(policy);
+            }) as Box<dyn Fn(&HistoryPolicy)>
+        }),
     ));
     let startup = preferences
         .as_ref()

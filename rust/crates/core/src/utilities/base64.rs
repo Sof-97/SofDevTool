@@ -119,6 +119,12 @@ pub fn evaluate(request: &Base64Request) -> Base64Evaluation {
     }
 }
 
+/// Standard-alphabet, padded Base64 of raw bytes, shared by Utilities that need
+/// to present a digest as Base64.
+pub fn encode_standard(input: &[u8]) -> String {
+    encode(input, Base64Alphabet::Standard, true)
+}
+
 fn encode(input: &[u8], alphabet: Base64Alphabet, padded: bool) -> String {
     let table = match alphabet {
         Base64Alphabet::Standard => STANDARD,

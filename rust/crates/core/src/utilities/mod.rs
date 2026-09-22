@@ -7,6 +7,7 @@ pub mod jwt;
 pub mod random_string;
 pub mod regex;
 pub mod sample_data;
+pub mod text_diff;
 pub mod timestamps;
 pub mod url_encoding;
 pub mod whitespace;
