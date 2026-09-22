@@ -14,4 +14,5 @@ pub mod registry;
 pub mod settings;
 pub mod shortcut;
 pub mod text_diff;
+pub mod utilities;
 pub mod workbench;

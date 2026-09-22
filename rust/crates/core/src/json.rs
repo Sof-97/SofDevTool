@@ -47,25 +47,7 @@ impl Indentation {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Severity {
-    Error,
-    Warning,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SourceLocation {
-    pub line: u32,
-    pub column: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Diagnostic {
-    pub severity: Severity,
-    pub message: String,
-    pub location: Option<SourceLocation>,
-}
+pub use crate::diagnostic::{Diagnostic, Severity, SourceLocation};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonRequest {

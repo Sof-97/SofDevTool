@@ -1,5 +1,6 @@
 //! The long-lived application shell and concrete Utility workspace sessions.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -8,7 +9,9 @@ use std::sync::{
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, AnyWindowHandle, App, Context, Entity, FocusHandle, IntoElement, Render, Window};
+use gpui::{
+    div, AnyView, AnyWindowHandle, App, Context, Entity, FocusHandle, IntoElement, Render, Window,
+};
 use sofdevtool_ui::{panel, view_click, Button, ButtonVariant, ThemeTokens};
 
 use crate::clipboard::Clipboard;
@@ -27,8 +30,11 @@ use crate::shortcut::macos::CarbonShortcutRegistrar;
 pub struct Workbench {
     registry: UtilityRegistry,
     selected: UtilityId,
+    clipboard: Rc<dyn Clipboard>,
+    history: Rc<HistoryRecorder>,
     json: Entity<JsonWorkspace>,
     text_diff: Entity<TextDiffWorkspace>,
+    others: HashMap<UtilityId, AnyView>,
     launcher_focus: FocusHandle,
     launcher: Option<AnyWindowHandle>,
     main_window: AnyWindowHandle,
@@ -47,8 +53,8 @@ impl Workbench {
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
-        let json = cx.new(|cx| JsonWorkspace::new(window, cx, clipboard.clone(), history));
-        let text_diff = cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard));
+        let json = cx.new(|cx| JsonWorkspace::new(window, cx, clipboard.clone(), history.clone()));
+        let text_diff = cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard.clone()));
         text_diff.read(cx).set_active(false);
         let shortcut_requested = Arc::new(AtomicBool::new(false));
         #[cfg(target_os = "macos")]
@@ -64,8 +70,11 @@ impl Workbench {
         let workbench = Self {
             registry: UtilityRegistry::initial(),
             selected: UtilityId::Json,
+            clipboard,
+            history,
             json,
             text_diff,
+            others: HashMap::new(),
             launcher_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             launcher: None,
             main_window: window.window_handle(),
@@ -93,10 +102,6 @@ impl Workbench {
         self.text_diff
             .read(cx)
             .set_active(self.selected == UtilityId::TextDiff && self.launcher.is_none());
-    }
-
-    fn select_json(&mut self, cx: &mut Context<Self>) {
-        self.open(OpenUtility(UtilityId::Json), cx);
     }
 
     fn show_launcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -229,13 +234,76 @@ impl Workbench {
             Shortcut::launcher_default()
         }
     }
+
+    /// Returns the selected Utility's view, constructing it once on first open.
+    fn workspace_view(
+        &mut self,
+        id: UtilityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyView {
+        match id {
+            UtilityId::Json => self.json.clone().into(),
+            UtilityId::TextDiff => self.text_diff.clone().into(),
+            other => {
+                if let Some(view) = self.others.get(&other) {
+                    return view.clone();
+                }
+                let construct = self
+                    .registry
+                    .definition(other)
+                    .and_then(|definition| definition.construct)
+                    .expect("a catalog Utility exposes a workspace constructor");
+                let view = construct(window, cx, self.clipboard.clone(), self.history.clone());
+                self.others.insert(other, view.clone());
+                view
+            }
+        }
+    }
 }
 
 impl Render for Workbench {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = ThemeTokens::graphite();
-        let json_selected = self.selected == UtilityId::Json;
-        let text_diff_selected = self.selected == UtilityId::TextDiff;
+        let selected = self.selected;
+        let definitions = self.registry.definitions().to_vec();
+
+        let mut sidebar = div()
+            .flex()
+            .flex_col()
+            .w_56()
+            .p_3()
+            .gap_1()
+            .border_r_1()
+            .border_color(tokens.border());
+        for definition in definitions {
+            let id = definition.id;
+            sidebar = sidebar.child(
+                Button::new(definition.name)
+                    .variant(if id == selected {
+                        ButtonVariant::Primary
+                    } else {
+                        ButtonVariant::Secondary
+                    })
+                    .on_click(view_click(cx, move |this, _window, cx| {
+                        this.open(OpenUtility(id), cx);
+                    })),
+            );
+        }
+        sidebar = sidebar.child(
+            div()
+                .mt_4()
+                .text_xs()
+                .text_color(tokens.text_muted())
+                .child("More Utilities arrive only when their concrete workspaces are ready."),
+        );
+
+        let definition = self
+            .registry
+            .definition(selected)
+            .expect("the selected Utility is registered");
+        let view = self.workspace_view(selected, window, cx);
+
         div()
             .flex()
             .flex_col()
@@ -266,9 +334,11 @@ impl Render for Workbench {
                             .text_color(tokens.text_muted())
                             .child("Library · local and offline")
                             .child(
-                                Button::new("Settings").variant(ButtonVariant::Secondary).on_click(
-                                    view_click(cx, |this, _window, cx| this.show_settings(cx)),
-                                ),
+                                Button::new("Settings")
+                                    .variant(ButtonVariant::Secondary)
+                                    .on_click(view_click(cx, |this, _window, cx| {
+                                        this.show_settings(cx)
+                                    })),
                             ),
                     ),
             )
@@ -278,57 +348,12 @@ impl Render for Workbench {
                     .flex_row()
                     .flex_1()
                     .min_h_0()
-                    .child(
-                        div()
-                            .w_56()
-                            .p_3()
-                            .border_r_1()
-                            .border_color(tokens.border())
-                            .child(
-                                Button::new("JSON")
-                                    .variant(if json_selected {
-                                        ButtonVariant::Primary
-                                    } else {
-                                        ButtonVariant::Secondary
-                                    })
-                                    .on_click(view_click(cx, |this, _window, cx| {
-                                        this.select_json(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("Text Diff")
-                                    .variant(if text_diff_selected {
-                                        ButtonVariant::Primary
-                                    } else {
-                                        ButtonVariant::Secondary
-                                    })
-                                    .on_click(view_click(cx, |this, _window, cx| {
-                                        this.open(OpenUtility(UtilityId::TextDiff), cx);
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .mt_4()
-                                    .text_xs()
-                                    .text_color(tokens.text_muted())
-                                    .child("More Utilities arrive only when their concrete workspaces are ready."),
-                            ),
-                    )
-                    .child(
-                        if json_selected {
-                            div().m_3().flex().flex_1().min_w_0().min_h_0().child(panel(
-                                "JSON",
-                                "persistent session",
-                                div().flex().flex_1().min_h_0().child(self.json.clone()),
-                            ))
-                        } else {
-                            div().m_3().flex().flex_1().min_w_0().min_h_0().child(panel(
-                                "Text Diff",
-                                "persistent session",
-                                div().flex().flex_1().min_h_0().child(self.text_diff.clone()),
-                            ))
-                        },
-                    ),
+                    .child(sidebar)
+                    .child(div().m_3().flex().flex_1().min_w_0().min_h_0().child(panel(
+                        definition.name,
+                        "persistent session",
+                        div().flex().flex_1().min_h_0().child(view),
+                    ))),
             )
             .child(
                 div()

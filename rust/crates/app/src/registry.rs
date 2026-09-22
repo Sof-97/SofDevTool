@@ -1,30 +1,60 @@
 //! The source-defined Utility catalog shared by the Workbench and Launcher.
+//!
+//! Every Utility keeps its strong concrete workspace type. The catalog stores a
+//! constructor function pointer only so the Workbench can build heterogeneous
+//! workspaces on demand; nothing here erases a Utility's request/result type.
+
+use std::rc::Rc;
+
+use gpui::{AnyView, Context, Window};
+
+use crate::clipboard::Clipboard;
+use crate::history::HistoryRecorder;
+use crate::workbench::Workbench;
 
 /// The stable identity of a source-defined Utility.
-///
-/// This stays deliberately narrow while only JSON is integrated. `TextDiff`
-/// is reserved for ticket 02's concrete workspace; it never appears in the
-/// catalog until that workspace is available.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum UtilityId {
     Json,
     TextDiff,
+    Base64,
 }
 
 /// A request from a discovery surface to reveal one registered Utility.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OpenUtility(pub UtilityId);
 
+/// Builds a Utility's concrete workspace as a type-erased view. Only the
+/// Workbench calls this, at the heterogeneous composition boundary.
+pub type WorkspaceConstructor =
+    fn(&mut Window, &mut Context<Workbench>, Rc<dyn Clipboard>, Rc<HistoryRecorder>) -> AnyView;
+
 /// Immutable discovery metadata. Construction of the concrete workspace stays
 /// in the Workbench so each Utility retains its strong concrete type.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct UtilityDefinition {
     pub id: UtilityId,
     pub name: &'static str,
     pub summary: &'static str,
     pub category: &'static str,
     pub aliases: &'static [&'static str],
+    /// `None` for the two workspaces the Workbench keeps strongly typed.
+    pub construct: Option<WorkspaceConstructor>,
 }
+
+// Function pointers are deliberately excluded: two definitions describe the same
+// Utility when their discovery metadata matches, regardless of constructor identity.
+impl PartialEq for UtilityDefinition {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.name == other.name
+            && self.summary == other.summary
+            && self.category == other.category
+            && self.aliases == other.aliases
+    }
+}
+
+impl Eq for UtilityDefinition {}
 
 impl UtilityDefinition {
     pub const fn json() -> Self {
@@ -34,6 +64,7 @@ impl UtilityDefinition {
             summary: "Format, minify, validate, and query JSON",
             category: "Format & Convert",
             aliases: &["format", "validate", "minify", "query"],
+            construct: None,
         }
     }
 
@@ -44,6 +75,18 @@ impl UtilityDefinition {
             summary: "Compare text with split or unified output",
             category: "Text",
             aliases: &["diff", "compare", "patch"],
+            construct: None,
+        }
+    }
+
+    pub const fn base64() -> Self {
+        Self {
+            id: UtilityId::Base64,
+            name: "Base64",
+            summary: "Encode and decode UTF-8 with explicit alphabet and padding",
+            category: "Format & Convert",
+            aliases: &["encode", "decode", "base64url"],
+            construct: Some(crate::utilities::base64::construct),
         }
     }
 }
@@ -57,7 +100,11 @@ pub struct UtilityRegistry {
 impl UtilityRegistry {
     pub fn initial() -> Self {
         Self {
-            definitions: vec![UtilityDefinition::json(), UtilityDefinition::text_diff()],
+            definitions: vec![
+                UtilityDefinition::json(),
+                UtilityDefinition::text_diff(),
+                UtilityDefinition::base64(),
+            ],
         }
     }
 
@@ -108,12 +155,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn concrete_json_and_text_diff_workspaces_are_discoverable() {
+    fn concrete_workspaces_are_discoverable() {
         let registry = UtilityRegistry::initial();
 
         assert_eq!(
             registry.definitions(),
-            &[UtilityDefinition::json(), UtilityDefinition::text_diff()]
+            &[
+                UtilityDefinition::json(),
+                UtilityDefinition::text_diff(),
+                UtilityDefinition::base64(),
+            ]
         );
     }
 
@@ -124,6 +175,7 @@ mod tests {
         assert_eq!(registry.search("format json"), vec![UtilityId::Json]);
         assert_eq!(registry.search("validate"), vec![UtilityId::Json]);
         assert_eq!(registry.search("compare text"), vec![UtilityId::TextDiff]);
+        assert_eq!(registry.search("base64url"), vec![UtilityId::Base64]);
         assert!(registry.search("random json").is_empty());
     }
 
