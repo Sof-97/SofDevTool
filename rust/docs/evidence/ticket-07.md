@@ -30,10 +30,15 @@ favorites, recents and theme.
 
 - Unit tests cover the workspace-preferences round trip, safe defaults on
   malformed data, and registry search/aliases.
+- Native (macOS 26.2 arm64): the sidebar renders Library/Recent/Favorites
+  scopes, a search field and a category-grouped catalog; starring Base64 added
+  it to Favorites (persisted) and the Favorites scope showed only it; opening
+  Base64 added it to Recents (persisted) and the Recent scope showed it; the
+  theme control switched Graphite → Catppuccin Frappé with the palette applied
+  and persisted, and relaunch restored the theme and favorite; switching scopes
+  preserved the Base64 session text.
 - Gate: `rust/scripts/verify --full` exit 0, including the Debug and Release
   gallery build.
-- Native catalog/scope/theme/session-preservation scenarios are pending final
-  host verification (see ticket 22 evidence).
 
 ## Limits
 

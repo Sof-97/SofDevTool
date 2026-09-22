@@ -1,7 +1,7 @@
 # 05: Manage History retention, deletion and storage failures
 
 Type: task
-Status: claimed
+Status: resolved
 Blocked by: 04
 
 Parent: [Rust and GPUI migration specification](../spec.md)

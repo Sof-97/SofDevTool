@@ -1,7 +1,7 @@
 # 07: Navigate retained Utility sessions with themed components
 
 Type: task
-Status: claimed
+Status: resolved
 Blocked by: 06
 
 Parent: [Rust and GPUI migration specification](../spec.md)

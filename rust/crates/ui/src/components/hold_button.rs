@@ -149,7 +149,11 @@ impl RenderOnce for HoldButton {
 
         element = element.cursor_pointer();
         if let Some(press) = on_press.clone() {
+            let focus_for_press = focus.clone();
             element = element.on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                if let Some(handle) = &focus_for_press {
+                    window.focus(handle, cx);
+                }
                 press(window, cx);
             });
         }

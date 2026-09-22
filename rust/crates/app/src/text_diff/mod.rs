@@ -203,6 +203,7 @@ impl TextDiffWorkspace {
             )
             .err();
         self.renderer_status = self.renderer.status();
+        self.record_if_ready(cx);
         window.refresh();
         cx.notify();
     }

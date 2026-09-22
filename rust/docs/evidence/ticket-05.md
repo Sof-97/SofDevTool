@@ -30,9 +30,15 @@ seconds for Clear All, and isolation of malformed files and paused Utilities.
 
 - Unit tests cover policy gating, retention ordering, atomic-failure pause and
   resume, corruption isolation, unsafe-id rejection and the hold durations.
+- Native (macOS 26.2 arm64): the Settings History section renders a global
+  recording toggle, per-Utility toggles and Clear hold buttons; toggling global
+  recording persisted `global_enabled: false`; a one-second hold on Base64 Clear
+  removed its History file, while a 0.3-second early release left it intact.
 - Gate: `rust/scripts/verify --full` exit 0.
-- Native hold/keyboard scenarios for the Settings History section are pending
-  final host verification (see ticket 22 evidence).
+- Not exercised natively in this pass: the keyboard confirmation banner for
+  Clear/Clear All and the two-second Clear All hold. Both are implemented and
+  the hold durations are unit-tested; the pointer hold and cancellation were
+  verified through Clear Utility.
 
 ## Limits
 

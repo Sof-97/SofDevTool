@@ -27,10 +27,11 @@ old/new texts and mode without rerunning the renderer readiness handshake.
 
 - Core tests cover neutral/valid evaluation and exact snapshot round-trip
   including complex emoji.
-- `rust/scripts/verify --full` exit 0 (see the integration commit).
-- Native split/unified rendering, selection/copy and renderer failure/recovery
-  were established for this renderer under ticket 02; the History panel was
-  exercised natively in the final verification pass.
+- Native (macOS 26.2 arm64): pasting an updated side recorded one Text Diff
+  entry (`2/25` after a second edit); selecting an older entry and restoring it
+  reproduced the exact old/new texts and mode, re-rendered the diff, and did not
+  add a History entry (`2/25` stayed `2/25`).
+- Gate: `rust/scripts/verify --full` exit 0.
 
 ## Limits
 
