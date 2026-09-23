@@ -213,3 +213,51 @@ Earlier Luna work in this history remains accurately attributed to Luna.
   literal Dock/other-Space interaction, some final native subcases and final
   branch cleanliness remain open. macOS 14/15 runtime is unverified; no remote
   publication or sofui package release is authorized.
+
+### Latest Release and manual acceptance frontier
+
+- Sol corrected the Carbon subscription from HotKey Released (`6`) to Pressed
+  (`5`) in `33d68b3`; packaging documentation followed in `dcc6f0b`. Astra
+  checked the SDK event class/Pressed/Released declarations and transactional
+  registration, accepted the correction and found no new regression. This
+  third, later source finding is recorded separately from the original two
+  resolved Text Diff Specification P2 findings.
+- The latest `make verify-full` [r4 gate](../../.artifacts/parallel-rust-only/final/verify-full-r4.log)
+  passed 339 Rust tests, five Python tests, strict Clippy, independent sofui
+  consumption, Text Diff assets, Debug/Release bundles and identity. The
+  packages reported synthetic `HEAD` `b4e17030ffa8e37b51bb661befe2e6728a044b9b`
+  and clean source. Default `make install` placed Release 0.2.0 build 1 in
+  `/Users/gerardo/Applications/SofDevTool.app`.
+- Actual installed r4 native launch used an isolated profile from `/tmp`;
+  executable SHA-256 `24d2645b47021748226be8f3919e9fe1bc062730f92b710a7955fbcfe5e2a905`,
+  PID 6591. It displayed the clean b4 identity and restored the exact JSON
+  input, `items[1].name` query and `caffè` result from three persisted
+  synthetic History entries. Launcher button/Escape worked. Cmd-W left that
+  process running, and CUA `getApp` returned to its preserved JSON state.
+  This was not a literal Dock return; direct Dock automation timed out 10005.
+  CUA-synthesized Ctrl-Alt-Space still failed to open Launcher after the fix,
+  without establishing physical-key behavior. See [ticket 22](evidence/ticket-22.md)
+  and [shortcut native evidence](evidence/shortcut-native.md).
+- From 09:13–09:19 UTC, the same installed r4 PID completed representative
+  AX/screenshot-observed smoke flows in all fifteen Utilities, including
+  Unicode Base64/Regex/Whitespace, JSON/YAML typing, exact Random Copy All
+  two-line paste, Identifier validation, Sample Data recording, and bounded
+  Text Diff Split with settled History. This is final-binary representative
+  coverage; earlier candidate variant checks are kept distinct in
+  [ticket 22 evidence](evidence/ticket-22.md). At 09:20 UTC, the coordinator
+  selected the earlier 08:37:17 JSON query and confirmed Restore to exact
+  `{"items":[{"name":"one"},{"name":"caffè"}]}`, `items[1].name`, and
+  `caffè`, leaving the installed app open in that state for manual checks.
+- The coordinator asked the owner for three manual checks on this installed
+  r4 build: physical Ctrl-Alt-Space from another app; interaction from another
+  Space/fullscreen; and Cmd-W followed by literal Dock reopening to the
+  preserved query. No answer has been received. Tickets 12 and 22 retain their
+  native acceptance frontier; final delivery is not declared complete.
+- Read-only local integration preflight found base `4db64951d5d00b814eeeb03b8941b1ebc04f1b19`
+  an ancestor of branch `dcc6f0b25f961bebb0748910f6080c8e98b0064e`;
+  branch and synthetic-HEAD trees both resolve to
+  `9db6fdd41f6f4c53629a0007a132ed18465a322d`. The coordinator will
+  integrate these evidence changes and repeat the final clean-branch check.
+  Source and representative installed-binary evidence is ready for independent
+  review; ticket 22 native acceptance still depends on the owner's three
+  manual observations.
