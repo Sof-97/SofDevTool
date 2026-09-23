@@ -27,3 +27,28 @@ All commands below used repository-root cwd, `CARGO_TARGET_DIR=/private/tmp/sofd
 The independent retained-fixture owner formatted `crates/core/tests/retained_contract_vectors.rs` and reported its focused 8/8 test pass; a subsequent combined `make verify-full` passed. The later chmod-only packaging test also passed with a clean `cargo fmt --all --check`. The pre-existing transitive `block 0.1.6` future-incompatibility notice remains a warning; first-party Clippy passed with warnings denied.
 
 `make run` and `make gallery` were implemented but intentionally not invoked in this source/packaging lane because they launch native windows. Default `~/Applications` installation and native Release relaunch/persistence remain ticket 22 acceptance. The independent external sofui consumer is ticket 19's gate, not claimed here. macOS 14/15 runtime was not exercised.
+
+## Clean-worktree command acceptance — 2026-09-23
+
+The coordinator later checked out committed correction
+`df95bd39b281e4d7e44375ef8c7543417b01490e` in a separate managed Git
+worktree at `/Users/gerardo/.codex/worktrees/sofdevtool-release-verification/SofDevTool`.
+This was a real clean checkout, not a copied-source simulation. The following
+commands ran there with the shared offline Cargo target; its final Git diff was
+empty and porcelain status had no entries:
+
+| Root Make target | Observed result |
+| --- | --- |
+| `make help` | Passed. |
+| `make format` | Passed; `git diff --exit-code` remained clean. |
+| `make verify` | Passed; [log](../../../.artifacts/parallel-rust-only/final/fresh-verify.log). |
+| `make verify-full` | Passed: 339 Rust tests, five packaging tests, strict Clippy, copied-out sofui isolation, reproducible assets, Debug/Release bundles; [log](../../../.artifacts/parallel-rust-only/final/fresh-verify-full.log). |
+| `make release` | Passed; Release 0.2.0 build 1 identified revision `df95bd39b281e4d7e44375ef8c7543417b01490e` and `source clean`; [log](../../../.artifacts/parallel-rust-only/final/fresh-release.log). |
+| `make install INSTALL_DESTINATION=/private/tmp/sofdevtool-fresh-install-b73c2a7` | Passed and placed only the Release bundle in that temporary destination with the same clean revision; [log](../../../.artifacts/parallel-rust-only/final/fresh-install.log). |
+| `make gallery` | Launched the standalone gallery binary, which stayed alive until the coordinator intentionally sent Ctrl-C. The resulting Make interrupt exit 2 reflects that stop, not a gallery failure. Native public interactions and the corrected numeric-label layout are separately recorded in [ticket 19](ticket-19.md). |
+| `make run` | Built and opened the Debug 0.2.0 bundle with clean `df95bd3` metadata; [log](../../../.artifacts/parallel-rust-only/final/fresh-run.log). Computer Use observed its actual Graphite window. With `SOFDEVTOOL_RUST_SUPPORT_ROOT` set to a new temporary root, synthetic JSON `{"make_run_profile":"isolated"}` produced a result and one History entry; only that root's `History/json.history.v1.json` appeared. Cmd-Q ended the process. |
+
+This directly closes ticket 20's root command-surface requirement. The Debug
+launch used isolated synthetic data and does not prove physical global shortcut,
+Dock/Spaces or macOS 14/15 behavior. Default home Applications Release delivery
+and remaining native acceptance are recorded separately in [ticket 22](ticket-22.md).

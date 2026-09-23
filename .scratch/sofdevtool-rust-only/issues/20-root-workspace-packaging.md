@@ -4,9 +4,9 @@
 
 **Blocked by:** [01: Use sofui's owned component interfaces in JSON and the gallery](01-sofui-json-gallery.md); [17: Make Text Diff assets independently maintainable and locally bundled](17-text-diff-asset-pipeline.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Relocate the three-crate Cargo workspace to the root with pinned toolchain/dependencies intact and make help/run/gallery/format/verify/verify-full/release/install working from a fresh checkout.
+- [x] Relocate the three-crate Cargo workspace to the root with pinned toolchain/dependencies intact and make help/run/gallery/format/verify/verify-full/release/install working from a fresh checkout.
 - [x] Use SofDevTool 0.2.0 and the exact agreed Release/Debug names, bundle IDs, data namespaces and established normal/orange-DEV artwork; include deliberate build identifier, immutable revision and channel from authoritative metadata.
 - [x] Keep profile bundles and preferences/History/Random String controls separate, preserve test-data-root override and legacy data, and honor a nondefault Cargo target directory.
 - [x] Verify packaging/install failures propagate and replacement stays within the intended bundle. Document the default home Applications destination and override; exercise a temporary destination now, reserving the actual default install acceptance for 22.
@@ -33,4 +33,4 @@ Root workspace, separate Debug/Release identity, authoritative bundle metadata, 
 
 ## Acceptance closeout — 2026-09-23
 
-The second through fourth clauses are supported by [ticket-specific evidence](../evidence/ticket-20.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). The first clause's workspace relocation and build/package paths are evidenced, but its compound command-surface claim remains open: the recorded checks did not directly run `make run`, `make gallery` and `make format` from a fresh checkout. Earlier implementation notes describe their then-current state; ticket 22 retains separate final Release and local-delivery acceptance.
+All four clauses are supported by [ticket-specific evidence](../evidence/ticket-20.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). The coordinator directly exercised all eight Make targets from a clean managed worktree at `df95bd3`; the intentionally interrupted gallery process is distinguished from a failed launch in the ticket-20 evidence. Earlier implementation notes describe their then-current state. Ticket 22 retains separate final Release and local-delivery acceptance.

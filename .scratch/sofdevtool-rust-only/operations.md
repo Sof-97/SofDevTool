@@ -198,6 +198,17 @@ Earlier Luna work in this history remains accurately attributed to Luna.
   through isolated relaunch. Earlier installed `d9523eb` evidence covers the
   fifteen-Utility pass; the candidates are kept distinct in
   [ticket 22 evidence](evidence/ticket-22.md).
+- Ticket 20's root command surface was independently exercised from a clean
+  managed worktree at committed `df95bd3`: direct `make help`, `make format`
+  (no diff), `make verify`, `make verify-full` (339 Rust/five packaging tests),
+  `make release`, temporary-destination `make install`, `make gallery` and
+  `make run`. The gallery launched and was intentionally stopped with Ctrl-C;
+  its interrupt exit 2 is not an application failure. The Debug app opened in
+  Graphite and completed synthetic JSON/History work using only an isolated
+  temporary profile; Cmd-Q stopped it. Git diff and porcelain status were
+  empty afterward. [Ticket 20 evidence](evidence/ticket-20.md) links the
+  recorded logs and distinguishes this Debug command proof from ticket 22's
+  installed Release acceptance.
 - Ticket 22 remains claimed. Physical global Launcher shortcut behavior,
   literal Dock/other-Space interaction, some final native subcases and final
   branch cleanliness remain open. macOS 14/15 runtime is unverified; no remote
