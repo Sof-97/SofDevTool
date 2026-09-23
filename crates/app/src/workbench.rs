@@ -565,7 +565,7 @@ impl Render for Workbench {
                         div()
                             .text_lg()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Developer Toolbox"),
+                            .child(crate::identity::APP_DISPLAY_NAME),
                     )
                     .child(
                         div()
@@ -574,7 +574,16 @@ impl Render for Workbench {
                             .gap_2()
                             .text_xs()
                             .text_color(tokens.text_muted())
-                            .child("Library · local and offline")
+                            .child(format!(
+                                "{} · {} · {} · {}",
+                                crate::identity::VERSION,
+                                crate::identity::PROFILE.channel(),
+                                crate::identity::REVISION
+                                    .chars()
+                                    .take(8)
+                                    .collect::<String>(),
+                                crate::identity::SOURCE_STATE,
+                            ))
                             .child(
                                 Button::new(if self.is_favorite(selected) {
                                     "Favorite: on"

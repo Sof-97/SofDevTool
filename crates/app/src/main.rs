@@ -22,7 +22,7 @@ fn window_options(bounds: Option<WindowBounds>) -> WindowOptions {
     WindowOptions {
         window_bounds: bounds,
         titlebar: Some(TitlebarOptions {
-            title: Some(identity::APP_DISPLAY_NAME.into()),
+            title: Some(identity::build_description().into()),
             ..Default::default()
         }),
         app_id: Some(identity::BUNDLE_IDENTIFIER.to_string()),
@@ -56,7 +56,11 @@ fn main() {
         HistoryStore::new(
             identity::application_support_root()
                 .map(|root| root.join("History"))
-                .unwrap_or_else(|| std::env::temp_dir().join("SofDevToolRustHistory")),
+                .unwrap_or_else(|| {
+                    std::env::temp_dir()
+                        .join(identity::BUNDLE_IDENTIFIER)
+                        .join("History")
+                }),
         ),
         Box::new(SystemClock::new()),
         history_policy,
@@ -116,8 +120,10 @@ fn main() {
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.set_menus([
-            Menu::new(identity::APP_DISPLAY_NAME)
-                .items([MenuItem::action("Quit SofDevTool", Quit)]),
+            Menu::new(identity::APP_DISPLAY_NAME).items([MenuItem::action(
+                format!("Quit {}", identity::APP_DISPLAY_NAME),
+                Quit,
+            )]),
             Menu::new("Edit").items([
                 MenuItem::os_action("Copy", Copy, OsAction::Copy),
                 MenuItem::os_action("Paste", Paste, OsAction::Paste),

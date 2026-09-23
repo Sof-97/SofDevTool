@@ -63,7 +63,7 @@ events. Consumers that silently assign text and need to evaluate it must
 schedule that work explicitly. The legacy `set_text` and `replace_all` aliases
 remain for workspaces still being migrated.
 
-From `rust/`, run `cargo run -p sofui --example gallery` to open the gallery.
+From the repository root, run `cargo run -p sofui --example gallery` to open the gallery.
 The gallery imports only sofui and GPUI, and demonstrates repeated labels,
 focus, disabled actions, real Copy feedback, Unicode editors, diagnostics,
 selected, unavailable, disabled and failed list rows, an empty list, hold

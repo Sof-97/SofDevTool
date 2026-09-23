@@ -9,7 +9,7 @@
 # stops the gate with its own exit status; nothing hides a non-zero result.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 full=0
@@ -30,7 +30,10 @@ echo "== clippy (warnings denied) =="
 cargo clippy --workspace --all-targets -- -D warnings
 
 echo "== tests =="
-cargo test --workspace
+SOFDEVTOOL_EXPECT_UNKNOWN_METADATA=1 cargo test --workspace
+
+echo "== macOS packaging and temporary install tests =="
+python3 -m unittest discover -s scripts/rust -p 'test_*.py'
 
 echo "== debug build (bins + examples) =="
 cargo build --workspace --bins --examples

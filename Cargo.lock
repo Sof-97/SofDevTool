@@ -7157,7 +7157,7 @@ dependencies = [
 
 [[package]]
 name = "sofdevtool-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
@@ -7174,7 +7174,7 @@ dependencies = [
 
 [[package]]
 name = "sofdevtool-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "chrono-tz",

@@ -4,7 +4,7 @@
 
 **Blocked by:** [01: Use sofui's owned component interfaces in JSON and the gallery](01-sofui-json-gallery.md); [17: Make Text Diff assets independently maintainable and locally bundled](17-text-diff-asset-pipeline.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Relocate the three-crate Cargo workspace to the root with pinned toolchain/dependencies intact and make help/run/gallery/format/verify/verify-full/release/install working from a fresh checkout.
 - [ ] Use SofDevTool 0.2.0 and the exact agreed Release/Debug names, bundle IDs, data namespaces and established normal/orange-DEV artwork; include deliberate build identifier, immutable revision and channel from authoritative metadata.
@@ -26,3 +26,7 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Implementation checkpoint — 2026-09-23
+
+Root workspace, separate Debug/Release identity, authoritative bundle metadata, retained artwork, root Makefile and scoped installer are implemented. `make verify` and `make verify-full` pass; temporary-destination install and packaging failure checks pass. See [implementation evidence](../evidence/ticket-20.md). Actual default installation and final native Release acceptance belong to ticket 22.
