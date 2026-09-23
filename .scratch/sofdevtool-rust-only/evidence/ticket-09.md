@@ -56,3 +56,7 @@ The preceding frozen04 run exposed one intermittent initial History write
 failure in a Settings test. Its temporary-root helper now includes a
 process-local atomic sequence in addition to PID/time, preventing colliding
 parallel test directories. The full gate passed with this isolation fix.
+
+After the full gate, ten consecutive Settings test runs passed on the same
+frozen candidate (90 successful tests). Log:
+`.artifacts/parallel-rust-only/wave5/settings-repeat.log`.
