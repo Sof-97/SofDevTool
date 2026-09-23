@@ -85,3 +85,29 @@ The synthetic Ctrl-Option-K chord also failed to expose a Launcher when sent
 while the separate preview application was foreground. Global hardware-key
 invocation therefore remains unverified; no Carbon implementation change has
 been made on this evidence alone.
+
+## Final owner-reported shell acceptance — 2026-09-23
+
+The coordinator later installed the corrected r4 Release 0.2.0 build 1,
+packaged as clean revision `b4e17030ffa8e37b51bb661befe2e6728a044b9b`
+with executable SHA-256
+`24d2645b47021748226be8f3919e9fe1bc062730f92b710a7955fbcfe5e2a905`.
+The app ran outside the checkout against isolated
+`/private/tmp/sofdevtool-final-profile-0jm89bq9`; the latest owner handoff
+used PID 14600. The coordinator had restored the synthetic JSON
+`items[1].name` query and `caffè` result and left the app open for manual
+checks. The installed version, bundle identity and executable hash were
+reverified before closeout.
+
+The owner was specifically asked to test the physical Control-Option-Space
+Launcher shortcut from another application, interaction from another
+Space/full-screen context, and Cmd-W followed by a literal Dock click returning
+to the retained JSON state. The owner replied “Si sembra funzionare tutto.”
+This is an **owner-reported pass of those requested checks**, not a
+Computer Use observation of the key, Space or Dock actions. Earlier CUA
+synthetic-key failures and its Dock automation timeout remain historically
+accurate; they do not override the owner's manual result. Other shell,
+Settings, theme, editing and WebView interactions are separately recorded in
+[ticket 22](ticket-22.md). Native runtime on macOS 14/15, cross-display/DPI
+transitions and full IME composition were not established on this macOS 26.2
+arm64 host.

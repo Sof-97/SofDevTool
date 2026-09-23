@@ -8,15 +8,17 @@ Regex uses the documented Rust regex dialect and bounded evaluation, not the
 retired Swift/ICU behavior.
 
 The [approved ticket index](.scratch/sofdevtool-rust-only/ticket-proposal.md)
-links all 22 implementation and acceptance tickets. Tickets 01–11 and 13–21
-are resolved. [Ticket 12](.scratch/sofdevtool-rust-only/issues/12-workbench-launcher-settings-redesign.md)
-and [ticket 22](.scratch/sofdevtool-rust-only/issues/22-release-acceptance-local-delivery.md)
-remain claimed for native Launcher/Spaces/Dock acceptance and final clean local
-delivery. A physical global shortcut, another Space/full-screen context and a
-literal Dock return still need the owner's manual check; synthetic key events
-and application-open tests do not establish those behaviors. The installed
-Release and automated/native results are separated in
+links all 22 implementation and acceptance tickets. All 22 are resolved:
+[ticket 12](.scratch/sofdevtool-rust-only/issues/12-workbench-launcher-settings-redesign.md)
+records the approved shell and the owner's manual Launcher/Spaces/Dock pass;
+[ticket 22](.scratch/sofdevtool-rust-only/issues/22-release-acceptance-local-delivery.md)
+records the installed Release and local delivery. The three physical checks
+were reported by the owner after a request to test them, not captured by
+Computer Use. Automated gates, coordinator-observed native flows, manual
+reports and earlier candidates remain distinct in
 [ticket 22 evidence](.scratch/sofdevtool-rust-only/evidence/ticket-22.md).
+macOS 14/15 runtime, other display/DPI configurations and full IME composition
+remain outside the observed acceptance scope.
 
 Use the root [README](README.md) for maintained commands and
 [AGENTS.md](AGENTS.md) for source ownership. The

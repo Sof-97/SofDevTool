@@ -4,11 +4,11 @@
 
 **Blocked by:** [11: Present one native Workbench preview for owner approval](11-native-preview-approval.md).
 
-**Status:** claimed
+**Status:** resolved
 
 - [x] Preserve Library/Recent/Favorites, grouping, search, keyboard selection, separate Settings and trailing collapsible History.
 - [x] Use the approved component treatment for shell controls; old workspace bodies remain usable until their individual rollout tickets land.
-- [ ] Exercise configurable shortcut failure, nonactivating dismissal, current-Space/full-screen behavior, opening a Utility, Dock reopen, closing the last window and explicit Quit.
+- [x] Exercise configurable shortcut failure, nonactivating dismissal, current-Space/full-screen behavior, opening a Utility, Dock reopen, closing the last window and explicit Quit.
 - [x] Verify switching and theme changes preserve input/results, focus where applicable and native editor/WebView handoff; report runtime limits honestly.
 
 ## Testing
@@ -29,4 +29,4 @@ Publication is documentation only. Begin implementation only under a subsequent 
 
 ## Acceptance closeout — 2026-09-23
 
-The first, second and fourth clauses are supported by [ticket-specific evidence](../evidence/ticket-12.md), the [final source review](../evidence/final-review.md) and the [installed Release observations](../evidence/ticket-22.md). The third clause remains open: a physical global Launcher shortcut, literal Dock click and other-Space behavior have not been established by synthetic key events or the application-open API. Ticket 22 owns that remaining native acceptance. Earlier integration notes record their then-current state; this closeout records the current boundary.
+All four clauses are supported by [ticket-specific evidence](../evidence/ticket-12.md), the [final source review](../evidence/final-review.md) and the [installed Release observations](../evidence/ticket-22.md). The coordinator observed shell, theme, lifecycle and WebView behavior with an isolated profile. After being asked to test the physical global shortcut from another app, another Space/full-screen context and literal Dock return after Cmd-W, the owner replied “Si sembra funzionare tutto.” These three are owner-reported passes, not CUA-observed events; earlier synthetic-key and application-open limitations remain accurately recorded as historical observations. macOS 14/15 runtime and cross-display/DPI transitions were not tested.

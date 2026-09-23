@@ -13,4 +13,14 @@ The current app has one Carbon hotkey registration path. Its callback does not i
 - With `CARGO_TARGET_DIR=/private/tmp/sofdevtool-terra-target` and `CARGO_NET_OFFLINE=true`, `cargo test -p sofdevtool-app --lib shortcut::tests -- --nocapture` passed all five controller tests. These tests validate configuration and transactional registration but cannot inject a real Carbon hotkey event.
 - `cargo clippy -p sofdevtool-app --all-targets -- -D warnings` passed. The pre-existing transitive `block 0.1.6` future-incompatibility notice remains separate from first-party Clippy.
 
-The final [r4 full gate](../../../.artifacts/parallel-rust-only/final/verify-full-r4.log) passed 339 Rust tests, five Python checks and identity. The corrected Release `b4e17030ffa8e37b51bb661befe2e6728a044b9b` was installed at the default location; the Launcher button opened the native panel and Escape closed it. CUA-synthesized Ctrl-Alt-Space **still did not open it**. This is a post-fix synthetic observation, not a physical-key test or proof of a remaining Carbon defect. The owner has been asked to try the physical chord from another app; no answer has been recorded. A Settings shortcut label does not establish delivery. See [ticket 22](ticket-22.md) for the installed binary and native record.
+The final [r4 full gate](../../../.artifacts/parallel-rust-only/final/verify-full-r4.log) passed 339 Rust tests, five Python checks and identity. The corrected Release `b4e17030ffa8e37b51bb661befe2e6728a044b9b` was installed at the default location; the Launcher button opened the native panel and Escape closed it. CUA-synthesized Ctrl-Alt-Space **still did not open it**. This is a post-fix synthetic observation, not a physical-key test or proof of a remaining Carbon defect. A Settings shortcut label also does not establish delivery.
+
+The coordinator subsequently asked the owner to press the physical
+Control-Option-Space chord from another application on this installed r4
+Release, along with separate Space/full-screen and Dock-return checks. The
+owner replied “Si sembra funzionare tutto.” This is an **owner-reported pass
+of the physical chord**, not a CUA-captured Carbon event trace; the synthetic
+failure above remains accurately described as an automation observation.
+See [ticket 22](ticket-22.md) for the exact installed binary, isolated profile
+and manual-check provenance. macOS 14/15 and other keyboard layouts were not
+tested.

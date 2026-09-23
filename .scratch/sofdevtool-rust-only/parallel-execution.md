@@ -25,9 +25,10 @@ files only. Use installed dependency sources and keep pinned versions.
 The coordinator approves ticket status changes and alone uses GitButler for
 commits and integration. Workers leave their candidate uncommitted and report changed files,
 commands/results, acceptance coverage and remaining checks in the assigned
-evidence file. Raw Git status has a synthetic index: deletion/untracked pairs
-can describe unchanged files. Compare actual bytes with `git show HEAD:path`
-when useful; never repair the index.
+evidence file. The earlier synthetic index showed deletion/untracked pairs
+despite matching committed bytes. The coordinator reconciled it during final
+closeout only after explicit owner authorization; workers must not independently
+repair repository metadata.
 
 Use temporary synthetic profiles. Keep personal application data, credentials
 and History payloads out of inspection/logs. Native launch and install are
@@ -39,10 +40,11 @@ boundary agreed by all active application writers.
 
 ## Dependencies and acceptance
 
-The coordinator checks contracts, builds and regression evidence at each
-integration boundary so dependent workers can proceed. Ticket status is resolved
-only for clauses covered by recorded evidence; unverified native requirements
-remain claimed. Ticket 22 separately owns final installed Release acceptance.
+The coordinator checked contracts, builds and regression evidence at each
+integration boundary. Ticket status is resolved only for clauses covered by
+recorded evidence. All 22 tickets are resolved; ticket 22 separates automated
+gates, coordinator-observed native behavior and the owner's three manual
+Launcher/Spaces/Dock passes.
 
 The owner explicitly approved ticket 11 candidate `b7e28f0` on 2026-09-23.
 Ticket 12 and subsequent Utility rollout use that accepted compact native
@@ -51,7 +53,12 @@ that visual approval.
 
 The comprehensive Astra Standards review reported zero findings. Its Specification
 review reported two Text Diff findings; GPT-6 Sol corrected both in `df95bd3`,
-and Astra's read-only recheck found no remaining regression. The corrected source
-passed the full offline gate. The installed Release and remaining native limits
-are tracked in [ticket 22 evidence](evidence/ticket-22.md); final branch
-cleanliness and local delivery remain coordinator-owned.
+and Astra's read-only recheck found no remaining regression. A subsequent
+Carbon event-kind finding was corrected by Sol in `33d68b3` and accepted by
+Astra's follow-up. The r4 source passed the full offline gate; the installed
+Release and evidence limits are tracked in [ticket 22](evidence/ticket-22.md).
+Before this documentation-only closeout, branch `89fd007` had verified base
+ancestry, matching committed tree, empty Git porcelain status and zero
+GitButler uncommitted changes after an explicitly authorized index
+reconciliation. The coordinator owns committing these final documents and
+rechecking that state. No remote publication is authorized.

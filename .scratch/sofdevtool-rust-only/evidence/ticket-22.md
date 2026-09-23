@@ -1,6 +1,6 @@
-# Ticket 22 — final Release acceptance (in progress)
+# Ticket 22 — final Release acceptance
 
-This record separates the latest installed Release's fifteen-Utility representative smoke, the earlier corrected Text Diff run, and detailed native observations of a preceding candidate. It does **not** yet establish every final native criterion or a clean merge-ready branch. The source correction commits include `df95bd39b281e4d7e44375ef8c7543417b01490e` for the two Text Diff review findings and `33d68b3` for the Carbon pressed-event fix, followed by packaging documentation commit `dcc6f0b`. The latest packaged revision is GitButler's synthetic `HEAD` `b4e17030ffa8e37b51bb661befe2e6728a044b9b`, which must not be confused with a branch commit. The earlier corrected installed Release used synthetic revision `b73c2a7b8937a8f58c820fa538beb487d8dac9de`. The still earlier `d9523ebebca78fc79774ad24cfacde8f43a51ac4` Release predates the Text Diff corrections; its more detailed native Utility walkthrough remains useful coverage but cannot by itself certify the latest binary.
+This record separates the latest installed Release's fifteen-Utility representative smoke, the owner's subsequent physical Launcher/Spaces/Dock checks, the earlier corrected Text Diff run, and detailed native observations of a preceding candidate. Owner-reported manual passes are identified separately from Computer Use observations. The source correction commits include `df95bd39b281e4d7e44375ef8c7543417b01490e` for the two Text Diff review findings and `33d68b3` for the Carbon pressed-event fix, followed by packaging documentation commit `dcc6f0b`. The latest packaged revision is GitButler's synthetic `HEAD` `b4e17030ffa8e37b51bb661befe2e6728a044b9b`, which must not be confused with a branch commit. The earlier corrected installed Release used synthetic revision `b73c2a7b8937a8f58c820fa538beb487d8dac9de`. The still earlier `d9523ebebca78fc79774ad24cfacde8f43a51ac4` Release predates the Text Diff corrections; its more detailed native Utility walkthrough remains useful coverage but cannot by itself certify the latest binary.
 
 ## Final-source automated gate
 
@@ -32,7 +32,43 @@ From 09:13–09:19 UTC, the coordinator exercised one representative flow in **a
 
 The earlier candidate's detailed invalid-input, restore and configuration checks remain documented below. The r4 smoke establishes a representative path through every Utility on the corrected installed binary; it does not imply exhaustive native coverage of all modes.
 
-The Launcher button opened the native panel and Escape closed it. Cmd-W left PID 6591 running; CUA's `getApp` reopen returned the same process with the restored JSON query state. That observation establishes state in the same live process, **not** return through a literal Dock click. Direct system Dock automation timed out with CUA error 10005. A CUA-synthesized Ctrl-Alt-Space still did not open the Launcher after the Carbon pressed-event correction. This synthetic failure alone cannot establish how the physical chord is delivered. The coordinator has asked the owner to check the physical shortcut from another app, a separate Space/fullscreen interaction, and Cmd-W followed by a literal Dock return. No answer has been recorded yet.
+The Launcher button opened the native panel and Escape closed it. Cmd-W left PID 6591 running; CUA's `getApp` reopen returned the same process with the restored JSON query state. That observation establishes state in the same live process, **not** return through a literal Dock click. Direct system Dock automation timed out with CUA error 10005. A CUA-synthesized Ctrl-Alt-Space still did not open the Launcher after the Carbon pressed-event correction. This synthetic failure alone cannot establish how the physical chord is delivered. The owner's later manual result is recorded separately below.
+
+## Owner-reported physical checks and clean local branch
+
+The coordinator left the same installed r4 Release open outside the checkout on
+the isolated profile `/private/tmp/sofdevtool-final-profile-0jm89bq9`, with the
+synthetic JSON `items[1].name` query and `caffè` result restored. The latest
+handoff process was PID 14600. The coordinator reverified bundle identity
+`com.gerardocalia.sofdevtool`, version 0.2.0 build 1, clean packaged revision
+`b4e17030ffa8e37b51bb661befe2e6728a044b9b` and the same executable
+SHA-256 `24d2645b47021748226be8f3919e9fe1bc062730f92b710a7955fbcfe5e2a905`.
+The owner was asked to try three physical checks: Control-Option-Space from
+another app; interaction from another Space/full-screen context; and Cmd-W
+followed by a **literal Dock click** returning to the retained JSON state.
+The owner replied “Si sembra funzionare tutto.” This is an **owner-reported
+pass of the requested checks**, not an independently captured CUA trace of
+those actions. Earlier CUA synthetic-key failure and Dock timeout remain
+accurate observations about that automation path.
+
+Before this documentation closeout, `feat/rust-gpui-migration` was at
+`89fd00793e366578588473b1f23eee37a7dc9eeb`; its base ancestry and tree
+equivalence had passed, and all 272 tracked worktree files matched current
+`HEAD` in bytes and mode. The apparent 335 GitButler uncommitted changes came
+from an index still resembling the retired pre-root workspace, not live edits:
+the 264 non-ignored paths reported untracked were already committed in
+`HEAD`; genuine non-ignored untracked files numbered zero. With explicit user
+authorization, the coordinator made an index backup at
+`/private/tmp/sofdevtool-index-backup-i3_lce4r/index`, used the documented
+`but teardown`/snapshot route, then the narrowly scoped raw-Git exception
+`git restore --staged --source=HEAD -- .` when teardown alone left the stale
+index; `but setup` restored managed mode. Afterward Git porcelain status was
+empty, GitButler reported zero uncommitted changes, and the branch remained
+local and unpublished. Ignored personal files were preserved; no product file
+was changed by this reconciliation. This proves the branch state at
+`89fd007` before these documentation-only closeout edits. The coordinator
+owns committing the closeout and repeating the final clean-branch check; no
+future commit hash is asserted here.
 
 ## Earlier corrected Text Diff Release: actual native observations
 
@@ -70,6 +106,16 @@ The coordinator used the default `~/Applications/SofDevTool.app` installation, w
 
 The coordinator also switched to Frappé and observed a separate Settings window in that theme, with global History enabled and JWT recording off. Cmd-W closed Settings and returned to Workbench. Ctrl-Cmd-F entered fullscreen (AX window controls disappeared), the Launcher button opened a native Frappé panel there, searching `json` and pressing Return returned to JSON with its earlier input, query and `caffè` result intact, and Ctrl-Cmd-F exited fullscreen (controls returned). A synthesized Ctrl-Alt-Space did not open the Launcher; this does not prove whether a physical global shortcut fails. Explicit Cmd-Q terminated PID 96250. Other Spaces/Dock interactions were not exercised in that run. Relaunch persistence and renderer runtime were subsequently checked on the corrected Release above.
 
-## Outstanding acceptance boundary
+## Acceptance limits
 
-The physical global Launcher shortcut remains a user-check question: CUA-synthesized Ctrl-Alt-Space did not open the Launcher even on r4, but synthetic delivery does not establish physical Carbon hotkey behavior. The literal Dock return and separate Space/fullscreen checks await the owner's manual observations; some native catalog subcases listed above were not rerun on r4. The coordinator still owns final branch cleanliness and merge-ready local delivery verification. The accepted test host does not establish macOS 14/15, other DPI/display configurations or all IME behavior; the specified IME exception remains. The independent [final review](final-review.md) reports source findings and their resolution separately from native evidence.
+The owner's report closes the three requested physical Launcher/Spaces/Dock
+checks on this installed r4 binary; it does not turn them into coordinator
+screen-captured observations. Some native catalog subcases listed above were
+not rerun on r4, but the final-binary representative pass, independent core
+contracts and full gate cover the agreed acceptance scope. The accepted macOS
+26.2 arm64 host does not establish macOS 14/15 runtime, other DPI/display
+configurations or all IME behavior; the specified IME exception remains.
+Full VoiceOver certification is outside scope. No personal History was read.
+The independent [final review](final-review.md) reports source findings and
+their resolution separately from native evidence. No push, pull request,
+merge or sofui publication occurred.

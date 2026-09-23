@@ -1,10 +1,11 @@
-# Rust-only completion: pi trial
+# Rust-only completion register
 
 ## Current execution state
 
-The implementation and independent Astra source review are complete. The
-corrected source passed the full gate and installed Release checks continue
-under ticket 22. The owner's latest instruction reserves all implementation
+The implementation, independent Astra source review and agreed installed
+Release acceptance are complete: all 22 tickets are resolved, with manual
+Launcher/Spaces/Dock checks explicitly owner-reported. The owner's latest
+instruction reserves all implementation
 and corrections for GPT-6 Sol; earlier Sol/Luna parallel work below is dated
 history. The approved preview was `b7e28f0`, the Rust workspace is at the root,
 and Swift retirement is integrated. See the [execution contract](parallel-execution.md)
@@ -261,3 +262,36 @@ Earlier Luna work in this history remains accurately attributed to Luna.
   Source and representative installed-binary evidence is ready for independent
   review; ticket 22 native acceptance still depends on the owner's three
   manual observations.
+
+### Closeout after owner manual checks
+
+- The coordinator reverified the installed r4 Release at
+  `/Users/gerardo/Applications/SofDevTool.app`: bundle ID
+  `com.gerardocalia.sofdevtool`, version 0.2.0 build 1, clean packaged
+  revision `b4e17030ffa8e37b51bb661befe2e6728a044b9b`, executable SHA-256
+  `24d2645b47021748226be8f3919e9fe1bc062730f92b710a7955fbcfe5e2a905`.
+  The latest handoff process, PID 14600, ran outside the checkout on isolated
+  `/private/tmp/sofdevtool-final-profile-0jm89bq9` with synthetic JSON
+  `items[1].name` and `caffè` restored.
+- Asked to test physical Control-Option-Space from another application,
+  another Space/full-screen context, and Cmd-W followed by a literal Dock
+  return to that retained JSON session, the owner replied “Si sembra
+  funzionare tutto.” These are **owner-reported passes**, not CUA-observed
+  key/Space/Dock events. The preceding CUA synthetic-key and Dock automation
+  failures remain documented as such. See [ticket 12](evidence/ticket-12.md)
+  and [ticket 22](evidence/ticket-22.md).
+- Before these documentation-only closeout edits, feature branch `89fd007`
+  had the expected base ancestry and shared tree `c40d748c5244e7babe75922d1069c214e7f6422a`
+  with its GitButler workspace; all 272 tracked bytes and modes matched.
+  The apparent uncommitted changes were a stale pre-relocation index, not
+  source edits. With explicit user authorization, the coordinator backed up
+  the index, attempted the official `but teardown` snapshot route, then used
+  narrowly scoped `git restore --staged --source=HEAD -- .` when that route
+  alone left the index stale, followed by `but setup`. Git porcelain status
+  was empty and GitButler showed zero uncommitted changes; ignored personal
+  files were preserved. The local branch remains unpublished. The coordinator
+  owns the final documentation commit and clean-state recheck.
+- Tickets 01–22 are resolved against the evidence above. Native evidence is
+  macOS 26.2 arm64; macOS 14/15 runtime, other display/DPI configurations
+  and full IME composition remain unverified or expressly excepted by the
+  specification. No push, pull request, merge or sofui publication occurred.
