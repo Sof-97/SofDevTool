@@ -17,8 +17,9 @@ use sofdevtool_core::session::SubmitOutcome;
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    ConfirmationBar, DiagnosticSeverity, LabeledField, SelectableList, SelectableListFocus,
-    SelectableRow, TextEditor, TextField, ThemeTokens,
+    ConfirmationBar, DiagnosticSeverity, LabeledField, SegmentedControl, SegmentedControlFocus,
+    SegmentedOption, SelectableList, SelectableListFocus, SelectableRow, TextEditor, TextField,
+    ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
@@ -27,9 +28,6 @@ use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, History
 const DEBOUNCE: Duration = Duration::from_millis(250);
 
 struct ButtonFocus {
-    format: FocusHandle,
-    minify: FocusHandle,
-    query: FocusHandle,
     indent: FocusHandle,
     sort: FocusHandle,
     paste: FocusHandle,
@@ -57,6 +55,7 @@ pub struct JsonWorkspace {
     history_view: HistoryViewState,
     history_visible: bool,
     history_focus: SelectableListFocus,
+    choice_focus: SegmentedControlFocus,
     _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
@@ -104,11 +103,9 @@ impl JsonWorkspace {
             history_view,
             history_visible: true,
             history_focus: SelectableListFocus::new(),
+            choice_focus: SegmentedControlFocus::new(),
             _history_subscription: history_subscription,
             focus: ButtonFocus {
-                format: cx.focus_handle().tab_stop(true).tab_index(0),
-                minify: cx.focus_handle().tab_stop(true).tab_index(0),
-                query: cx.focus_handle().tab_stop(true).tab_index(0),
                 indent: cx.focus_handle().tab_stop(true).tab_index(0),
                 sort: cx.focus_handle().tab_stop(true).tab_index(0),
                 paste: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -347,28 +344,6 @@ impl JsonWorkspace {
             .collect()
     }
 
-    fn mode_button(&self, label: &'static str, mode: JsonMode, cx: &mut Context<Self>) -> Button {
-        let id = match mode {
-            JsonMode::Format => "json.mode.format",
-            JsonMode::Minify => "json.mode.minify",
-            JsonMode::Query => "json.mode.query",
-        };
-        Button::with_id(id, label)
-            .variant(if self.mode == mode {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Secondary
-            })
-            .focus_handle(match mode {
-                JsonMode::Format => self.focus.format.clone(),
-                JsonMode::Minify => self.focus.minify.clone(),
-                JsonMode::Query => self.focus.query.clone(),
-            })
-            .on_click(view_click(cx, move |this, window, cx| {
-                this.set_mode(mode, window, cx);
-            }))
-    }
-
     fn render_diagnostics(&self) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_2().w_full();
         for diagnostic in self.session.evaluation().diagnostics() {
@@ -432,6 +407,7 @@ impl JsonWorkspace {
             .gap_2()
             .border_l_1()
             .border_color(ThemeTokens::active().border())
+            .bg(ThemeTokens::active().surface())
             .child(panel)
     }
 
@@ -468,14 +444,42 @@ impl Render for JsonWorkspace {
                 .map(|request| !request.input.trim().is_empty())
                 .unwrap_or(false);
 
+        let selected_mode = match self.mode {
+            JsonMode::Format => "format",
+            JsonMode::Minify => "minify",
+            JsonMode::Query => "query",
+        };
+        let mode_control = SegmentedControl::new(
+            "json.mode",
+            "JSON operation",
+            vec![
+                SegmentedOption::new("format", "Format"),
+                SegmentedOption::new("minify", "Minify"),
+                SegmentedOption::new("query", "Query"),
+            ],
+            Some(selected_mode.to_owned()),
+            self.choice_focus.clone(),
+        )
+        .on_change(Rc::new({
+            let weak = cx.weak_entity();
+            move |id, window, cx| {
+                let mode = match id {
+                    "format" => JsonMode::Format,
+                    "minify" => JsonMode::Minify,
+                    "query" => JsonMode::Query,
+                    _ => return,
+                };
+                weak.update(cx, |this, cx| this.set_mode(mode, window, cx))
+                    .ok();
+            }
+        }));
         let mut toolbar = div()
             .flex()
             .flex_row()
             .items_center()
             .gap_2()
-            .child(self.mode_button("Format", JsonMode::Format, cx))
-            .child(self.mode_button("Minify", JsonMode::Minify, cx))
-            .child(self.mode_button("Query", JsonMode::Query, cx));
+            .flex_wrap()
+            .child(mode_control);
 
         if self.mode == JsonMode::Format {
             toolbar = toolbar.child(
@@ -560,27 +564,7 @@ impl Render for JsonWorkspace {
             .min_h_0()
             .bg(tokens.background())
             .text_color(tokens.text())
-            .p_4()
             .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("JSON"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.text_muted())
-                            .child("Local, offline, unsorted by default"),
-                    ),
-            )
             .child(toolbar);
 
         if self.mode == JsonMode::Query {
@@ -612,7 +596,7 @@ impl Render for JsonWorkspace {
         let mut workspace = div()
             .flex()
             .flex_row()
-            .gap_4()
+            .gap_3()
             .flex_1()
             .min_h_0()
             .child(panel(
@@ -710,6 +694,26 @@ mod tests {
         });
         let workspace = captured.unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).choice_focus.clone();
+            window.focus(&focus.handle("json.mode", "minify", cx), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.mode),
+            JsonMode::Minify
+        );
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).choice_focus.clone();
+            window.focus(&focus.handle("json.mode", "format", cx), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.mode),
+            JsonMode::Format
+        );
         for text in [r#"{"first":1}"#, r#"{"second":2}"#] {
             cx.update(|window, cx| {
                 workspace.update(cx, |view, cx| view.input.edit_text(text, window, cx));

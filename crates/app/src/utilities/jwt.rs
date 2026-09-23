@@ -19,7 +19,8 @@ use sofdevtool_core::utilities::jwt::{
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    DiagnosticSeverity, HistoryItem, HistoryPanel, TextEditor, ThemeTokens,
+    ConfirmationBar, DiagnosticSeverity, SelectableList, SelectableListFocus, SelectableRow,
+    TextEditor, ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
@@ -69,6 +70,7 @@ pub struct JwtWorkspace {
     recording_enabled: bool,
     history_view: HistoryViewState,
     history_visible: bool,
+    history_focus: SelectableListFocus,
     _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
@@ -106,6 +108,7 @@ impl JwtWorkspace {
             recording_enabled,
             history_view,
             history_visible: true,
+            history_focus: SelectableListFocus::new(),
             _history_subscription: history_subscription,
             focus: ButtonFocus {
                 record: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -303,20 +306,21 @@ impl JwtWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<HistoryItem> {
+    fn history_items(&self) -> Vec<SelectableRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                HistoryItem {
+                SelectableRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
                         .as_ref()
                         .map(|snapshot| preview_line(&snapshot.payload))
                         .unwrap_or_else(|| "Unavailable snapshot".to_owned()),
-                    available: snapshot.is_some(),
+                    status: (!snapshot.is_some()).then(|| "Unavailable".to_owned()),
+                    selectable: true,
                 }
             })
             .collect()
@@ -373,22 +377,23 @@ impl JwtWorkspace {
                     .iter()
                     .find(|entry| &entry.id == id)
             })
-            .map(|entry| decode_snapshot(entry).is_some())
-            .unwrap_or(false);
-        let actions = div().flex().flex_row().gap_2().child(
-            Button::new("Restore selected")
-                .disabled(!restore_enabled)
-                .focus_handle(self.focus.history_restore.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.restore_selected(window, cx);
-                })),
-        );
+            .is_some_and(|entry| decode_snapshot(entry).is_some());
+        let actions = Button::with_id("jwt-decoder.history.restore-selected", "Restore selected")
+            .disabled(!restore_enabled)
+            .focus_handle(self.focus.history_restore.clone())
+            .on_click(view_click(cx, |this, window, cx| {
+                this.restore_selected(window, cx)
+            }));
         let weak = cx.weak_entity();
-        let panel = HistoryPanel::new(
+        let list = SelectableList::new(
+            "jwt-decoder.history",
+            "History",
             self.history_items(),
             selected,
             "No retained operations yet. Enable recording to keep entries.",
+            self.history_focus.clone(),
         )
+        .summary(format!("{}/25", self.history_view.entries.len()))
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
                 if this.history_view.select(id) {
@@ -407,48 +412,25 @@ impl JwtWorkspace {
             .gap_2()
             .border_l_1()
             .border_color(ThemeTokens::active().border())
-            .child(panel)
+            .bg(ThemeTokens::active().surface())
+            .child(list)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(tokens.warning())
-            .bg(tokens.surface_raised())
-            .child(div().text_xs().text_color(tokens.text()).child(
-                "Restoring this History entry replaces the current non-empty JWT Decoder session.",
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(
-                        Button::new("Restore")
-                            .variant(ButtonVariant::Primary)
-                            .focus_handle(self.focus.history_confirm.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                this.confirm_restore(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("Cancel")
-                            .focus_handle(self.focus.history_cancel.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.cancel_restore(cx);
-                            })),
-                    ),
-            )
+        ConfirmationBar::new(
+            "jwt-decoder.history.restore",
+            "Restoring this History entry replaces the current non-empty JWT Decoder session.",
+            "Restore",
+            "Cancel",
+        )
+        .focus_handles(
+            self.focus.history_confirm.clone(),
+            self.focus.history_cancel.clone(),
+        )
+        .on_confirm(view_click(cx, |this, window, cx| {
+            this.confirm_restore(window, cx)
+        }))
+        .on_cancel(view_click(cx, |this, _window, cx| this.cancel_restore(cx)))
     }
 }
 
@@ -471,11 +453,14 @@ impl Render for JwtWorkspace {
             .gap_2()
             .flex_wrap()
             .child(
-                Button::new(if self.recording_enabled {
-                    "Record to History: on"
-                } else {
-                    "Record to History (off by default)"
-                })
+                Button::with_id(
+                    "jwt-decoder.recording",
+                    if self.recording_enabled {
+                        "Record to History: on"
+                    } else {
+                        "Record to History (off by default)"
+                    },
+                )
                 .variant(if self.recording_enabled {
                     ButtonVariant::Primary
                 } else {
@@ -489,11 +474,14 @@ impl Render for JwtWorkspace {
             .child(div().flex_1())
             .child(copy_feedback(self.copied, "Copied to Clipboard"))
             .child(
-                Button::new(if self.history_visible {
-                    "History: on"
-                } else {
-                    "History: off"
-                })
+                Button::with_id(
+                    "jwt-decoder.history.toggle",
+                    if self.history_visible {
+                        "History: on"
+                    } else {
+                        "History: off"
+                    },
+                )
                 .focus_handle(self.focus.history_toggle.clone())
                 .on_click(view_click(cx, |this, _window, cx| {
                     this.history_visible = !this.history_visible;
@@ -501,14 +489,14 @@ impl Render for JwtWorkspace {
                 })),
             )
             .child(
-                Button::new("Paste")
+                Button::with_id("jwt-decoder.paste", "Paste")
                     .focus_handle(self.focus.paste.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.paste(window, cx);
                     })),
             )
             .child(
-                Button::new("Copy Header")
+                Button::with_id("jwt-decoder.copy-header", "Copy Header")
                     .disabled(!can_copy)
                     .focus_handle(self.focus.copy_header.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
@@ -516,7 +504,7 @@ impl Render for JwtWorkspace {
                     })),
             )
             .child(
-                Button::new("Copy Result")
+                Button::with_id("jwt-decoder.copy-result", "Copy Result")
                     .disabled(!can_copy)
                     .focus_handle(self.focus.copy_result.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
@@ -524,7 +512,7 @@ impl Render for JwtWorkspace {
                     })),
             )
             .child(
-                Button::new("Clear")
+                Button::with_id("jwt-decoder.clear", "Clear")
                     .focus_handle(self.focus.clear.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.clear(window, cx);
@@ -538,27 +526,7 @@ impl Render for JwtWorkspace {
             .min_h_0()
             .bg(tokens.background())
             .text_color(tokens.text())
-            .p_4()
             .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("JWT Decoder"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.text_muted())
-                            .child("Local, offline inspection. No keys, no network."),
-                    ),
-            )
             .child(toolbar)
             .child(self.render_notice());
 
@@ -602,7 +570,7 @@ impl Render for JwtWorkspace {
         let mut workspace = div()
             .flex()
             .flex_row()
-            .gap_4()
+            .gap_3()
             .flex_1()
             .min_h_0()
             .child(panel(
@@ -723,5 +691,129 @@ mod tests {
             ..entry
         };
         assert!(decode_snapshot(&unknown).is_none());
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use gpui::{Entity, VisualTestContext};
+
+    use crate::history::{HistoryPolicy, HistoryStore, SystemClock};
+
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+    const TOKEN: &str = concat!(
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+        ".eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0",
+        ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    );
+
+    #[derive(Default)]
+    struct TestClipboard(RefCell<Option<String>>);
+
+    impl Clipboard for TestClipboard {
+        fn read_text(&self, _cx: &mut App) -> Option<String> {
+            self.0.borrow().clone()
+        }
+
+        fn write_text(&self, text: &str, _cx: &mut App) {
+            *self.0.borrow_mut() = Some(text.to_owned());
+        }
+    }
+
+    struct TestRoot(Entity<JwtWorkspace>);
+
+    impl Render for TestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.0.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn valid_copy_invalid_state_and_opt_in_history_use_live_controls(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = std::env::temp_dir().join(format!(
+            "sofdevtool-jwt-redesign-{}-{}",
+            std::process::id(),
+            NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut policy = HistoryPolicy::default();
+        policy.defaults.insert(Jwt::ID.to_owned(), false);
+        let history = Rc::new(HistoryRecorder::with_policy(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+            policy,
+            None,
+        ));
+        let clipboard = Rc::new(TestClipboard::default());
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view =
+                cx.new(|cx| JwtWorkspace::new(window, cx, clipboard.clone(), history.clone()));
+            captured = Some(view.clone());
+            TestRoot(view)
+        });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| view.input.edit_text(TOKEN, window, cx));
+            window.draw(cx).clear(cx);
+        });
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert!(workspace.read_with(&cx, |view, _| view
+            .session
+            .evaluation()
+            .is_valid_operation()));
+        assert!(history.load(Jwt::ID).unwrap().is_empty());
+        let header = workspace.read_with(&cx, |view, cx| view.header.text(cx));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.copy_header.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().as_deref(), Some(header.as_str()));
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| view.input.edit_text("only.two", window, cx));
+            window.draw(cx).clear(cx);
+        });
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert!(!workspace.read_with(&cx, |view, _| view
+            .session
+            .evaluation()
+            .is_valid_operation()));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.copy_result.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().as_deref(), Some(header.as_str()));
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.record.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(workspace.read_with(&cx, |view, _| view.recording_enabled));
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| view.input.edit_text(TOKEN, window, cx));
+            window.draw(cx).clear(cx);
+        });
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(history.load(Jwt::ID).unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
     }
 }
