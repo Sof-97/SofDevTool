@@ -1,0 +1,14 @@
+# Ticket 14: conversion workspace redesign
+
+Hashes, Timestamps, Case Conversion and Whitespace Conversion now use the approved compact Workbench content layout. Domain choice groups use sofui `SegmentedControl` with stable group/option identities; Whitespace uses the shared bounded `NumericStepper` for tab width. Every remaining action has a stable Button ID. History uses generic `SelectableList` and `ConfirmationBar`; the app still owns retained-entry checks, confirmation, recording and exact snapshot restore. The four modules no longer call `HistoryPanel` or dynamic-label Button constructors.
+
+No core Utility algorithm, limit, snapshot schema or Clipboard policy changed. Hash remains an explicit action that accepts empty UTF-8 bytes and keeps SHA-1/MD5 legacy warnings. Timestamp Auto/manual inference, named-zone diagnostics and Now's captured instant stay in the session. All nine case styles and nine whitespace actions remain selectable from the core's full ordered enum lists; line-ending and tab-width controls appear only for applicable actions.
+
+Four actual GPUI workspace tests were added in the owning modules:
+
+- Hashes: activate Hash on empty input, switch to SHA-1, Copy exact independent digest goldens, then confirm an exact prior snapshot without recording again.
+- Timestamps: settle Auto Unix-seconds input, Copy its rendered instant, select Local mode and reject a Europe/Rome DST gap without overwriting Clipboard, then restore original mode, zone and result without a new entry.
+- Case Conversion: keep a decomposed accent attached to its grapheme, select snake_case through the shared control, Copy exact text, and restore the earlier style/result without another record.
+- Whitespace Conversion: select tabs-to-spaces, increase tab width with NumericStepper and observe changed Unicode-safe tab stops, Copy, restore the prior width/output, then choose CR line-ending normalization.
+
+Scoped `rustfmt --edition 2021 --check` passed on the four owned source files. The coordinated wave-8 r3 app run compiled these modules and passed 101 of 102 app tests, including the new Timestamps, Case Conversion and Whitespace interactions. The new Hashes interaction initially failed because the test edited the input and restored History inside the same GPUI update, leaving a queued edit notification to invalidate the just-restored digest. The test now drains the edit event before requesting restore, as a user interaction does. `CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/private/tmp/sofdevtool-terra-target cargo test -p sofdevtool-app --lib utilities::hashes::interaction_tests::explicit_empty_hash_legacy_choice_copy_and_exact_restore -- --nocapture` passed 1/1 after that correction. The coordinator owns the final frozen workspace gate. No native-runtime claim is made from these tests.

@@ -14,8 +14,9 @@ use sofdevtool_core::utilities::case_conversion::{
 };
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
-    copy_feedback, empty_state, panel, view_click, Button, ButtonVariant, DiagnosticSeverity,
-    HistoryItem, HistoryPanel, TextEditor, ThemeTokens,
+    copy_feedback, empty_state, panel, view_click, Button, ConfirmationBar, DiagnosticSeverity,
+    SegmentedControl, SegmentedControlFocus, SegmentedOption, SelectableList, SelectableListFocus,
+    SelectableRow, TextEditor, ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
@@ -41,7 +42,6 @@ pub fn construct(
 /// handle across two visible buttons aborts GPUI when both request focus in a
 /// single frame.
 struct ButtonFocus {
-    styles: [FocusHandle; 9],
     paste: FocusHandle,
     copy: FocusHandle,
     clear: FocusHandle,
@@ -63,6 +63,8 @@ pub struct CaseConversionWorkspace {
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_visible: bool,
+    history_focus: SelectableListFocus,
+    choice_focus: SegmentedControlFocus,
     _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
@@ -97,9 +99,10 @@ impl CaseConversionWorkspace {
             suppress_changes: false,
             history_view,
             history_visible: true,
+            history_focus: SelectableListFocus::new(),
+            choice_focus: SegmentedControlFocus::new(),
             _history_subscription: history_subscription,
             focus: ButtonFocus {
-                styles: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
                 paste: cx.focus_handle().tab_stop(true).tab_index(0),
                 copy: cx.focus_handle().tab_stop(true).tab_index(0),
                 clear: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -292,36 +295,24 @@ impl CaseConversionWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<HistoryItem> {
+    fn history_items(&self) -> Vec<SelectableRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                HistoryItem {
+                SelectableRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
                         .as_ref()
                         .map(|snapshot| preview_line(&snapshot.output))
                         .unwrap_or_else(|| "Unavailable snapshot".to_owned()),
-                    available: snapshot.is_some(),
+                    status: snapshot.is_none().then(|| "Unavailable".to_owned()),
+                    selectable: true,
                 }
             })
             .collect()
-    }
-
-    fn style_button(&self, style: CaseConversionStyle, cx: &mut Context<Self>) -> Button {
-        Button::new(style.label())
-            .variant(if self.style == style {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Secondary
-            })
-            .focus_handle(self.focus.styles[style.index()].clone())
-            .on_click(view_click(cx, move |this, window, cx| {
-                this.set_style(style, window, cx);
-            }))
     }
 
     fn render_diagnostics(&self) -> impl IntoElement {
@@ -351,22 +342,26 @@ impl CaseConversionWorkspace {
                     .iter()
                     .find(|entry| &entry.id == id)
             })
-            .map(|entry| decode_snapshot(entry).is_some())
-            .unwrap_or(false);
-        let actions = div().flex().flex_row().gap_2().child(
-            Button::new("Restore selected")
-                .disabled(!restore_enabled)
-                .focus_handle(self.focus.history_restore.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.restore_selected(window, cx);
-                })),
-        );
+            .is_some_and(|entry| decode_snapshot(entry).is_some());
+        let actions = Button::with_id(
+            "case-conversion.history.restore-selected",
+            "Restore selected",
+        )
+        .disabled(!restore_enabled)
+        .focus_handle(self.focus.history_restore.clone())
+        .on_click(view_click(cx, |this, window, cx| {
+            this.restore_selected(window, cx);
+        }));
         let weak = cx.weak_entity();
-        let panel = HistoryPanel::new(
+        let list = SelectableList::new(
+            "case-conversion.history",
+            "History",
             self.history_items(),
             selected,
             "No retained operations yet.",
+            self.history_focus.clone(),
         )
+        .summary(format!("{}/25", self.history_view.entries.len()))
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
                 if this.history_view.select(id) {
@@ -385,48 +380,25 @@ impl CaseConversionWorkspace {
             .gap_2()
             .border_l_1()
             .border_color(ThemeTokens::active().border())
-            .child(panel)
+            .bg(ThemeTokens::active().surface())
+            .child(list)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(tokens.warning())
-            .bg(tokens.surface_raised())
-            .child(div().text_xs().text_color(tokens.text()).child(
-                "Restoring this History entry replaces the current non-empty Case Conversion session.",
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(
-                        Button::new("Restore")
-                            .variant(ButtonVariant::Primary)
-                            .focus_handle(self.focus.history_confirm.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                this.confirm_restore(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("Cancel")
-                            .focus_handle(self.focus.history_cancel.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.cancel_restore(cx);
-                            })),
-                    ),
-            )
+        ConfirmationBar::new(
+            "case-conversion.history.restore",
+            "Restoring this History entry replaces the current non-empty Case Conversion session.",
+            "Restore",
+            "Cancel",
+        )
+        .focus_handles(
+            self.focus.history_confirm.clone(),
+            self.focus.history_cancel.clone(),
+        )
+        .on_confirm(view_click(cx, |this, window, cx| {
+            this.confirm_restore(window, cx)
+        }))
+        .on_cancel(view_click(cx, |this, _window, cx| this.cancel_restore(cx)))
     }
 }
 
@@ -442,10 +414,28 @@ impl Render for CaseConversionWorkspace {
                 .map(|request| !request.input.is_empty())
                 .unwrap_or(false);
 
-        let mut styles = div().flex().flex_row().flex_wrap().gap_2();
-        for style in CaseConversionStyle::ALL {
-            styles = styles.child(self.style_button(style, cx));
-        }
+        let styles = SegmentedControl::new(
+            "case-conversion.style",
+            "Case style",
+            CaseConversionStyle::ALL
+                .into_iter()
+                .map(|choice| SegmentedOption::new(format!("{choice:?}"), choice.label()))
+                .collect(),
+            Some(format!("{:?}", self.style)),
+            self.choice_focus.clone(),
+        )
+        .on_change(Rc::new({
+            let weak = cx.weak_entity();
+            move |id, window, cx| {
+                if let Some(choice) = CaseConversionStyle::ALL
+                    .into_iter()
+                    .find(|choice| format!("{choice:?}") == id)
+                {
+                    weak.update(cx, |this, cx| this.set_style(choice, window, cx))
+                        .ok();
+                }
+            }
+        }));
 
         let toolbar = div()
             .flex()
@@ -455,11 +445,14 @@ impl Render for CaseConversionWorkspace {
             .child(div().flex_1())
             .child(copy_feedback(self.copied, "Copied to Clipboard"))
             .child(
-                Button::new(if self.history_visible {
-                    "History: on"
-                } else {
-                    "History: off"
-                })
+                Button::with_id(
+                    "case-conversion.history.toggle",
+                    if self.history_visible {
+                        "History: on"
+                    } else {
+                        "History: off"
+                    },
+                )
                 .focus_handle(self.focus.history_toggle.clone())
                 .on_click(view_click(cx, |this, _window, cx| {
                     this.history_visible = !this.history_visible;
@@ -467,14 +460,14 @@ impl Render for CaseConversionWorkspace {
                 })),
             )
             .child(
-                Button::new("Paste")
+                Button::with_id("case-conversion.paste", "Paste")
                     .focus_handle(self.focus.paste.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.paste(window, cx);
                     })),
             )
             .child(
-                Button::new("Copy Result")
+                Button::with_id("case-conversion.copy-result", "Copy Result")
                     .disabled(!can_copy)
                     .focus_handle(self.focus.copy.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
@@ -482,7 +475,7 @@ impl Render for CaseConversionWorkspace {
                     })),
             )
             .child(
-                Button::new("Clear")
+                Button::with_id("case-conversion.clear", "Clear")
                     .focus_handle(self.focus.clear.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.clear(window, cx);
@@ -496,29 +489,15 @@ impl Render for CaseConversionWorkspace {
             .min_h_0()
             .bg(tokens.background())
             .text_color(tokens.text())
-            .p_4()
             .gap_3()
+            .child(styles)
+            .child(toolbar)
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Case Conversion"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.text_muted())
-                            .child("Nine styles, one grapheme-safe segmentation"),
-                    ),
-            )
-            .child(styles)
-            .child(toolbar);
+                    .text_xs()
+                    .text_color(tokens.text_muted())
+                    .child("Nine styles share one grapheme-safe word segmentation."),
+            );
 
         if self.history_view.pending_restore.is_some() {
             column = column.child(self.render_restore_confirmation(cx));
@@ -568,7 +547,7 @@ impl Render for CaseConversionWorkspace {
         let mut workspace = div()
             .flex()
             .flex_row()
-            .gap_4()
+            .gap_3()
             .flex_1()
             .min_h_0()
             .child(panel(
@@ -605,5 +584,122 @@ fn preview_line(output: &str) -> String {
         "Empty result".to_owned()
     } else {
         preview
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use gpui::{Entity, VisualTestContext};
+
+    use crate::history::{HistoryStore, SystemClock};
+
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Default)]
+    struct TestClipboard(RefCell<Option<String>>);
+
+    impl Clipboard for TestClipboard {
+        fn read_text(&self, _cx: &mut App) -> Option<String> {
+            self.0.borrow().clone()
+        }
+
+        fn write_text(&self, text: &str, _cx: &mut App) {
+            *self.0.borrow_mut() = Some(text.to_owned());
+        }
+    }
+
+    struct TestRoot(Entity<CaseConversionWorkspace>);
+
+    impl Render for TestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.0.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn unicode_style_keyboard_copy_and_exact_history_restore(cx: &mut gpui::TestAppContext) {
+        cx.update(sofdevtool_ui::init);
+        let root = std::env::temp_dir().join(format!(
+            "sofdevtool-case-redesign-{}-{}",
+            std::process::id(),
+            NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        let clipboard = Rc::new(TestClipboard::default());
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| {
+                CaseConversionWorkspace::new(window, cx, clipboard.clone(), history.clone())
+            });
+            captured = Some(view.clone());
+            TestRoot(view)
+        });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.input.edit_text("Cafe\u{301}Bar", window, cx)
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            "cafe\u{301}Bar"
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.session.evaluation().words().to_vec()),
+            ["Cafe\u{301}".to_owned(), "Bar".to_owned()]
+        );
+        let original = history.load(CaseConversion::ID).unwrap();
+        assert_eq!(original.len(), 1);
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let choices = workspace.read(cx).choice_focus.clone();
+            window.focus(&choices.handle("case-conversion.style", "Snake", cx), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            "cafe\u{301}_bar"
+        );
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.copy.clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().as_deref(), Some("cafe\u{301}_bar"));
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.input.edit_text("other", window, cx);
+                assert!(view.history_view.select(&original[0].id));
+                view.restore_selected(window, cx);
+                assert!(view.history_view.pending_restore.is_some());
+                view.confirm_restore(window, cx);
+            });
+        });
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.style),
+            CaseConversionStyle::Camel
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            "cafe\u{301}Bar"
+        );
+        assert_eq!(history.load(CaseConversion::ID).unwrap().len(), 2);
+        fs::remove_dir_all(root).unwrap();
     }
 }

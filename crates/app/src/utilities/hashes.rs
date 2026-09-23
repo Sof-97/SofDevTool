@@ -17,7 +17,8 @@ use sofdevtool_core::utilities::hashes::{
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    DiagnosticSeverity, HistoryItem, HistoryPanel, TextEditor, ThemeTokens,
+    ConfirmationBar, DiagnosticSeverity, SegmentedControl, SegmentedControlFocus, SegmentedOption,
+    SelectableList, SelectableListFocus, SelectableRow, TextEditor, ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
@@ -40,14 +41,6 @@ pub fn construct(
 /// Every simultaneously focusable control owns a distinct handle. Reusing one
 /// handle for two rendered buttons aborts GPUI.
 struct ButtonFocus {
-    sha256: FocusHandle,
-    sha384: FocusHandle,
-    sha512: FocusHandle,
-    sha1: FocusHandle,
-    md5: FocusHandle,
-    lowercase_hex: FocusHandle,
-    uppercase_hex: FocusHandle,
-    base64: FocusHandle,
     hash: FocusHandle,
     paste: FocusHandle,
     copy: FocusHandle,
@@ -71,6 +64,8 @@ pub struct HashesWorkspace {
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_visible: bool,
+    history_focus: SelectableListFocus,
+    choice_focus: SegmentedControlFocus,
     _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
@@ -106,16 +101,10 @@ impl HashesWorkspace {
             suppress_changes: false,
             history_view,
             history_visible: true,
+            history_focus: SelectableListFocus::new(),
+            choice_focus: SegmentedControlFocus::new(),
             _history_subscription: history_subscription,
             focus: ButtonFocus {
-                sha256: cx.focus_handle().tab_stop(true).tab_index(0),
-                sha384: cx.focus_handle().tab_stop(true).tab_index(0),
-                sha512: cx.focus_handle().tab_stop(true).tab_index(0),
-                sha1: cx.focus_handle().tab_stop(true).tab_index(0),
-                md5: cx.focus_handle().tab_stop(true).tab_index(0),
-                lowercase_hex: cx.focus_handle().tab_stop(true).tab_index(0),
-                uppercase_hex: cx.focus_handle().tab_stop(true).tab_index(0),
-                base64: cx.focus_handle().tab_stop(true).tab_index(0),
                 hash: cx.focus_handle().tab_stop(true).tab_index(0),
                 paste: cx.focus_handle().tab_stop(true).tab_index(0),
                 copy: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -328,13 +317,13 @@ impl HashesWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<HistoryItem> {
+    fn history_items(&self) -> Vec<SelectableRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                HistoryItem {
+                SelectableRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
@@ -347,50 +336,11 @@ impl HashesWorkspace {
                             )
                         })
                         .unwrap_or_else(|| "Unavailable snapshot".to_owned()),
-                    available: snapshot.is_some(),
+                    status: snapshot.is_none().then(|| "Unavailable".to_owned()),
+                    selectable: true,
                 }
             })
             .collect()
-    }
-
-    fn algorithm_button(&self, algorithm: HashAlgorithm, cx: &mut Context<Self>) -> Button {
-        Button::new(algorithm.label())
-            .variant(if self.algorithm == algorithm {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Secondary
-            })
-            .focus_handle(match algorithm {
-                HashAlgorithm::Sha256 => self.focus.sha256.clone(),
-                HashAlgorithm::Sha384 => self.focus.sha384.clone(),
-                HashAlgorithm::Sha512 => self.focus.sha512.clone(),
-                HashAlgorithm::Sha1 => self.focus.sha1.clone(),
-                HashAlgorithm::Md5 => self.focus.md5.clone(),
-            })
-            .on_click(view_click(cx, move |this, window, cx| {
-                this.set_algorithm(algorithm, window, cx);
-            }))
-    }
-
-    fn representation_button(
-        &self,
-        representation: HashRepresentation,
-        cx: &mut Context<Self>,
-    ) -> Button {
-        Button::new(representation.label())
-            .variant(if self.representation == representation {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Secondary
-            })
-            .focus_handle(match representation {
-                HashRepresentation::LowercaseHex => self.focus.lowercase_hex.clone(),
-                HashRepresentation::UppercaseHex => self.focus.uppercase_hex.clone(),
-                HashRepresentation::Base64 => self.focus.base64.clone(),
-            })
-            .on_click(view_click(cx, move |this, window, cx| {
-                this.set_representation(representation, window, cx);
-            }))
     }
 
     fn render_diagnostics(&self) -> impl IntoElement {
@@ -416,22 +366,23 @@ impl HashesWorkspace {
                     .iter()
                     .find(|entry| &entry.id == id)
             })
-            .map(|entry| decode_snapshot(entry).is_some())
-            .unwrap_or(false);
-        let actions = div().flex().flex_row().gap_2().child(
-            Button::new("Restore selected")
-                .disabled(!restore_enabled)
-                .focus_handle(self.focus.history_restore.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.restore_selected(window, cx);
-                })),
-        );
+            .is_some_and(|entry| decode_snapshot(entry).is_some());
+        let actions = Button::with_id("hashes.history.restore-selected", "Restore selected")
+            .disabled(!restore_enabled)
+            .focus_handle(self.focus.history_restore.clone())
+            .on_click(view_click(cx, |this, window, cx| {
+                this.restore_selected(window, cx);
+            }));
         let weak = cx.weak_entity();
-        let panel = HistoryPanel::new(
+        let list = SelectableList::new(
+            "hashes.history",
+            "History",
             self.history_items(),
             selected,
             "No retained operations yet.",
+            self.history_focus.clone(),
         )
+        .summary(format!("{}/25", self.history_view.entries.len()))
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
                 if this.history_view.select(id) {
@@ -450,55 +401,25 @@ impl HashesWorkspace {
             .gap_2()
             .border_l_1()
             .border_color(ThemeTokens::active().border())
-            .child(panel)
+            .bg(ThemeTokens::active().surface())
+            .child(list)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(tokens.warning())
-            .bg(tokens.surface_raised())
-            .child(div().text_xs().text_color(tokens.text()).child(
-                "Restoring this History entry replaces the current non-empty Hashes session.",
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(
-                        Button::new("Restore")
-                            .variant(ButtonVariant::Primary)
-                            .focus_handle(self.focus.history_confirm.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                this.confirm_restore(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("Cancel")
-                            .focus_handle(self.focus.history_cancel.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.cancel_restore(cx);
-                            })),
-                    ),
-            )
-    }
-
-    fn control_label(&self, text: &'static str) -> impl IntoElement {
-        div()
-            .text_xs()
-            .text_color(ThemeTokens::active().text_muted())
-            .child(text)
+        ConfirmationBar::new(
+            "hashes.history.restore",
+            "Restoring this History entry replaces the current non-empty Hashes session.",
+            "Restore",
+            "Cancel",
+        )
+        .focus_handles(
+            self.focus.history_confirm.clone(),
+            self.focus.history_cancel.clone(),
+        )
+        .on_confirm(view_click(cx, |this, window, cx| {
+            this.confirm_restore(window, cx)
+        }))
+        .on_cancel(view_click(cx, |this, _window, cx| this.cancel_restore(cx)))
     }
 }
 
@@ -508,15 +429,50 @@ impl Render for HashesWorkspace {
         let tokens = ThemeTokens::active();
         let can_copy = self.session.evaluation().is_valid_operation();
 
-        let mut algorithm_row = div().flex().flex_row().items_center().gap_2().flex_wrap();
-        for algorithm in HashAlgorithm::ALL {
-            algorithm_row = algorithm_row.child(self.algorithm_button(algorithm, cx));
-        }
-        let mut representation_row = div().flex().flex_row().items_center().gap_2().flex_wrap();
-        for representation in HashRepresentation::ALL {
-            representation_row =
-                representation_row.child(self.representation_button(representation, cx));
-        }
+        let algorithm_control = SegmentedControl::new(
+            "hashes.algorithm",
+            "Algorithm",
+            HashAlgorithm::ALL
+                .into_iter()
+                .map(|choice| SegmentedOption::new(format!("{choice:?}"), choice.label()))
+                .collect(),
+            Some(format!("{:?}", self.algorithm)),
+            self.choice_focus.clone(),
+        )
+        .on_change(Rc::new({
+            let weak = cx.weak_entity();
+            move |id, window, cx| {
+                if let Some(choice) = HashAlgorithm::ALL
+                    .into_iter()
+                    .find(|choice| format!("{choice:?}") == id)
+                {
+                    weak.update(cx, |this, cx| this.set_algorithm(choice, window, cx))
+                        .ok();
+                }
+            }
+        }));
+        let representation_control = SegmentedControl::new(
+            "hashes.representation",
+            "Output representation",
+            HashRepresentation::ALL
+                .into_iter()
+                .map(|choice| SegmentedOption::new(format!("{choice:?}"), choice.label()))
+                .collect(),
+            Some(format!("{:?}", self.representation)),
+            self.choice_focus.clone(),
+        )
+        .on_change(Rc::new({
+            let weak = cx.weak_entity();
+            move |id, window, cx| {
+                if let Some(choice) = HashRepresentation::ALL
+                    .into_iter()
+                    .find(|choice| format!("{choice:?}") == id)
+                {
+                    weak.update(cx, |this, cx| this.set_representation(choice, window, cx))
+                        .ok();
+                }
+            }
+        }));
 
         let algorithm_toolbar = div()
             .flex()
@@ -524,14 +480,10 @@ impl Render for HashesWorkspace {
             .items_center()
             .gap_2()
             .flex_wrap()
-            .child(self.control_label("Algorithm"))
-            .child(algorithm_row)
-            .child(div().w_3())
-            .child(self.control_label("Output"))
-            .child(representation_row)
-            .child(div().w_3())
+            .child(algorithm_control)
+            .child(representation_control)
             .child(
-                Button::new("Hash")
+                Button::with_id("hashes.hash", "Hash")
                     .variant(ButtonVariant::Primary)
                     .focus_handle(self.focus.hash.clone())
                     .on_click(view_click(cx, |this, window, cx| {
@@ -548,11 +500,14 @@ impl Render for HashesWorkspace {
             .child(div().flex_1())
             .child(copy_feedback(self.copied, "Copied to Clipboard"))
             .child(
-                Button::new(if self.history_visible {
-                    "History: on"
-                } else {
-                    "History: off"
-                })
+                Button::with_id(
+                    "hashes.history.toggle",
+                    if self.history_visible {
+                        "History: on"
+                    } else {
+                        "History: off"
+                    },
+                )
                 .focus_handle(self.focus.history_toggle.clone())
                 .on_click(view_click(cx, |this, _window, cx| {
                     this.history_visible = !this.history_visible;
@@ -560,14 +515,14 @@ impl Render for HashesWorkspace {
                 })),
             )
             .child(
-                Button::new("Paste")
+                Button::with_id("hashes.paste", "Paste")
                     .focus_handle(self.focus.paste.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.paste(window, cx);
                     })),
             )
             .child(
-                Button::new("Copy Result")
+                Button::with_id("hashes.copy-result", "Copy Result")
                     .disabled(!can_copy)
                     .focus_handle(self.focus.copy.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
@@ -575,7 +530,7 @@ impl Render for HashesWorkspace {
                     })),
             )
             .child(
-                Button::new("Clear")
+                Button::with_id("hashes.clear", "Clear")
                     .focus_handle(self.focus.clear.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.clear(window, cx);
@@ -589,26 +544,12 @@ impl Render for HashesWorkspace {
             .min_h_0()
             .bg(tokens.background())
             .text_color(tokens.text())
-            .p_4()
             .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Hashes"),
-                    )
-                    .child(div().text_xs().text_color(tokens.text_muted()).child(
-                        "Hashes the exact UTF-8 bytes. Files, HMAC, and password hashing are not included.",
-                    )),
-            )
             .child(algorithm_toolbar)
-            .child(actions_toolbar);
+            .child(actions_toolbar)
+            .child(div().text_xs().text_color(tokens.text_muted()).child(
+                "Hashes the exact UTF-8 bytes. Files, HMAC, and password hashing are not included.",
+            ));
 
         if self.algorithm.is_legacy() {
             column = column.child(diagnostic_banner(
@@ -637,7 +578,7 @@ impl Render for HashesWorkspace {
         let mut workspace = div()
             .flex()
             .flex_row()
-            .gap_4()
+            .gap_3()
             .flex_1()
             .min_h_0()
             .child(panel(
@@ -671,5 +612,132 @@ fn preview_line(output: &str) -> String {
         "Empty result".to_owned()
     } else {
         preview
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use gpui::{App, Entity, VisualTestContext};
+
+    use crate::history::{HistoryStore, SystemClock};
+
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+    const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const EMPTY_SHA1: &str = "da39a3ee5e6b4b0d3255bfef95601890afd80709";
+
+    #[derive(Default)]
+    struct TestClipboard(RefCell<Option<String>>);
+
+    impl Clipboard for TestClipboard {
+        fn read_text(&self, _cx: &mut App) -> Option<String> {
+            self.0.borrow().clone()
+        }
+
+        fn write_text(&self, text: &str, _cx: &mut App) {
+            *self.0.borrow_mut() = Some(text.to_owned());
+        }
+    }
+
+    struct TestRoot(Entity<HashesWorkspace>);
+
+    impl Render for TestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.0.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn explicit_empty_hash_legacy_choice_copy_and_exact_restore(cx: &mut gpui::TestAppContext) {
+        cx.update(sofdevtool_ui::init);
+        let root = std::env::temp_dir().join(format!(
+            "sofdevtool-hashes-redesign-{}-{}",
+            std::process::id(),
+            NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        let clipboard = Rc::new(TestClipboard::default());
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view =
+                cx.new(|cx| HashesWorkspace::new(window, cx, clipboard.clone(), history.clone()));
+            captured = Some(view.clone());
+            TestRoot(view)
+        });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.hash.clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            EMPTY_SHA256
+        );
+        let entries = history.load(Hashes::ID).unwrap();
+        assert_eq!(entries.len(), 1, "explicit empty bytes are an operation");
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let choice_focus = workspace.read(cx).choice_focus.clone();
+            window.focus(&choice_focus.handle("hashes.algorithm", "Sha1", cx), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(workspace
+            .read_with(&cx, |view, cx| view.result.text(cx))
+            .is_empty());
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.hash.clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            EMPTY_SHA1
+        );
+        assert_eq!(history.load(Hashes::ID).unwrap().len(), 2);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.copy.clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().as_deref(), Some(EMPTY_SHA1));
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| view.input.edit_text("other", window, cx));
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                assert!(view.history_view.select(&entries[0].id));
+                view.restore_selected(window, cx);
+                assert!(view.history_view.pending_restore.is_some());
+                view.confirm_restore(window, cx);
+            });
+        });
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.algorithm),
+            HashAlgorithm::Sha256
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            EMPTY_SHA256
+        );
+        assert_eq!(
+            history.load(Hashes::ID).unwrap().len(),
+            2,
+            "restore must not record"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

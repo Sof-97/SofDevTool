@@ -4,7 +4,7 @@
 
 **Blocked by:** [03: Propagate History changes through conversion and inspection workspaces](03-history-conversion-workspaces.md); [12: Apply the approved design to navigation, Launcher and Settings](12-workbench-launcher-settings-redesign.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Migrate all four workspaces and their History presentation; use demonstrated selection/numeric controls rather than Utility logic in sofui.
 - [ ] Preserve explicit hashing including empty bytes/legacy labels, timestamp inference/DST diagnostics, all case styles and whitespace actions/ranges.

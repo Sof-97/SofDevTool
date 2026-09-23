@@ -14,8 +14,9 @@ use sofdevtool_core::utilities::timestamps::{
 };
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
-    copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    DiagnosticSeverity, HistoryItem, HistoryPanel, TextEditor, TextField, ThemeTokens,
+    copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ConfirmationBar,
+    DiagnosticSeverity, SegmentedControl, SegmentedControlFocus, SegmentedOption, SelectableList,
+    SelectableListFocus, SelectableRow, TextEditor, TextField, ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
@@ -42,7 +43,6 @@ pub fn construct(
 /// handle across two visible buttons aborts GPUI when both request focus in a
 /// single frame; each mode owns an indexed handle.
 struct ButtonFocus {
-    modes: [FocusHandle; 5],
     now: FocusHandle,
     paste: FocusHandle,
     copy: FocusHandle,
@@ -68,6 +68,8 @@ pub struct TimestampsWorkspace {
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_visible: bool,
+    history_focus: SelectableListFocus,
+    choice_focus: SegmentedControlFocus,
     _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
@@ -120,9 +122,10 @@ impl TimestampsWorkspace {
             suppress_changes: false,
             history_view,
             history_visible: true,
+            history_focus: SelectableListFocus::new(),
+            choice_focus: SegmentedControlFocus::new(),
             _history_subscription: history_subscription,
             focus: ButtonFocus {
-                modes: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
                 now: cx.focus_handle().tab_stop(true).tab_index(0),
                 paste: cx.focus_handle().tab_stop(true).tab_index(0),
                 copy: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -351,36 +354,24 @@ impl TimestampsWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<HistoryItem> {
+    fn history_items(&self) -> Vec<SelectableRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                HistoryItem {
+                SelectableRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
                         .as_ref()
                         .map(|snapshot| preview_line(&snapshot.representations))
                         .unwrap_or_else(|| "Unavailable snapshot".to_owned()),
-                    available: snapshot.is_some(),
+                    status: snapshot.is_none().then(|| "Unavailable".to_owned()),
+                    selectable: true,
                 }
             })
             .collect()
-    }
-
-    fn mode_button(&self, mode: TimestampMode, cx: &mut Context<Self>) -> Button {
-        Button::new(mode.label())
-            .variant(if self.mode == mode {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Secondary
-            })
-            .focus_handle(self.focus.modes[mode.index()].clone())
-            .on_click(view_click(cx, move |this, window, cx| {
-                this.set_mode(mode, window, cx);
-            }))
     }
 
     fn render_diagnostics(&self) -> impl IntoElement {
@@ -406,22 +397,23 @@ impl TimestampsWorkspace {
                     .iter()
                     .find(|entry| &entry.id == id)
             })
-            .map(|entry| decode_snapshot(entry).is_some())
-            .unwrap_or(false);
-        let actions = div().flex().flex_row().gap_2().child(
-            Button::new("Restore selected")
-                .disabled(!restore_enabled)
-                .focus_handle(self.focus.history_restore.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.restore_selected(window, cx);
-                })),
-        );
+            .is_some_and(|entry| decode_snapshot(entry).is_some());
+        let actions = Button::with_id("timestamps.history.restore-selected", "Restore selected")
+            .disabled(!restore_enabled)
+            .focus_handle(self.focus.history_restore.clone())
+            .on_click(view_click(cx, |this, window, cx| {
+                this.restore_selected(window, cx);
+            }));
         let weak = cx.weak_entity();
-        let panel = HistoryPanel::new(
+        let list = SelectableList::new(
+            "timestamps.history",
+            "History",
             self.history_items(),
             selected,
             "No retained operations yet.",
+            self.history_focus.clone(),
         )
+        .summary(format!("{}/25", self.history_view.entries.len()))
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
                 if this.history_view.select(id) {
@@ -440,48 +432,25 @@ impl TimestampsWorkspace {
             .gap_2()
             .border_l_1()
             .border_color(ThemeTokens::active().border())
-            .child(panel)
+            .bg(ThemeTokens::active().surface())
+            .child(list)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(tokens.warning())
-            .bg(tokens.surface_raised())
-            .child(div().text_xs().text_color(tokens.text()).child(
-                "Restoring this History entry replaces the current non-empty Timestamps session.",
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(
-                        Button::new("Restore")
-                            .variant(ButtonVariant::Primary)
-                            .focus_handle(self.focus.history_confirm.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                this.confirm_restore(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("Cancel")
-                            .focus_handle(self.focus.history_cancel.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.cancel_restore(cx);
-                            })),
-                    ),
-            )
+        ConfirmationBar::new(
+            "timestamps.history.restore",
+            "Restoring this History entry replaces the current non-empty Timestamps session.",
+            "Restore",
+            "Cancel",
+        )
+        .focus_handles(
+            self.focus.history_confirm.clone(),
+            self.focus.history_cancel.clone(),
+        )
+        .on_confirm(view_click(cx, |this, window, cx| {
+            this.confirm_restore(window, cx)
+        }))
+        .on_cancel(view_click(cx, |this, _window, cx| this.cancel_restore(cx)))
     }
 }
 
@@ -497,10 +466,28 @@ impl Render for TimestampsWorkspace {
                 .map(|request| !request.input.trim().is_empty())
                 .unwrap_or(false);
 
-        let mut modes = div().flex().flex_row().items_center().gap_1();
-        for mode in TimestampMode::ALL {
-            modes = modes.child(self.mode_button(mode, cx));
-        }
+        let modes = SegmentedControl::new(
+            "timestamps.mode",
+            "Timestamp mode",
+            TimestampMode::ALL
+                .into_iter()
+                .map(|choice| SegmentedOption::new(format!("{choice:?}"), choice.label()))
+                .collect(),
+            Some(format!("{:?}", self.mode)),
+            self.choice_focus.clone(),
+        )
+        .on_change(Rc::new({
+            let weak = cx.weak_entity();
+            move |id, window, cx| {
+                if let Some(choice) = TimestampMode::ALL
+                    .into_iter()
+                    .find(|choice| format!("{choice:?}") == id)
+                {
+                    weak.update(cx, |this, cx| this.set_mode(choice, window, cx))
+                        .ok();
+                }
+            }
+        }));
 
         let toolbar = div()
             .flex()
@@ -524,7 +511,7 @@ impl Render for TimestampsWorkspace {
                     .child(div().w_56().child(self.zone.render("timestamps.zone"))),
             )
             .child(
-                Button::new("Now")
+                Button::with_id("timestamps.now", "Now")
                     .focus_handle(self.focus.now.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.use_now(window, cx);
@@ -533,11 +520,14 @@ impl Render for TimestampsWorkspace {
             .child(div().flex_1())
             .child(copy_feedback(self.copied, "Copied to Clipboard"))
             .child(
-                Button::new(if self.history_visible {
-                    "History: on"
-                } else {
-                    "History: off"
-                })
+                Button::with_id(
+                    "timestamps.history.toggle",
+                    if self.history_visible {
+                        "History: on"
+                    } else {
+                        "History: off"
+                    },
+                )
                 .focus_handle(self.focus.history_toggle.clone())
                 .on_click(view_click(cx, |this, _window, cx| {
                     this.history_visible = !this.history_visible;
@@ -545,14 +535,14 @@ impl Render for TimestampsWorkspace {
                 })),
             )
             .child(
-                Button::new("Paste")
+                Button::with_id("timestamps.paste", "Paste")
                     .focus_handle(self.focus.paste.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.paste(window, cx);
                     })),
             )
             .child(
-                Button::new("Copy Result")
+                Button::with_id("timestamps.copy-result", "Copy Result")
                     .disabled(!can_copy)
                     .focus_handle(self.focus.copy.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
@@ -560,7 +550,7 @@ impl Render for TimestampsWorkspace {
                     })),
             )
             .child(
-                Button::new("Clear")
+                Button::with_id("timestamps.clear", "Clear")
                     .focus_handle(self.focus.clear.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.clear(window, cx);
@@ -574,27 +564,7 @@ impl Render for TimestampsWorkspace {
             .min_h_0()
             .bg(tokens.background())
             .text_color(tokens.text())
-            .p_4()
             .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Timestamps"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.text_muted())
-                            .child("Explicit instants, named zones, local and offline"),
-                    ),
-            )
             .child(toolbar)
             .child(div().text_xs().text_color(tokens.text_muted()).child(
                 "Local Time uses the selected named timezone. Repeated or nonexistent daylight-saving times require an explicit offset.",
@@ -624,7 +594,7 @@ impl Render for TimestampsWorkspace {
         let mut workspace = div()
             .flex()
             .flex_row()
-            .gap_4()
+            .gap_3()
             .flex_1()
             .min_h_0()
             .child(panel(
@@ -665,5 +635,142 @@ fn preview_line(representations: &TimestampRepresentations) -> String {
         "Empty result".to_owned()
     } else {
         preview
+    }
+}
+
+#[cfg(test)]
+mod interaction_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use gpui::{Entity, VisualTestContext};
+
+    use crate::history::{HistoryStore, SystemClock};
+
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Default)]
+    struct TestClipboard(RefCell<Option<String>>);
+
+    impl Clipboard for TestClipboard {
+        fn read_text(&self, _cx: &mut App) -> Option<String> {
+            self.0.borrow().clone()
+        }
+
+        fn write_text(&self, text: &str, _cx: &mut App) {
+            *self.0.borrow_mut() = Some(text.to_owned());
+        }
+    }
+
+    struct TestRoot(Entity<TimestampsWorkspace>);
+
+    impl Render for TestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.0.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn auto_inference_dst_gap_copy_and_restore_keep_exact_instant(cx: &mut gpui::TestAppContext) {
+        cx.update(sofdevtool_ui::init);
+        let root = std::env::temp_dir().join(format!(
+            "sofdevtool-timestamps-redesign-{}-{}",
+            std::process::id(),
+            NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        let clipboard = Rc::new(TestClipboard::default());
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx
+                .new(|cx| TimestampsWorkspace::new(window, cx, clipboard.clone(), history.clone()));
+            captured = Some(view.clone());
+            TestRoot(view)
+        });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.input.edit_text("1700000000", window, cx)
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        let original = workspace.read_with(&cx, |view, cx| view.result.text(cx));
+        assert!(original.contains("2023-11-14T22:13:20Z"));
+        let entries = history.load(Timestamps::ID).unwrap();
+        assert_eq!(entries.len(), 1);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.copy.clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().as_deref(), Some(original.as_str()));
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let choices = workspace.read(cx).choice_focus.clone();
+            window.focus(&choices.handle("timestamps.mode", "Local", cx), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.zone.edit_text("Europe/Rome", window, cx);
+                view.input.edit_text("2026-03-29 02:30:00", window, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.mode),
+            TimestampMode::Local
+        );
+        assert!(!workspace.read_with(&cx, |view, _| view
+            .session
+            .evaluation()
+            .is_valid_operation()));
+        assert!(workspace
+            .read_with(&cx, |view, cx| view.result.text(cx))
+            .is_empty());
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.copy.clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().as_deref(), Some(original.as_str()));
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                assert!(view.history_view.select(&entries[0].id));
+                view.restore_selected(window, cx);
+                assert!(view.history_view.pending_restore.is_some());
+                view.confirm_restore(window, cx);
+            });
+        });
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.mode),
+            TimestampMode::Auto
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.zone.text(cx)),
+            "UTC"
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            original
+        );
+        assert_eq!(
+            history.load(Timestamps::ID).unwrap().len(),
+            1,
+            "restore must not record"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }
