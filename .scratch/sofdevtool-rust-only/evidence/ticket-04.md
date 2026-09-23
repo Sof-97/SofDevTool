@@ -22,3 +22,12 @@ Commands ran offline from `rust/` with `CARGO_TARGET_DIR=/private/tmp/sofdevtool
 The Random String test generates a real batch, confirms that restore reproduces its exact captured values without a new History entry, and checks that Clear Utility removes selected/pending rows without changing a current batch. A deliberate later generation still records separately. The Regex test controls a running engine call and later winning revision: clearing History leaves the in-flight session revision intact, a deleted entry cannot be confirmed, the stale engine result is discarded, and only the winning settled request records. Restoring that result produces no second entry. Existing worker tests cover one running/one replaceable pending request and idle poller completion.
 
 The Identifier and Sample Data tests verify actual workspace confirmation and exact output restoration, then clear History and attempt a late confirmation; captured current output survives and no deleted row remains selectable. Text Diff's no-duplicate restoration follows its revision guard and existing renderer protocol tests. Direct native Text Diff/WebView interaction, pointer/keyboard presentation, and macOS 14/15 runtime checks were not performed by this worker.
+
+## Coordinator integrated gate
+
+Ticket04 integrated in `c1007e6`. Frozen `e1aa178` plus09 passed the full
+310-test default gate, including all five migrated consumers, formatting,
+strict Clippy and Debug builds. Log:
+`.artifacts/parallel-rust-only/wave5/verify.log`. An earlier04-only run had one
+Settings temporary-root write failure;09's test-isolation fix and subsequent
+full pass supersede it. This is automated evidence, not a native WebView claim.

@@ -4,7 +4,7 @@
 
 **Blocked by:** [06: Synchronize color controls, output and retained operations](06-synchronized-color.md); [09: Use generic lists, holds and confirmations for JSON History](09-generic-history-interactions.md); [10: Apply observable themes across all open surfaces and editors](10-observable-themes.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Show realistic catalog density, central editor/result, trailing History, representative selection/numeric/color/confirmation controls and both theme presets.
 - [ ] Use synthetic in-memory data and public controls, with enough resizing, focused, invalid and disabled states to assess density and behavior.

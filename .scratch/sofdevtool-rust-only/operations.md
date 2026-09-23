@@ -129,3 +129,10 @@ not modify ticket statuses. The coordinator integrates and runs shared gates.
 - 17 dispatched to Luna: owned editable Text Diff assets, exact dependency
   rebuild, actual notices and renderer-boundary validation. The Swift wrapper
   remains until the replacement pipeline is verified and21 retires it.
+
+- 04 integrated `c1007e6`; native06/07 evidence committed `e1aa178`.
+- 09 frozen combined gate passed310 tests and all default checks; Settings
+  test roots now use an atomic sequence to avoid parallel directory collision.
+- 11 dispatched to UI Sol: new native preview example with real public sofui
+  controls and synthetic data. Owner approval of the runnable candidate still
+  explicitly gates12 and the full visual rollout.
