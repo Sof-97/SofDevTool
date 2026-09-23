@@ -47,3 +47,33 @@ Coordinator ran a frozen Debug bundle assembled from `e3cb13b89193f9768d87183f1e
 - Standard AppKit View > Enter/Exit Full Screen worked and preserved the workspace. Custom lifecycle commands from the same candidate did not; a separate correction is in progress.
 
 This is an intermediate Debug checkpoint, not final installed Release acceptance. Native scrolling/resizing and final Release checks remain pending.
+
+## Final review corrections — 2026-09-23
+
+- Removed the two hard-coded demonstration editor texts. A fresh Text Diff
+  session now starts with empty Original and Updated editors; the initial
+  empty renderer request still initializes local WebView readiness and cannot
+  produce a History snapshot.
+- Live preview still submits every latest revision to the renderer. History
+  recording now waits for 200 ms without an edit or mode change, then requires
+  readiness for that current revision. The workspace retains one cancelable
+  settlement task; a later edit replaces it. Restore and the debug failure
+  hook cancel pending settlement, and exact restore never records.
+- The public-control interaction test now explicitly enters Unicode content
+  before Copy and verifies that a pending edit cannot record after History
+  restore. A second GPUI interaction test uses real editor change events and
+  a controlled clock to verify that rapid Unicode edits leave no intermediate
+  History entries, the latest settled snapshot records once after readiness,
+  and clearing both editors remains neutral. Headless GPUI does not attach the
+  native WebView, so that test supplies renderer readiness at the application
+  boundary; renderer IPC/revision tests remain separate.
+
+Verification from the live source, offline with
+`CARGO_TARGET_DIR=/private/tmp/sofdevtool-terra-target`:
+
+- `cargo test -p sofdevtool-app --lib text_diff::interaction_tests` — 2 passed.
+- `cargo test -p sofdevtool-app --lib` — 105 passed.
+- `cargo clippy -p sofdevtool-app --all-targets -- -D warnings` — passed.
+- Scoped `rustfmt --edition 2021 crates/app/src/text_diff/mod.rs` — passed.
+
+No native launch or final Release acceptance is claimed for these corrections.

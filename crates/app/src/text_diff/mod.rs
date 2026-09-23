@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, Context, FocusHandle, IntoElement, Render, Subscription, Window};
+use gpui::{div, Context, FocusHandle, IntoElement, Render, Subscription, Task, Window};
 use sofdevtool_core::utilities::text_diff::{
     TextDiff, TextDiffMode, TextDiffRequest, TextDiffSnapshot,
 };
@@ -29,6 +29,7 @@ use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, History
 use renderer::{RendererStatus, TextDiffRenderer, WebDiffSurface};
 
 pub const TEXT_DIFF_UTILITY_ID: &str = "text-diff";
+const HISTORY_SETTLE_DELAY: Duration = Duration::from_millis(200);
 
 struct ButtonFocus {
     paste_original: FocusHandle,
@@ -80,6 +81,8 @@ pub struct TextDiffWorkspace {
     mode: DisplayMode,
     revision: u64,
     recorded_revision: u64,
+    settled_revision: Option<u64>,
+    settle_task: Option<Task<()>>,
     suppress_render: bool,
     diagnostic: Option<String>,
     renderer_status: RendererStatus,
@@ -103,12 +106,6 @@ impl TextDiffWorkspace {
     ) -> Self {
         let old = TextEditor::new(window, cx);
         let new = TextEditor::new(window, cx);
-        old.assign_text("let café = \"👨‍👩‍👧‍👦\"\nlet flag = \"🏳️‍🌈\"\n", window, cx);
-        new.assign_text(
-            "let café = \"family 👨‍👩‍👧‍👦\"\nlet flag = \"🏳️‍🌈\"\nlet ready = true\n",
-            window,
-            cx,
-        );
         let renderer_status_changed = Rc::new(Cell::new(false));
         let renderer = TextDiffRenderer::new(window, renderer_status_changed.clone());
         let diagnostic = renderer
@@ -117,10 +114,10 @@ impl TextDiffWorkspace {
         let renderer_status = renderer.status();
         let subscriptions = vec![
             old.on_change_in(window, cx, |this, window, cx| {
-                this.render_snapshot(window, cx)
+                this.edit_snapshot(window, cx)
             }),
             new.on_change_in(window, cx, |this, window, cx| {
-                this.render_snapshot(window, cx)
+                this.edit_snapshot(window, cx)
             }),
         ];
         let history_view = HistoryViewState::load(&history, TextDiff::ID);
@@ -136,8 +133,10 @@ impl TextDiffWorkspace {
             renderer,
             mode: DisplayMode::Split,
             revision: 1,
-            // The initial sample is not a user operation, so it is not recorded.
+            // The initial empty comparison only initializes the renderer.
             recorded_revision: 1,
+            settled_revision: None,
+            settle_task: None,
             suppress_render: false,
             diagnostic,
             renderer_status,
@@ -180,6 +179,8 @@ impl TextDiffWorkspace {
     /// same local bridge, so the visible diagnostic proves IPC error handling.
     #[cfg(debug_assertions)]
     pub fn simulate_renderer_failure(&mut self, cx: &mut Context<Self>) {
+        self.settle_task.take();
+        self.settled_revision = None;
         self.revision += 1;
         self.diagnostic = self.renderer.render_proof_failure(self.revision).err();
         self.renderer_status = self.renderer.status();
@@ -206,9 +207,30 @@ impl TextDiffWorkspace {
         cx.notify();
     }
 
-    /// Records one completed current comparison once the renderer is ready.
+    fn edit_snapshot(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settle_task.take();
+        self.settled_revision = None;
+        self.render_snapshot(window, cx);
+        let revision = self.revision;
+        let executor = cx.background_executor().clone();
+        self.settle_task = Some(cx.spawn(async move |this, cx| {
+            executor.timer(HISTORY_SETTLE_DELAY).await;
+            this.update(cx, |this, cx| {
+                if this.revision == revision {
+                    this.settled_revision = Some(revision);
+                    this.record_if_ready(cx);
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// Records only the settled current comparison once the renderer is ready.
     fn record_if_ready(&mut self, cx: &mut Context<Self>) {
-        if self.suppress_render || self.recorded_revision == self.revision {
+        if self.suppress_render
+            || self.recorded_revision == self.revision
+            || self.settled_revision != Some(self.revision)
+        {
             return;
         }
         if !matches!(self.renderer_status, RendererStatus::Ready) {
@@ -262,7 +284,7 @@ impl TextDiffWorkspace {
     fn set_mode(&mut self, mode: DisplayMode, window: &mut Window, cx: &mut Context<Self>) {
         self.renderer.focus_parent();
         self.mode = mode;
-        self.render_snapshot(window, cx);
+        self.edit_snapshot(window, cx);
     }
 
     fn paste(&self, editor: &TextEditor, window: &mut Window, cx: &mut Context<Self>) {
@@ -307,6 +329,8 @@ impl TextDiffWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.settle_task.take();
+        self.settled_revision = None;
         self.suppress_render = true;
         self.old.assign_text(snapshot.old.clone(), window, cx);
         self.new.assign_text(snapshot.new.clone(), window, cx);
@@ -752,6 +776,8 @@ mod interaction_tests {
         });
         let workspace = captured.unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
+        assert_eq!(workspace.read_with(&cx, |view, cx| view.old.text(cx)), "");
+        assert_eq!(workspace.read_with(&cx, |view, cx| view.new.text(cx)), "");
 
         cx.update(|window, cx| {
             window.draw(cx).clear(cx);
@@ -775,6 +801,13 @@ mod interaction_tests {
         );
 
         cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.new.edit_text("let café = \"family 👨‍👩‍👧‍👦\"\n", window, cx)
+            });
+            window.draw(cx).clear(cx);
+        });
+
+        cx.update(|window, cx| {
             window.draw(cx).clear(cx);
             let focus = workspace.read(cx).focus.copy_updated.clone();
             window.focus(&focus, cx);
@@ -782,7 +815,7 @@ mod interaction_tests {
         cx.simulate_keystrokes("enter");
         assert_eq!(
             clipboard.0.borrow().as_deref(),
-            Some("let café = \"family 👨‍👩‍👧‍👦\"\nlet flag = \"🏳️‍🌈\"\nlet ready = true\n")
+            Some("let café = \"family 👨‍👩‍👧‍👦\"\n")
         );
         let entries_before_restore = history.load(TextDiff::ID).unwrap().len();
 
@@ -815,6 +848,93 @@ mod interaction_tests {
             history.load(TextDiff::ID).unwrap().len(),
             entries_before_restore
         );
+        cx.executor().advance_clock(HISTORY_SETTLE_DELAY);
+        cx.run_until_parked();
+        assert_eq!(
+            history.load(TextDiff::ID).unwrap().len(),
+            entries_before_restore,
+            "restoring must cancel the pending comparison recording"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn fresh_session_records_only_latest_settled_valid_comparison(cx: &mut gpui::TestAppContext) {
+        cx.update(sofui::init);
+        let root = isolated_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        let clipboard = Rc::new(TestClipboard::default());
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard, history.clone()));
+            captured = Some(view.clone());
+            TestRoot(view)
+        });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        assert_eq!(workspace.read_with(&cx, |view, cx| view.old.text(cx)), "");
+        assert_eq!(workspace.read_with(&cx, |view, cx| view.new.text(cx)), "");
+        assert!(history.load(TextDiff::ID).unwrap().is_empty());
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.old.edit_text("café", window, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.old.edit_text("caffè 👩🏽‍💻", window, cx);
+                view.new.edit_text("caffè 🇮🇹", window, cx);
+                view.renderer_status = RendererStatus::Ready;
+                view.record_if_ready(cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert!(history.load(TextDiff::ID).unwrap().is_empty());
+
+        cx.executor().advance_clock(Duration::from_millis(199));
+        cx.run_until_parked();
+        assert!(history.load(TextDiff::ID).unwrap().is_empty());
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+        cx.update(|_window, cx| {
+            workspace.update(cx, |view, cx| {
+                // Headless GPUI does not attach the native child WebView. Feed
+                // the readiness boundary after the real editor/debounce path.
+                view.renderer_status = RendererStatus::Ready;
+                view.record_if_ready(cx);
+                view.record_if_ready(cx);
+            });
+        });
+        let entries = history.load(TextDiff::ID).unwrap();
+        assert_eq!(entries.len(), 1);
+        let snapshot = decode_snapshot(&entries[0]).unwrap();
+        assert_eq!(snapshot.old, "caffè 👩🏽‍💻");
+        assert_eq!(snapshot.new, "caffè 🇮🇹");
+        assert_eq!(snapshot.mode, TextDiffMode::Split);
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.old.edit_text("", window, cx);
+                view.new.edit_text("", window, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.executor().advance_clock(HISTORY_SETTLE_DELAY);
+        cx.run_until_parked();
+        cx.update(|_window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.renderer_status = RendererStatus::Ready;
+                view.record_if_ready(cx);
+            });
+        });
+        assert_eq!(history.load(TextDiff::ID).unwrap().len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
 }
