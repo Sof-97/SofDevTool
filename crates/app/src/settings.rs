@@ -10,7 +10,8 @@ use gpui::{
     WindowBounds, WindowKind, WindowOptions,
 };
 use sofdevtool_ui::{
-    mount, view_click, Button, ConfirmationBar, HoldButton, HoldController, ThemeTokens,
+    diagnostic_banner, mount, view_click, Button, ConfirmationBar, DiagnosticSeverity, HoldButton,
+    HoldController, ThemeTokens,
 };
 
 use crate::history::{HistoryRecorder, HistorySubscription};
@@ -78,10 +79,10 @@ pub fn show(
     cx: &mut gpui::App,
 ) {
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(560.), px(620.)), cx)),
+        window_bounds: Some(WindowBounds::centered(size(px(700.), px(720.)), cx)),
         focus: true,
         kind: WindowKind::Normal,
-        is_resizable: false,
+        is_resizable: true,
         titlebar: Some(gpui::TitlebarOptions {
             title: Some("Developer Toolbox Settings".into()),
             ..Default::default()
@@ -450,9 +451,10 @@ impl Render for SettingsView {
             .flex()
             .flex_col()
             .gap_3()
-            .p_5()
+            .p_4()
             .bg(tokens.background())
             .text_color(tokens.text())
+            .text_size(px(13.))
             .overflow_y_scroll()
             .track_focus(&self.capture_focus)
             .capture_key_down(
@@ -460,127 +462,208 @@ impl Render for SettingsView {
             )
             .child(
                 div()
-                    .text_lg()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child("Launcher shortcut"),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(tokens.text_muted())
-                    .child(capture_text.to_string()),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(tokens.text_muted())
-                    .child("Use Command, Control, or Option with a non-modifier key."),
-            )
-            .child(
-                Button::new("Capture shortcut")
-                    .focus_handle(self.capture_button_focus.clone())
-                    .on_click(view_click(cx, |this, window, cx| {
-                        this.begin_capture(window, cx)
-                    })),
-            )
-            .when_some(self.diagnostic.as_ref(), |this, diagnostic| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(tokens.danger())
-                        .child(diagnostic.clone()),
-                )
-            })
-            .child(
-                div()
-                    .mt_3()
-                    .text_lg()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child("History"),
-            )
-            .child(
-                div()
                     .flex()
-                    .flex_row()
                     .items_center()
-                    .gap_3()
+                    .justify_between()
                     .child(
-                        Button::new(if policy.global_enabled {
-                            "Global recording: on"
-                        } else {
-                            "Global recording: off"
-                        })
-                        .id("history-global-record")
-                        .variant(if policy.global_enabled {
-                            sofdevtool_ui::ButtonVariant::Primary
-                        } else {
-                            sofdevtool_ui::ButtonVariant::Secondary
-                        })
-                        .focus_handle(self.global_record_focus.clone())
-                        .on_click(view_click(cx, |this, _window, cx| {
-                            let next = !this.history.policy().global_enabled;
-                            this.history.set_global_enabled(next);
-                            cx.notify();
-                        })),
+                        div()
+                            .text_lg()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("Settings"),
                     )
                     .child(
-                        div().debug_selector(|| "settings-clear-all".into()).child(
-                            self.clear_button(
-                                "history-clear-all".to_owned(),
-                                "Clear All (hold 2s)",
-                                HoldTarget::ClearAll,
-                                self.clear_all_hold.clone(),
-                                Some(self.clear_all_focus.clone()),
-                                cx,
-                            ),
-                        ),
+                        div()
+                            .text_xs()
+                            .text_color(tokens.text_muted())
+                            .child("LOCAL · THIS MAC"),
                     ),
             )
             .child(
                 div()
-                    .text_xs()
-                    .text_color(tokens.text_muted())
-                    .child("Clear uses a one-second hold; Clear All uses two seconds. Disabling recording keeps existing entries."),
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(tokens.border())
+                    .bg(tokens.surface())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child("Launcher shortcut"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(tokens.accent())
+                                    .child(capture_text.to_string()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(tokens.text_muted())
+                                    .child("Press Command, Control, or Option with a key. Escape cancels capture."),
+                            )
+                            .child(
+                                Button::with_id("settings.capture-shortcut", "Capture shortcut")
+                                    .focus_handle(self.capture_button_focus.clone())
+                                    .on_click(view_click(cx, |this, window, cx| {
+                                        this.begin_capture(window, cx)
+                                    })),
+                            ),
+                    )
+                    .when_some(self.diagnostic.as_ref(), |this, diagnostic| {
+                        this.child(diagnostic_banner(
+                            DiagnosticSeverity::Error,
+                            diagnostic,
+                            None,
+                        ))
+                    }),
             )
-            .child(utilities)
-            .when_some(self.pending_confirm.clone(), |this, target| {
-                let label = match target {
-                    HoldTarget::ClearUtility(_) => "Clear this Utility's retained entries?",
-                    HoldTarget::ClearAll => "Clear all Rust History?",
-                };
-                this.child(
-                    ConfirmationBar::new(
-                        "settings.history.clear",
-                        label,
-                        "Confirm clear",
-                        "Cancel",
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(tokens.border())
+                    .bg(tokens.surface())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child("History"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(tokens.text_muted())
+                                            .child("Recording choices do not erase retained entries."),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        Button::with_id(
+                                            "history-global-record",
+                                            if policy.global_enabled {
+                                                "Recording: on"
+                                            } else {
+                                                "Recording: off"
+                                            },
+                                        )
+                                        .variant(if policy.global_enabled {
+                                            sofdevtool_ui::ButtonVariant::Primary
+                                        } else {
+                                            sofdevtool_ui::ButtonVariant::Secondary
+                                        })
+                                        .focus_handle(self.global_record_focus.clone())
+                                        .on_click(view_click(cx, |this, _window, cx| {
+                                            let next = !this.history.policy().global_enabled;
+                                            this.history.set_global_enabled(next);
+                                            cx.notify();
+                                        })),
+                                    )
+                                    .child(
+                                        div().debug_selector(|| "settings-clear-all".into()).child(
+                                            self.clear_button(
+                                                "history-clear-all".to_owned(),
+                                                "Clear All · hold 2s",
+                                                HoldTarget::ClearAll,
+                                                self.clear_all_hold.clone(),
+                                                Some(self.clear_all_focus.clone()),
+                                                cx,
+                                            ),
+                                        ),
+                                    ),
+                            ),
                     )
-                    .focus_handles(
-                        self.confirm_focus.clone(),
-                        self.cancel_confirm_focus.clone(),
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tokens.text_muted())
+                            .child("Hold Clear for one second, or Clear All for two seconds. Keyboard activation asks for confirmation."),
                     )
-                    .on_confirm(view_click(cx, |this, _window, cx| this.confirm(cx)))
-                    .on_cancel(view_click(cx, |this, _window, cx| this.cancel_confirm(cx))),
-                )
-            })
-            .when_some(self.notice.as_ref(), |this, notice| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(tokens.text_muted())
-                        .child(notice.clone()),
-                )
-            })
-            .when(!unknown.is_empty(), |this| {
-                this.child(
-                    div()
-                        .mt_2()
-                        .text_sm()
-                        .text_color(tokens.text_muted())
-                        .child("Stored files without a registered Utility"),
-                )
-                .child(unknown_list)
-            })
+                    .when_some(self.pending_confirm.clone(), |this, target| {
+                        let label = match target {
+                            HoldTarget::ClearUtility(_) => "Clear this Utility's retained entries?",
+                            HoldTarget::ClearAll => "Clear all Rust History?",
+                        };
+                        this.child(
+                            ConfirmationBar::new(
+                                "settings.history.clear",
+                                label,
+                                "Confirm clear",
+                                "Cancel",
+                            )
+                            .focus_handles(
+                                self.confirm_focus.clone(),
+                                self.cancel_confirm_focus.clone(),
+                            )
+                            .on_confirm(view_click(cx, |this, _window, cx| this.confirm(cx)))
+                            .on_cancel(view_click(cx, |this, _window, cx| this.cancel_confirm(cx))),
+                        )
+                    })
+                    .when_some(self.notice.as_ref(), |this, notice| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(tokens.accent())
+                                .child(notice.clone()),
+                        )
+                    })
+                    .child(div().h(px(1.)).bg(tokens.border()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(tokens.text_muted())
+                            .child(format!("PER UTILITY · {}", self.utilities.len())),
+                    )
+                    .child(utilities)
+                    .when(!unknown.is_empty(), |this| {
+                        this.child(div().h(px(1.)).bg(tokens.border()))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(tokens.text_muted())
+                                    .child("STORED FILES WITHOUT A REGISTERED UTILITY"),
+                            )
+                            .child(unknown_list)
+                    }),
+            )
     }
 }
 

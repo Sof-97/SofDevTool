@@ -2,10 +2,10 @@
 
 use gpui::prelude::*;
 use gpui::{
-    div, point, px, size, AnyWindowHandle, App, Context, DisplayId, IntoElement, Render, Window,
-    WindowBounds, WindowKind, WindowOptions,
+    div, point, px, size, AnyWindowHandle, App, Context, DisplayId, IntoElement, Render,
+    ScrollHandle, Window, WindowBounds, WindowKind, WindowOptions,
 };
-use sofdevtool_ui::{mount, view_click, Button, LabeledField, TextField, ThemeTokens};
+use sofdevtool_ui::{mount, view_click, Button, TextField, ThemeTokens};
 
 use crate::registry::{OpenUtility, UtilityId, UtilityRegistry};
 use crate::workbench::Workbench;
@@ -91,6 +91,7 @@ pub struct LauncherView {
     main_window: AnyWindowHandle,
     workbench: gpui::WeakEntity<Workbench>,
     was_active: bool,
+    scroll: ScrollHandle,
     _search_subscription: gpui::Subscription,
     _activation_subscription: gpui::Subscription,
 }
@@ -107,6 +108,7 @@ impl LauncherView {
         let selected = registry.search("").first().copied();
         let search_subscription = search.on_change_in(window, cx, |this, _window, cx| {
             this.selected = this.results(cx).first().copied();
+            this.scroll.scroll_to_item(0);
             cx.notify();
         });
         // A nonactivating panel receives keys while it is the key window. Losing
@@ -129,6 +131,7 @@ impl LauncherView {
             main_window,
             workbench,
             was_active: window.is_window_active(),
+            scroll: ScrollHandle::new(),
             _search_subscription: search_subscription,
             _activation_subscription: activation_subscription,
         }
@@ -172,6 +175,7 @@ impl LauncherView {
                 .unwrap_or(0) as isize;
             let next = (index + delta).rem_euclid(results.len() as isize) as usize;
             self.selected = Some(results[next]);
+            self.scroll.scroll_to_item(next);
         }
         cx.notify();
     }
@@ -199,7 +203,16 @@ impl Render for LauncherView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = ThemeTokens::active();
         let results = self.results(cx);
-        let mut list = div().flex().flex_col().gap_2().flex_1().min_h_0();
+        let result_count = results.len();
+        let mut list = div()
+            .id("launcher.results")
+            .flex()
+            .flex_col()
+            .gap_1()
+            .flex_1()
+            .min_h_0()
+            .track_scroll(&self.scroll)
+            .overflow_y_scroll();
         for id in results {
             let definition = self
                 .registry
@@ -207,15 +220,56 @@ impl Render for LauncherView {
                 .expect("searched definition exists");
             let selected = self.selected == Some(id);
             list = list.child(
-                Button::new(definition.name)
-                    .variant(if selected {
-                        sofdevtool_ui::ButtonVariant::Primary
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .w_full()
+                    .px_1()
+                    .py_1()
+                    .rounded_md()
+                    .bg(if selected {
+                        tokens.surface_raised()
                     } else {
-                        sofdevtool_ui::ButtonVariant::Secondary
+                        tokens.surface()
                     })
-                    .on_click(view_click(cx, move |this, window, cx| {
-                        this.open(id, window, cx);
-                    })),
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Button::with_id(
+                                format!("launcher.utility.{}", id.slug()),
+                                definition.name,
+                            )
+                            .variant(if selected {
+                                sofdevtool_ui::ButtonVariant::Primary
+                            } else {
+                                sofdevtool_ui::ButtonVariant::Secondary
+                            })
+                            .on_click(view_click(
+                                cx,
+                                move |this, window, cx| {
+                                    this.open(id, window, cx);
+                                },
+                            )),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tokens.text_muted())
+                            .child(definition.category),
+                    ),
+            );
+        }
+        if result_count == 0 {
+            list = list.child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(tokens.text_muted())
+                    .child("No Utilities match. Edit the search to try again."),
             );
         }
         div()
@@ -227,26 +281,52 @@ impl Render for LauncherView {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::open_selection))
-            .p_5()
-            .gap_4()
-            .bg(tokens.surface())
+            .p_4()
+            .gap_3()
+            .bg(tokens.background())
             .text_color(tokens.text())
+            .text_size(px(13.))
             .child(
                 div()
-                    .text_lg()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child("Find a Utility"),
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("Utility Launcher"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tokens.text_muted())
+                            .child(format!("{result_count} results")),
+                    ),
             )
-            .child(LabeledField::new(
-                "Search",
-                self.search.render("launcher.search"),
-            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tokens.text_muted())
+                            .child("SEARCH UTILITIES"),
+                    )
+                    .child(self.search.render("launcher.search")),
+            )
+            .child(div().h(px(1.)).bg(tokens.border()))
             .child(list)
             .child(
                 div()
+                    .pt_2()
+                    .border_t_1()
+                    .border_color(tokens.border())
                     .text_xs()
                     .text_color(tokens.text_muted())
-                    .child("Escape dismisses this launcher. Selection opens the Workbench."),
+                    .child("↑ ↓ navigate · Return open · Escape dismiss"),
             )
     }
 }

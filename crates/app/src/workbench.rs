@@ -10,11 +10,11 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    div, AnyView, AnyWindowHandle, App, Context, Entity, FocusHandle, IntoElement, Render,
-    Subscription, Window,
+    div, px, AnyView, AnyWindowHandle, App, Context, Entity, FocusHandle, IntoElement, Render,
+    ScrollHandle, Subscription, Window,
 };
 use sofdevtool_ui::{
-    apply_theme, panel, view_click, Button, ButtonVariant, TextField, ThemeTokens, ThemeVariant,
+    apply_theme, view_click, Button, ButtonVariant, TextField, ThemeTokens, ThemeVariant,
 };
 
 use crate::clipboard::Clipboard;
@@ -31,6 +31,9 @@ use crate::text_diff::TextDiffWorkspace;
 use crate::shortcut::macos::CarbonShortcutRegistrar;
 
 const MAX_RECENTS: usize = 8;
+
+gpui::actions!(workbench_catalog, [CatalogPrevious, CatalogNext]);
+const CATALOG_KEY_CONTEXT: &str = "SofDevToolCatalog";
 
 /// A catalog scope. Recent and Favorites are catalog filters, not dashboards.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,9 +61,11 @@ pub struct Workbench {
     search: TextField,
     launcher_focus: FocusHandle,
     scope_focus: [FocusHandle; 3],
-    theme_focus: FocusHandle,
+    theme_focus: [FocusHandle; 2],
+    settings_focus: FocusHandle,
     favorite_focus: FocusHandle,
     catalog_focus: Vec<FocusHandle>,
+    catalog_scroll: ScrollHandle,
     launcher: Option<AnyWindowHandle>,
     main_window: AnyWindowHandle,
     entity: gpui::WeakEntity<Self>,
@@ -79,6 +84,10 @@ impl Workbench {
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
+        cx.bind_keys([
+            gpui::KeyBinding::new("up", CatalogPrevious, Some(CATALOG_KEY_CONTEXT)),
+            gpui::KeyBinding::new("down", CatalogNext, Some(CATALOG_KEY_CONTEXT)),
+        ]);
         let json = cx.new(|cx| JsonWorkspace::new(window, cx, clipboard.clone(), history.clone()));
         let text_diff =
             cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard.clone(), history.clone()));
@@ -134,9 +143,11 @@ impl Workbench {
             search,
             launcher_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             scope_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
-            theme_focus: cx.focus_handle().tab_stop(true).tab_index(0),
+            theme_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
+            settings_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             favorite_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             catalog_focus,
+            catalog_scroll: ScrollHandle::new(),
             launcher: None,
             main_window: window.window_handle(),
             entity: cx.weak_entity(),
@@ -183,11 +194,8 @@ impl Workbench {
         self.favorites.iter().any(|slug| slug == id.slug())
     }
 
-    fn toggle_theme(&mut self, cx: &mut Context<Self>) {
-        self.theme = match self.theme {
-            ThemeVariant::Graphite => ThemeVariant::CatppuccinFrappe,
-            ThemeVariant::CatppuccinFrappe => ThemeVariant::Graphite,
-        };
+    fn set_theme(&mut self, theme: ThemeVariant, cx: &mut Context<Self>) {
+        self.theme = theme;
         apply_theme(self.theme, cx);
         self.persist_workspace();
         cx.notify();
@@ -196,6 +204,60 @@ impl Workbench {
     fn set_scope(&mut self, scope: CatalogScope, cx: &mut Context<Self>) {
         self.scope = scope;
         cx.notify();
+    }
+
+    fn move_catalog_focus(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let query = self.search.text(cx);
+        let mut definitions = self.filtered_definitions(&query);
+        if self.scope == CatalogScope::Library {
+            definitions.sort_by_key(|definition| catalog_category_rank(definition.category));
+        }
+        if definitions.is_empty() {
+            return;
+        }
+        let focused = window.focused(cx);
+        let index = definitions
+            .iter()
+            .position(|definition| {
+                focused.as_ref() == Some(&self.catalog_focus[self.registry_index(definition.id)])
+            })
+            .or_else(|| {
+                definitions
+                    .iter()
+                    .position(|definition| definition.id == self.selected)
+            })
+            .unwrap_or(0) as isize;
+        let next = (index + delta).rem_euclid(definitions.len() as isize) as usize;
+        let focus = self.catalog_focus[self.registry_index(definitions[next].id)].clone();
+        let scroll_index = if self.scope == CatalogScope::Library {
+            let mut child_index = 0;
+            let mut category = "";
+            for definition in definitions.iter().take(next + 1) {
+                if definition.category != category {
+                    category = definition.category;
+                    child_index += 1;
+                }
+                child_index += 1;
+            }
+            child_index - 1
+        } else {
+            next
+        };
+        self.catalog_scroll.scroll_to_item(scroll_index);
+        window.focus(&focus, cx);
+    }
+
+    fn catalog_previous(
+        &mut self,
+        _: &CatalogPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_catalog_focus(-1, window, cx);
+    }
+
+    fn catalog_next(&mut self, _: &CatalogNext, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_catalog_focus(1, window, cx);
     }
 
     fn persist_workspace(&self) {
@@ -425,17 +487,62 @@ impl Workbench {
     }
 }
 
+fn catalog_category_rank(category: &str) -> usize {
+    match category {
+        "Format & Convert" => 0,
+        "Inspect" => 1,
+        "Generate" => 2,
+        "Text" => 3,
+        _ => 4,
+    }
+}
+
+fn catalog_category_heading(category: &str) -> &str {
+    match category {
+        "Inspect" => "ENCODE & INSPECT",
+        "Text" => "COMPARE & TEST",
+        "Format & Convert" => "FORMAT & CONVERT",
+        "Generate" => "GENERATE",
+        _ => category,
+    }
+}
+
+fn catalog_glyph(id: UtilityId) -> &'static str {
+    match id {
+        UtilityId::Json => "{}",
+        UtilityId::YamlJson => "⇄",
+        UtilityId::Base64 => "64",
+        UtilityId::UrlEncoding => "%",
+        UtilityId::Color => "◐",
+        UtilityId::Hashes => "#",
+        UtilityId::Jwt => "◈",
+        UtilityId::Timestamps => "◷",
+        UtilityId::Identifiers => "ID",
+        UtilityId::RandomString => "✳",
+        UtilityId::SampleData => "▦",
+        UtilityId::Regex => ".*",
+        UtilityId::TextDiff => "±",
+        UtilityId::CaseConversion => "Aa",
+        UtilityId::Whitespace => "¶",
+    }
+}
+
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = ThemeTokens::active();
         let selected = self.selected;
         let scope = self.scope;
         let query = self.search.text(cx);
-        let definitions = self.filtered_definitions(&query);
+        let mut definitions = self.filtered_definitions(&query);
+        if scope == CatalogScope::Library {
+            // Preserve source metadata and within-category order while giving
+            // the approved grouped catalog one heading per category.
+            definitions.sort_by_key(|definition| catalog_category_rank(definition.category));
+        }
 
         let scope_button =
             |label: &'static str, target: CatalogScope, index: usize, cx: &mut Context<Self>| {
-                Button::new(label)
+                Button::with_id(format!("catalog.scope.{index}"), label)
                     .variant(if scope == target {
                         ButtonVariant::Primary
                     } else {
@@ -447,33 +554,17 @@ impl Render for Workbench {
                     }))
             };
 
-        let mut sidebar = div()
-            .flex()
-            .flex_col()
-            .w_64()
-            .min_h_0()
-            .p_3()
-            .gap_2()
-            .border_r_1()
-            .border_color(tokens.border())
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_1()
-                    .child(scope_button("Library", CatalogScope::Library, 0, cx))
-                    .child(scope_button("Recent", CatalogScope::Recent, 1, cx))
-                    .child(scope_button("Favorites", CatalogScope::Favorites, 2, cx)),
-            )
-            .child(self.search.render("catalog.search"));
-
         let mut catalog = div()
             .id("catalog-list")
+            .key_context(CATALOG_KEY_CONTEXT)
+            .on_action(cx.listener(Self::catalog_previous))
+            .on_action(cx.listener(Self::catalog_next))
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
             .gap_1()
+            .track_scroll(&self.catalog_scroll)
             .overflow_y_scroll();
         let mut current_category = "";
         for definition in &definitions {
@@ -481,10 +572,13 @@ impl Render for Workbench {
                 current_category = definition.category;
                 catalog = catalog.child(
                     div()
-                        .mt_2()
+                        .mt_3()
+                        .mb_1()
+                        .px_2()
                         .text_xs()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(tokens.text_muted())
-                        .child(current_category),
+                        .child(catalog_category_heading(current_category).to_owned()),
                 );
             }
             let id = definition.id;
@@ -496,12 +590,17 @@ impl Render for Workbench {
                     .flex_row()
                     .items_center()
                     .gap_1()
+                    .w_full()
+                    .child(
+                        div()
+                            .w_6()
+                            .text_xs()
+                            .text_color(tokens.text_muted())
+                            .child(catalog_glyph(id)),
+                    )
                     .child(
                         div().flex_1().min_w_0().child(
-                            Button::new(definition.name)
-                                .id(gpui::ElementId::Name(
-                                    format!("catalog-{}", id.slug()).into(),
-                                ))
+                            Button::with_id(format!("catalog-{}", id.slug()), definition.name)
                                 .variant(if id == selected {
                                     ButtonVariant::Primary
                                 } else {
@@ -514,37 +613,254 @@ impl Render for Workbench {
                         ),
                     )
                     .child(
-                        Button::new(if favorite { "★" } else { "☆" })
-                            .id(gpui::ElementId::Name(
-                                format!("favorite-{}", id.slug()).into(),
-                            ))
-                            .on_click(view_click(cx, move |this, _window, cx| {
+                        Button::with_id(
+                            format!("favorite-{}", id.slug()),
+                            if favorite { "★" } else { "☆" },
+                        )
+                        .aria_label(format!(
+                            "{} favorite {}",
+                            if favorite { "Remove" } else { "Add" },
+                            definition.name
+                        ))
+                        .on_click(view_click(
+                            cx,
+                            move |this, _window, cx| {
                                 this.toggle_favorite(id);
                                 cx.notify();
-                            })),
+                            },
+                        )),
                     ),
             );
         }
         if definitions.is_empty() {
-            catalog = catalog.child(
+            catalog = catalog.child(div().p_3().text_xs().text_color(tokens.text_muted()).child(
+                match scope {
+                    CatalogScope::Recent => "No recently opened Utilities yet.",
+                    CatalogScope::Favorites => "No favorites yet.",
+                    CatalogScope::Library => "No Utilities match the search.",
+                },
+            ));
+        }
+
+        let sidebar = div()
+            .flex()
+            .flex_col()
+            .w(px(252.))
+            .flex_shrink_0()
+            .min_h_0()
+            .p_3()
+            .gap_3()
+            .bg(tokens.surface())
+            .border_r_1()
+            .border_color(tokens.border())
+            .child(
                 div()
-                    .mt_3()
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .child(scope_button("Library", CatalogScope::Library, 0, cx))
+                    .child(scope_button("Recent", CatalogScope::Recent, 1, cx))
+                    .child(scope_button("Favorites", CatalogScope::Favorites, 2, cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tokens.text_muted())
+                            .child("SEARCH UTILITIES"),
+                    )
+                    .child(self.search.render("catalog.search")),
+            )
+            .child(catalog)
+            .child(
+                div()
+                    .pt_2()
+                    .border_t_1()
+                    .border_color(tokens.border())
                     .text_xs()
                     .text_color(tokens.text_muted())
-                    .child(match scope {
-                        CatalogScope::Recent => "No recently opened Utilities yet.",
-                        CatalogScope::Favorites => "No favorites yet.",
-                        CatalogScope::Library => "No Utilities match the search.",
-                    }),
+                    .child(format!(
+                        "{} of {} Utilities",
+                        definitions.len(),
+                        self.registry.definitions().len()
+                    )),
             );
-        }
-        sidebar = sidebar.child(catalog);
 
         let definition = self
             .registry
             .definition(selected)
             .expect("the selected Utility is registered");
         let view = self.workspace_view(selected, window, cx);
+        let theme = self.theme;
+        let topbar = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .h(px(54.))
+            .flex_shrink_0()
+            .px_4()
+            .border_b_1()
+            .border_color(tokens.border())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(crate::identity::APP_DISPLAY_NAME),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tokens.text_muted())
+                            .child("/ Workbench"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().size_2().rounded_full().bg(tokens.accent()))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(tokens.text_muted())
+                                    .child("LOCAL · OFFLINE"),
+                            ),
+                    )
+                    .child(
+                        Button::with_id(
+                            "workbench.launcher",
+                            format!("Launcher · {}", self.current_shortcut().display_name),
+                        )
+                        .focus_handle(self.launcher_focus.clone())
+                        .on_click(view_click(cx, |this, window, cx| {
+                            this.show_launcher(window, cx);
+                        })),
+                    )
+                    .child(
+                        Button::with_id("workbench.settings", "Settings")
+                            .focus_handle(self.settings_focus.clone())
+                            .on_click(view_click(cx, |this, _window, cx| {
+                                this.show_settings(cx);
+                            })),
+                    )
+                    .child(
+                        Button::with_id("workbench.theme.graphite", "Graphite")
+                            .variant(if theme == ThemeVariant::Graphite {
+                                ButtonVariant::Primary
+                            } else {
+                                ButtonVariant::Secondary
+                            })
+                            .focus_handle(self.theme_focus[0].clone())
+                            .on_click(view_click(cx, |this, _window, cx| {
+                                this.set_theme(ThemeVariant::Graphite, cx);
+                            })),
+                    )
+                    .child(
+                        Button::with_id("workbench.theme.frappe", "Frappé")
+                            .variant(if theme == ThemeVariant::CatppuccinFrappe {
+                                ButtonVariant::Primary
+                            } else {
+                                ButtonVariant::Secondary
+                            })
+                            .focus_handle(self.theme_focus[1].clone())
+                            .on_click(view_click(cx, |this, _window, cx| {
+                                this.set_theme(ThemeVariant::CatppuccinFrappe, cx);
+                            })),
+                    ),
+            );
+
+        let heading = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(definition.name),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tokens.text_muted())
+                            .child(definition.summary),
+                    ),
+            )
+            .child(
+                Button::with_id(
+                    "toggle-favorite",
+                    if self.is_favorite(selected) {
+                        "★ Saved"
+                    } else {
+                        "☆ Save"
+                    },
+                )
+                .focus_handle(self.favorite_focus.clone())
+                .on_click(view_click(cx, |this, _window, cx| {
+                    let selected = this.selected;
+                    this.toggle_favorite(selected);
+                    cx.notify();
+                })),
+            );
+        let workspace = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .p_4()
+            .gap_3()
+            .child(heading)
+            .child(div().h(px(1.)).bg(tokens.border()))
+            .child(div().flex().flex_1().min_h_0().min_w_0().child(view));
+        let footer = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .h(px(37.))
+            .flex_shrink_0()
+            .px_4()
+            .border_t_1()
+            .border_color(tokens.border())
+            .text_xs()
+            .text_color(tokens.text_muted())
+            .child(format!(
+                "{} · History stays with this workspace",
+                definition.category
+            ))
+            .child(format!(
+                "{} · {} · {} · {}",
+                crate::identity::VERSION,
+                crate::identity::PROFILE.channel(),
+                crate::identity::REVISION
+                    .chars()
+                    .take(8)
+                    .collect::<String>(),
+                crate::identity::SOURCE_STATE,
+            ));
 
         div()
             .flex()
@@ -552,100 +868,15 @@ impl Render for Workbench {
             .size_full()
             .bg(tokens.background())
             .text_color(tokens.text())
+            .text_size(px(13.))
+            .child(topbar)
             .child(
                 div()
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .px_4()
-                    .py_3()
-                    .border_b_1()
-                    .border_color(tokens.border())
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(crate::identity::APP_DISPLAY_NAME),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .text_xs()
-                            .text_color(tokens.text_muted())
-                            .child(format!(
-                                "{} · {} · {} · {}",
-                                crate::identity::VERSION,
-                                crate::identity::PROFILE.channel(),
-                                crate::identity::REVISION
-                                    .chars()
-                                    .take(8)
-                                    .collect::<String>(),
-                                crate::identity::SOURCE_STATE,
-                            ))
-                            .child(
-                                Button::new(if self.is_favorite(selected) {
-                                    "Favorite: on"
-                                } else {
-                                    "Favorite: off"
-                                })
-                                .id("toggle-favorite")
-                                .focus_handle(self.favorite_focus.clone())
-                                .on_click(view_click(
-                                    cx,
-                                    |this, _window, cx| {
-                                        let selected = this.selected;
-                                        this.toggle_favorite(selected);
-                                        cx.notify();
-                                    },
-                                )),
-                            )
-                            .child(
-                                Button::new(format!("Theme: {}", self.theme.label()))
-                                    .id("toggle-theme")
-                                    .focus_handle(self.theme_focus.clone())
-                                    .on_click(view_click(cx, |this, _window, cx| {
-                                        this.toggle_theme(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("Settings")
-                                    .variant(ButtonVariant::Secondary)
-                                    .on_click(view_click(cx, |this, _window, cx| {
-                                        this.show_settings(cx)
-                                    })),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
                     .flex_1()
                     .min_h_0()
                     .child(sidebar)
-                    .child(div().m_3().flex().flex_1().min_w_0().min_h_0().child(panel(
-                        definition.name,
-                        "persistent session",
-                        div().flex().flex_1().min_h_0().child(view),
-                    ))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .px_4()
-                    .py_3()
-                    .border_t_1()
-                    .border_color(tokens.border())
-                    .child(
-                        Button::new("Open Utility Launcher")
-                            .focus_handle(self.launcher_focus.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                this.show_launcher(window, cx);
-                            })),
-                    ),
+                    .child(workspace),
             )
             .when_some(self.shortcut_error.as_ref(), |this, error| {
                 this.child(
@@ -657,5 +888,6 @@ impl Render for Workbench {
                         .child(format!("Launcher: {error}")),
                 )
             })
+            .child(footer)
     }
 }
