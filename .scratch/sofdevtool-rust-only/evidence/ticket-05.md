@@ -20,3 +20,18 @@ No native launch, UI responsiveness observation, full workspace gate or macOS 14
 ## Earlier failed attempt
 
 The prior pi 0.83.0 / opencode-go Kimi K3 attempt, dispatched from `5748a16`, stopped during source inspection with HTTP 429 `GoUsageLimitError`. It changed no product files and supplied no test evidence. Its local session remains in ignored `.artifacts/pi-rust-only/ticket-05/session.jsonl`. The owner's 2026-09-23 parallel Sol/Luna authorization superseded the pi quota blocker; the implementation and evidence above come from this later worker attempt.
+
+## Coordinator native check, 2026-09-23
+
+Computer Use exercised a Debug bundle from frozen integrated commit `860e6a9`,
+launched outside the checkout with the same temporary synthetic profile as
+ticket01. Pattern `a.*b|a` and 1,000,000 ASCII `a` characters were accepted.
+Navigation to JSON and back remained available. The result eventually showed
+the explicit 10,000-match refusal, with no partial result and History 0/25.
+Changing the replacement restarted work; Clear emptied pattern, replacement
+and text. A subsequent named-capture request on `caffè`, replacement `$word!`,
+settled to `caffè!` and exactly one visible retained entry. No old result or
+History entry reappeared. This is native interaction evidence plus the
+controlled scheduling tests above, not a measured latency guarantee or a
+claim that an individual engine call can be interrupted. Final Astra review
+and the complete release gate remain pending.

@@ -47,3 +47,27 @@ Coordinator integration note: ticket02 subsequently corrected its temporary
 test compilation error and all 68 application tests passed on the combined
 candidate. The shared default gate found one separate Clippy style diagnostic
 in History retry, routed to its owner before integration.
+
+## Coordinator combined gate
+
+A frozen source copy of integrated commit `2fdfeb1` passed `scripts/verify`
+with the isolated Cargo target: formatting, Clippy with warnings denied,
+290 tests (69 app, 190 core unit, 23 JSON contracts, 8 sofui), and Debug
+application/gallery builds. The existing transitive block0.1.6 future-warning
+remains. This is the combined01/02/05/08/10 candidate, before later tickets.
+
+## Coordinator native appearance check
+
+The same frozen `2fdfeb1` bundle/profile was exercised through Computer Use.
+Changing Graphite to Catppuccin Frappé visibly updated the Workbench and JSON
+editor surfaces/caret palette while preserving Unicode input/result and the
+single retained History entry. Newly opened Settings and Launcher visibly
+used Frappé too; Escape dismissed Launcher and preserved the JSON session.
+This native observation covers the actual surfaces and new-window inheritance.
+Already-open simultaneous-window refresh and focus retention are covered by
+the GPUI public theme test, not claimed as separately observed here.
+The Computer Use connection recovered after one native pipe interruption.
+After Quit, a follow-up accessibility read reopened the test bundle; that
+new process received no interactions and was stopped using its verified
+temporary executable path. Future native checks should verify termination
+without querying the just-quit app, to avoid unintended relaunch.

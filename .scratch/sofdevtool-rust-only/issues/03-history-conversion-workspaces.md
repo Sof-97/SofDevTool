@@ -4,7 +4,7 @@
 
 **Blocked by:** [02: Coordinate JSON and Base64 History with enforced recording recovery](02-history-coordination-recovery.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Migrate YAML/JSON, URL Encoding, Hashes, Timestamps, JWT Decoder, Case Conversion, Whitespace Conversion and Color Conversion to the shared coordinator.
 - [ ] Remove the migrated workspaces' duplicate coordination while keeping Utility-owned snapshot decoding, preview and restore concrete.

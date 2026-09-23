@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Include generated output and meaningful edited controls/schema in restore equivalence; an edited invalid Sample Data schema is not an empty workspace.
 - [ ] Test two different generated batches with identical settings: restore prompts, cancellation preserves current state and confirmation restores exact captured output.

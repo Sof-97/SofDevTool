@@ -80,3 +80,34 @@ not modify ticket statuses. The coordinator integrates and runs shared gates.
   Settings/History/JSON remain owned by02.
 - The service refused a third agent thread; two Sol implementation lanes continue.
   07 remains queued; no third worker or early Astra review was started.
+
+- Wave1 commits: `dca5671` execution protocol, `a7b32aa` ticket01, `860e6a9` ticket05.
+- 10 dispatched to sofui_foundation (GPT-6 Sol): ui themes/editor integration,
+  gallery/tests, app Workbench/Launcher/main. 02 retains Settings/JSON/History/Base64.
+
+### Continued integration and dispatch
+
+- Both Sol workers resumed after a usage interruption; no reset credit was used.
+- 10 integrated after its sofui tests/Clippy and app compilation passed.
+- 02 supplied 68 passing app tests and an all-target check. Coordinator default
+  gate found a Clippy diagnostic in retry; its owner is correcting that plus
+  the Clear All unknown-file basename edge before handoff.
+- 06 dispatched to the UI Sol lane: synchronized color workspace and reusable
+  numeric/channel interaction, disjoint from History files.
+- Native frozen `860e6a9` JSON and Regex acceptance is recorded in01/05 evidence.
+  The gallery Computer Use selection stalled for an extended period; no gallery
+  interaction success is claimed from that attempt.
+
+- 10 commit: `8d59068`.
+- 02 integration corrections passed: 69 app tests and all-target Clippy.
+- A third slot became available after the previous completed reviewer thread
+  left the live inventory. GPT-6 Luna now implements07 on Identifier Generator
+  and Sample Data only; History migration04 must wait for its handoff.
+
+- 02 commit: `2fdfeb1`; frozen combined default gate passed290 tests and builds.
+- Native02 pause/retry and10 theme appearance observations recorded.
+- 03 dispatch: eight conversion/inspection workspaces, with Color held until06
+  handoff. 07 received integration feedback to test real workspace confirmation
+  callbacks rather than only a pure decision helper.
+- Shared Cargo compilation is temporarily serialized while06 finalizes its
+  component export and tests; root snapshot builds are complete.

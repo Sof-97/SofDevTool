@@ -55,3 +55,27 @@ the dependency Root only as the window host, and exercises sofui's exported
 controls and event interfaces. Actual JSON window Copy feedback, accessibility
 tree and gallery visual behavior still require coordinator-owned native
 acceptance; build and tests are not evidence of native presentation.
+
+## Coordinator native check, 2026-09-23
+
+A frozen source copy of integrated commit `860e6a9` was bundled and launched
+from `/private/tmp`, with the isolated synthetic profile
+`/private/tmp/sofdevtool-wave1-profile-3llevjhc`, on macOS 26.2 arm64.
+Computer Use observed JSON input and formatted output preserving `città`,
+`caffè` and the multi-scalar emoji `👩🏽‍💻`. Copy Result showed the visible
+“Copied to Clipboard” feedback. Clear emptied input/result and preserved the
+History list; focusing the input and pressing Command-Z restored the exact
+Unicode input and formatted result. The new valid operation added one entry.
+Native gallery checks and final Astra review remain pending; this observation
+is specifically the integrated JSON consumer, not the unfinished theme work.
+
+The same frozen candidate's independent sofui gallery was subsequently built
+and launched from a temporary macOS bundle (no product/profile data). Computer
+Use verified both same-label Copy controls with different field/editor content:
+the first copied the single-line field and the second copied the Unicode editor
+content. Pasting into the other editor made each distinct value observable.
+The visible gallery also showed its Copied feedback, disabled control, focus
+outline, error/warning labels and unavailable row. The prolonged initial
+Computer Use selection eventually returned; these checks happened after it.
+Automated public interaction tests remain the precise Enter/Space/disabled
+activation evidence. This frozen pre-theme gallery is not evidence for10 or11.

@@ -4,7 +4,7 @@
 
 **Blocked by:** [01: Use sofui's owned component interfaces in JSON and the gallery](01-sofui-json-gallery.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Use the documented editor event semantics or deliberate scheduling; do not depend on silent assignment emitting an edit.
 - [ ] Repeated adjustments before and after settlement accumulate from the latest requested color; invalid text does not leave stale output copyable.

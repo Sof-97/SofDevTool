@@ -26,3 +26,26 @@ The GPUI tests exercise real entity notifications with small subscriber probes, 
 ## Migration API for tickets 03/04
 
 For each remaining workspace, replace its four local History cache fields with `HistoryViewState::load(&history, Utility::ID)`. Keep the `HistorySubscription` returned by `history.subscribe(Utility::ID, callback)` for the workspace lifetime; its callback calls `view.reconcile(&history, Utility::ID)` and `cx.notify()`. Apply settled `record` results with `view.apply_record`, then call `history.notify_status(cx)` so an open Settings window refreshes its paused badge. Use `view.select` for list events and `view.retained(&history, Utility::ID, &entry)` immediately before any selected or pending restore. `HistoryRecorder::load`, `record` and `store` remain available for workspaces not yet migrated; the shared store already enforces pause for them.
+
+## Coordinator combined gate
+
+A frozen source copy of integrated commit `2fdfeb1` passed `scripts/verify`
+with the isolated Cargo target: formatting, Clippy with warnings denied,
+290 tests (69 app, 190 core unit, 23 JSON contracts, 8 sofui), and Debug
+application/gallery builds. The existing transitive block0.1.6 future-warning
+remains. This is the combined01/02/05/08/10 candidate, before later tickets.
+
+## Coordinator native recovery check
+
+On macOS26.2 arm64, the frozen `2fdfeb1` Debug bundle was launched from
+`/private/tmp` with isolated profile `/private/tmp/sofdevtool-wave2-profile-5dh0w1hj`.
+A synthetic JSON operation created one retained entry. Making only that
+profile's History directory temporarily read-only caused the next write to
+fail: the current formatted result remained visible, a nonmodal warning
+appeared, and the old entry remained. After restoring directory permissions,
+another valid edit still did not record. Settings exposed Retry for JSON.
+Clicking Retry removed its paused/retry state without adding an entry
+(file count remained one); the live JSON input/result remained unchanged.
+A later new operation produced the second visible retained entry.
+No permanent History deletion was performed through native Computer Use in
+this check; deletion/hidden-subscriber evidence remains the automated tests.
