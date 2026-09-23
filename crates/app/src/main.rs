@@ -16,7 +16,10 @@ use sofdevtool_app::registry::{OpenUtility, UtilityId, UtilityRegistry};
 use sofdevtool_app::workbench::Workbench;
 use sofdevtool_ui::{apply_theme, init, mount, ThemeVariant};
 
-gpui::actions!(application_actions, [Quit, Copy, Paste]);
+gpui::actions!(
+    application_actions,
+    [Quit, CloseWindow, ToggleFullScreen, Copy, Paste]
+);
 
 fn window_options(bounds: Option<WindowBounds>) -> WindowOptions {
     WindowOptions {
@@ -115,19 +118,39 @@ fn main() {
         // WKWebView (and remains available to GPUI controls).
         cx.bind_keys([
             gpui::KeyBinding::new("cmd-q", Quit, None),
+            gpui::KeyBinding::new("cmd-w", CloseWindow, None),
+            gpui::KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
             gpui::KeyBinding::new("cmd-c", Copy, None),
             gpui::KeyBinding::new("cmd-v", Paste, None),
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &CloseWindow, cx| {
+            if let Some(active) = cx.active_window() {
+                let _ = active.update(cx, |_, window, _| {
+                    sofdevtool_app::native_window::request_close(window);
+                });
+            }
+        });
+        cx.on_action(|_: &ToggleFullScreen, cx| {
+            if let Some(active) = cx.active_window() {
+                let _ = active.update(cx, |_, window, _| {
+                    if window.is_resizable() {
+                        window.toggle_fullscreen();
+                    }
+                });
+            }
+        });
         cx.set_menus([
             Menu::new(identity::APP_DISPLAY_NAME).items([MenuItem::action(
                 format!("Quit {}", identity::APP_DISPLAY_NAME),
                 Quit,
             )]),
+            Menu::new("File").items([MenuItem::action("Close Window", CloseWindow)]),
             Menu::new("Edit").items([
                 MenuItem::os_action("Copy", Copy, OsAction::Copy),
                 MenuItem::os_action("Paste", Paste, OsAction::Paste),
             ]),
+            Menu::new("View").items([MenuItem::action("Toggle Full Screen", ToggleFullScreen)]),
         ]);
         let clipboard: Rc<dyn Clipboard> = Rc::new(GpuiClipboard);
         let initial_workbench = workbench.clone();

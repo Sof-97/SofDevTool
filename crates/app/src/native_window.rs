@@ -30,6 +30,29 @@ pub fn show(window: &Window) {
     });
 }
 
+/// Requests the normal AppKit close path on the next main-run-loop turn.
+/// `performClose:` consults GPUI's window-should-close callback, so the
+/// Workbench can retain and hide its Wry child while Settings and Launcher
+/// close through their usual delegates. Deferring avoids re-entering GPUI's
+/// window update while a menu action is being dispatched.
+#[cfg(target_os = "macos")]
+pub fn request_close(window: &Window) {
+    with_ns_window(window, |native| unsafe {
+        use objc::{msg_send, sel, sel_impl};
+        let nil = std::ptr::null_mut::<objc::runtime::Object>();
+        let _: () = msg_send![native,
+            performSelector: sel!(performClose:)
+            withObject: nil
+            afterDelay: 0.0f64
+        ];
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn request_close(window: &mut gpui::Window) {
+    window.remove_window();
+}
+
 /// Orders a nonactivating Launcher panel above the current application without
 /// bringing the Workbench forward. GPUI's `focus: true` creates the correct
 /// nonactivating panel class and makes it key; AppKit still needs this explicit
