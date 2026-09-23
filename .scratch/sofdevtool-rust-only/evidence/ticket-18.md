@@ -36,3 +36,14 @@ unchanged.
 Native resize/clipping, selection, scrolling, WebView Copy, focus handoff and
 final redesigned Release acceptance remain coordinator-owned. No native app
 was launched by this worker for ticket 18.
+
+## Native checkpoint — 2026-09-23
+
+Coordinator ran a frozen Debug bundle assembled from `e3cb13b89193f9768d87183f1efd9e6220ac52f8` on macOS 26.2 arm64, outside the checkout with the explicitly isolated profile `/private/tmp/sofdevtool-wave7-profile-dbq7rf4q`. Bundle executable SHA-256: `2c4afd2aaa60addc547c36782402b634e70dc662836383de25ad281051ba81bb`.
+
+- Entered original/updated `caffè 👩🏽‍💻 🇮🇹 1️⃣` lines and different second lines. Split and Unified render correctly in the bounded Comparison area, with the complex-emoji fallback disclosure and generic History entries.
+- Double-clicked the rendered word `caffè`; native Edit > Copy followed by clicking the GPUI Updated editor and Cmd-V pasted exactly `caffè`. This establishes native selection, menu Copy and return to the editor.
+- Two synthesized Cmd-C attempts from the same WebView selection yielded empty paste. This remains a keyboard-dispatch/CUA limitation under diagnosis; keyboard Copy is not accepted from this run.
+- Standard AppKit View > Enter/Exit Full Screen worked and preserved the workspace. Custom lifecycle commands from the same candidate did not; a separate correction is in progress.
+
+This is an intermediate Debug checkpoint, not final installed Release acceptance. Native scrolling/resizing and final Release checks remain pending.

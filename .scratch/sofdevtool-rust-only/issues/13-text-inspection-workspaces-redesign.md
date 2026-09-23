@@ -4,7 +4,7 @@
 
 **Blocked by:** [03: Propagate History changes through conversion and inspection workspaces](03-history-conversion-workspaces.md); [12: Apply the approved design to navigation, Launcher and Settings](12-workbench-launcher-settings-redesign.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Migrate the five complete workspace flows, including their generic History presentation, to the new interfaces; remove this batch's compatibility calls.
 - [ ] Preserve all modes, independent vectors and fidelity/decoding/query semantics in the canonical specification; JWT remains inspection-only with History off by default.

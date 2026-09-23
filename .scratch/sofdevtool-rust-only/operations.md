@@ -1,5 +1,14 @@
 # Rust-only completion: pi trial
 
+## Current execution state
+
+The active workflow is parallel GPT-6 Sol/Luna implementation followed by a
+comprehensive GPT-6 Astra review after all implementations. The owner approved
+preview `b7e28f0`; the Rust workspace is at the root and Swift retirement is
+integrated. See the [execution contract](parallel-execution.md) and the latest
+entries below. The pi trial and its stopping-point notes are dated history.
+
+
 The owner authorized dedicated pi prompts with Kimi K3 after approving and committing the specification/tickets. This execution instruction supersedes the earlier documentation-only stopping point for dispatched work. The native-preview approval gate remains unchanged.
 
 ## Trial protocol
@@ -149,3 +158,10 @@ not modify ticket statuses. The coordinator integrates and runs shared gates.
 
 - Owner approved native candidate `b7e28f0` on 2026-09-23. Ticket 12 dispatched to the UI Sol lane; this replaces the pending approval state above.
 - Ticket 20 source is frozen after root full gate and temporary installation checks. Nine independent retained core vectors are frozen separately for Swift retirement.
+
+- Root workspace integrated `24f4fcc`, retained independent vectors `0a26d00`, shell redesign `ae00b69`, owner-approved Swift retirement `55702fd`, generic segmented selection `5a053df`. Ticket 13 integrated after94app tests;14/15/18 are in parallel implementation.
+- Native shell checkpoint recorded in ticket12 evidence; Cmd-W/fullscreen keyboard correction assigned separately. Global shortcut registration was observed, synthesized invocation remains unresolved.
+- Owner explicitly approved the exact scoped retired-file deletion after automatic approval rejections; deletion completed while preserving six excluded personal/metadata files. Native temporary bundle launch also received explicit owner approval, including the isolated terminal launch.
+
+- Wave8 commits: `110a94d` generators15, `1209cdd` conversions14, `b82cbee` Text Diff18, `e3cb13b` native window menu correction. Shared gate compiled all app tests; 101/102 passed initially, and the remaining Hashes interaction passed after correcting test event sequencing. A new full combined gate remains required.
+- Ticket16 is dispatched to the Regex Sol lane. Ticket19 independent-consumer preparation runs in the UI Sol lane; compatibility removal waits for the final consumers in16. Root owns native and final installed Release acceptance.

@@ -50,3 +50,38 @@ checks of Launcher active-Space/full-screen placement, nonactivating dismissal,
 registered-shortcut failure/recovery, Utility opening and session continuity,
 focus and WebView handoff, Settings, Dock reopen, last-window close and explicit
 Quit. A build and tests do not prove those macOS interactions or visual fit.
+
+## Coordinator integration and native checkpoint
+
+Integrated candidate `ae00b698c4726246c8417a81124ac39bfabdb063`. A frozen Git archive passed formatting, strict Clippy and 323 Rust tests (90 app, 190 core, 23 JSON fixtures, 9 retained vectors, 11 sofui). The archive lacks Git metadata, so its packaging metadata test deliberately refused it; this is not a complete `make verify` pass. Live checkout packaging remains covered by ticket 20/21 and the final gate. The native binary was built from the exact archive and matched SHA-256 `60e3ff69bc3a3e8ddf51a9bc9488314577d129c88b4d68e981948cec9f85fdc0`.
+
+The temporary bundle `/private/tmp/sofdevtool-wave7-vdnjy4ol/Native Shell.app` ran from `/private/tmp` with `SOFDEVTOOL_RUST_SUPPORT_ROOT=/private/tmp/sofdevtool-wave7-profile-dbq7rf4q`, after explicit owner approval of native launch and the terminal launch carrying that variable. The initial Computer Use launch without that override was closed before any Utility interaction. All following observations used the verified isolated process. Host: macOS 26.2 arm64.
+
+Observed via Computer Use:
+
+- JSON input `{"native":"caffè 👩🏽‍💻","value":7}` formatted correctly and recorded one completed result. Switching to Frappé, Base64 and back retained exact input/result and that single History entry.
+- Favorites filtered to the saved JSON entry; Recent showed JSON and Base64 without disturbing the current workspace.
+- Launcher search `diff` plus Return opened Text Diff. Escape dismissed the Launcher. Fourteen Down presses scrolled the selected final YAML/JSON row into view.
+- The native full-screen button entered fullscreen and the Launcher remained usable over that Workbench Space. This is not a cross-display or another application's fullscreen acceptance claim.
+- Settings showed a diagnostic for plain `k` during shortcut capture, then accepted Ctrl-Option-K and updated the Workbench shortcut label. Actual invocation with CUA's synthesized chord did not show the Launcher; native global invocation remains unresolved, with no assumption whether this is an event-injection limit or application defect.
+- Cmd-Q exited from fullscreen and process inspection confirmed termination.
+
+The direct run exposed missing Cmd-W / File Close behavior and missing keyboard fullscreen toggling. A separate lifecycle correction is assigned before final acceptance. Last-window/Dock reopen, cross-application nonactivation, final Utility redesign fit and installed Release acceptance remain for the corrected final candidate. Screenshots are in the coordinator conversation.
+
+### Additional isolated relaunch and retained-window check
+
+A second explicitly authorized terminal launch of the same bundle/profile
+preserved the saved Frappé theme, favorite JSON, configured Ctrl-Option-K and
+the single recorded JSON operation. Workspace input/result started empty after
+a process relaunch, as intended. Restoring that History entry populated the
+exact input/result without adding another record. Native close then hid the
+last window while PID 70160 stayed alive. Reopening through Computer Use's
+application-open API restored the same process/window with exact input, result
+and selected History retained. This exercises native reopen behavior; a literal
+Dock icon click was not performed (the Dock accessibility target timed out).
+Cmd-Q then terminated the process, confirmed by process inspection.
+
+The synthetic Ctrl-Option-K chord also failed to expose a Launcher when sent
+while the separate preview application was foreground. Global hardware-key
+invocation therefore remains unverified; no Carbon implementation change has
+been made on this evidence alone.

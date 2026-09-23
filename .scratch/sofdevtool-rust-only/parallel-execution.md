@@ -11,9 +11,9 @@ is `54be475` on `feat/rust-gpui-migration`. No remote publication is authorized.
 
 ## Worker contract
 
-Read AGENTS.md, CONTEXT.md, the retained product contracts in the old handoff,
-then the new spec and your assigned ticket. The new spec owns Rust-only scope;
-Swift-specific instructions are historical. Your dispatch message owns the exact
+Read AGENTS.md, CONTEXT.md, the current Rust-only specification and your assigned
+ticket. The specification owns the preserved product contracts; retired Swift
+source and its earlier handoff are available only in Git history. Your dispatch message owns the exact
 file allocation and any temporary coordination boundary.
 
 Work only on the assigned files. All agents share this checkout. Preserve other
@@ -32,8 +32,9 @@ Use temporary synthetic profiles. Keep personal application data, credentials
 and History payloads out of inspection/logs. Native launch and install are
 coordinator-owned. The existing Cargo cache is
 `CARGO_TARGET_DIR=/private/tmp/sofdevtool-terra-target` with
-`CARGO_NET_OFFLINE=true`. Cargo workspace is `rust/` until the coordinator
-serializes relocation in ticket 20. Coordinate shared manifest changes.
+`CARGO_NET_OFFLINE=true`. The Cargo workspace is now at the repository root after ticket 20. Coordinate
+shared manifest changes. Compile the shared application only at a source-ready
+boundary agreed by all active application writers.
 
 ## Dependencies and acceptance
 
@@ -43,10 +44,10 @@ integration, not the requested final independent reviewer. Keep each implemented
 ticket claimed with an implementation/evidence note until final Astra review
 and any required native acceptance are complete.
 
-Ticket 11 still requires explicit owner approval of the concrete native preview
-before ticket 12 and its visual rollout. Parallel independent work may continue
-while that approval is pending. Do not interpret this execution instruction as
-approval of an unseen preview.
+The owner explicitly approved ticket 11 candidate `b7e28f0` on 2026-09-23.
+Ticket 12 and subsequent Utility rollout use that accepted compact native
+direction. Keep later native and final installed Release checks distinct from
+that visual approval.
 
 After every implementation and required native gate, dispatch GPT-6 Astra to
 review the complete branch against the current specification and standards.
