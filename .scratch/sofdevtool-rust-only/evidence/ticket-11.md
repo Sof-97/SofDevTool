@@ -41,3 +41,25 @@ resized, and the History inspector can be collapsed to assess central density.
 No native window was launched by this worker. The coordinator owns launch,
 screenshots and direct interaction observations. The owner still must review
 and explicitly approve the concrete preview before ticket 12's visual rollout.
+
+## Coordinator native preview checkpoint
+
+Candidate `b7e28f0` ran natively on macOS26.2 arm64 from the temporary bundle
+`/private/tmp/sofdevtool-wave6-dqidtkho/Workbench Preview.app`. The source is
+now relocated to `crates/app/examples/workbench_preview.rs`. Real screenshots
+of Graphite, Frappé with restore confirmation, invalid/disabled state and
+zoomed layout are in the coordinator conversation. Observed interactions:
+Graphite/Frappé update all surfaces and editors; Increase R updates the
+swatch/value; selecting a History row changes selection; Restore selected
+opens confirmation and Cancel dismisses it; invalid sample empties result and
+disables Format/Copy; Hide/Show History expands/restores the central workspace;
+Tab shows a visible focus ring; native window zoom and return preserve state.
+
+The preview has only synthetic in-memory data. Launcher/Settings are explicitly
+layout affordances here, not a native-lifecycle acceptance claim. No deletion
+was performed. The candidate remains open for the owner. Explicit design
+approval was requested asynchronously; it is still pending at this entry.
+
+## Owner decision — 2026-09-23
+
+The owner explicitly approved candidate `b7e28f0`: “Sì, approva e applica questo design”. Ticket 12 and the remaining Utility presentation rollout may now apply this design. Approval covers the visual direction; subsequent behavior, accessibility, native lifecycle and final Release acceptance remain subject to their own checks.

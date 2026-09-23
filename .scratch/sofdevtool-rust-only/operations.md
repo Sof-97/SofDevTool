@@ -136,3 +136,16 @@ not modify ticket statuses. The coordinator integrates and runs shared gates.
 - 11 dispatched to UI Sol: new native preview example with real public sofui
   controls and synthetic data. Owner approval of the runnable candidate still
   explicitly gates12 and the full visual rollout.
+
+- 09 commit `aa48cbc`; combined gate evidence/inventory `509653b`.
+- 17 integrated `8da4421`; independent coordinator asset reproducibility passed.
+- 11 native candidate `b7e28f0` presented with Graphite/Frappé screenshots and
+  verified representative interactions. Explicit owner approval requested;
+  full visual rollout remains pending that answer.
+- 20 dispatched to the History Sol lane after all other source writers froze.
+  Cargo/crates/toolchain/config now reside at the repository root; packaging
+  and profile metadata are in progress. Root uses a frozen pre-move snapshot
+  for independent gates and native checks.
+
+- Owner approved native candidate `b7e28f0` on 2026-09-23. Ticket 12 dispatched to the UI Sol lane; this replaces the pending approval state above.
+- Ticket 20 source is frozen after root full gate and temporary installation checks. Nine independent retained core vectors are frozen separately for Swift retirement.

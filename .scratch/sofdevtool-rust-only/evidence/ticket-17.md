@@ -52,3 +52,31 @@ navigation policy.
 No native app launch or WKWebView observation was performed. Verification is
 offline build and automated boundary-test evidence; it does not claim native
 visual, focus, or runtime behavior.
+
+## Coordinator integrated and native checks
+
+Frozen `b7e28f0` passed the complete offline default gate: formatting, strict
+all-target Clippy,313 tests (89 app,190 core,23 JSON,11 sofui), and Debug
+app/gallery/preview builds. Independent `npm run verify` also passed. Logs and
+metadata: `.artifacts/parallel-rust-only/wave6/`.
+
+The uninstrumented Debug bundle ran on macOS26.2 arm64 from `/private/tmp`
+with isolated support data and the existing `--text-diff-proof` startup option.
+The actual WKWebView rendered split and unified comparisons with `caffè`,
+`café`, joined skin-tone emoji, flag and keycap sequences intact, with the
+disclosed whole-line fallback. Editing both inputs and changing mode produced
+three settled entries; a fourth different comparison was then restored to the
+prior exact old/new texts with four entries still retained. Switching to JSON
+and back preserved the restored comparison. Native double-click selected the
+word `caffè` inside the renderer; Cmd-C and paste into the GPUI updated editor
+reproduced it exactly, proving selection/copy and focus return. The app quit
+successfully. These observations do not replace failure/recovery or final
+redesigned-release acceptance, and no OS14/15 runtime claim is made.
+
+## Native failure and recovery — 2026-09-23
+
+A temporary instrumented harness mounted the real `TextDiffWorkspace` from candidate `b7e28f0` and invoked its debug-only `simulate_renderer_failure` hook. The compiled binary SHA-256 was `47c6d9399acd2854b25c0734b53a27c92a97dc01daa46dc5e024d220be970679`; the temporary source SHA-256 was `b57ee89b2e374a93b88be01087c12f43d728ea6d5abd5f6bca4caf5237582533`. It used a unique temporary History directory and in-memory Clipboard, and ran on macOS 26.2 arm64.
+
+Through Computer Use, **Simulate renderer failure** produced the visible actual renderer diagnostic `undefined is not an object (evaluating 'a.lang')` through the WebView IPC error path. Editing Updated to `caffè 👩🏽‍💻 🇮🇹 1️⃣` followed by `recovered after failure` removed the error, rendered the correct split comparison, retained the complex-emoji whole-line disclosure and recorded exactly one settled comparison. Cmd-Q terminated the harness, confirmed by process inspection. Screenshots are in the coordinator conversation.
+
+This establishes the instrumented error/recovery path; it is distinct from the ordinary bundled application's native Unicode, restore, selection/Copy and focus checks above. The temporary harness was not added to the maintained app or installed Release. Final redesigned Release acceptance remains in ticket 22.

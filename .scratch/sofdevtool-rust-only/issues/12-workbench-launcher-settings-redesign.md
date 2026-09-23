@@ -4,7 +4,7 @@
 
 **Blocked by:** [11: Present one native Workbench preview for owner approval](11-native-preview-approval.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Preserve Library/Recent/Favorites, grouping, search, keyboard selection, separate Settings and trailing collapsible History.
 - [ ] Use the approved component treatment for shell controls; old workspace bodies remain usable until their individual rollout tickets land.

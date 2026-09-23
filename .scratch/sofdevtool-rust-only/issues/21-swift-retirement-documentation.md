@@ -4,7 +4,7 @@
 
 **Blocked by:** [20: Run and install distinct Debug/Release apps from the root workspace](20-root-workspace-packaging.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Before deletion, retain all needed independent fixtures, established icon resources and renderer source/provenance; source retirement leaves legacy installed apps and personal data untouched.
 - [ ] Remove the Swift product/test targets, Xcode/Swift-only tooling, retired wrappers, executable spikes, obsolete plans/WIP and duplicate resources; Git history retains retired material.

@@ -31,3 +31,8 @@ strict Clippy and Debug builds. Log:
 `.artifacts/parallel-rust-only/wave5/verify.log`. An earlier04-only run had one
 Settings temporary-root write failure;09's test-isolation fix and subsequent
 full pass supersede it. This is automated evidence, not a native WebView claim.
+
+Native Text Diff restore was also verified on frozen `b7e28f0`: confirming a
+previous comparison restored exact Unicode old/new text, preserved its mode
+and left four retained entries unchanged. Navigating away and back retained
+that state. See [renderer evidence](ticket-17.md).
