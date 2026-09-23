@@ -26,3 +26,12 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Implementation handoff
+
+GPT-6 Luna completed the owned pipeline and renderer boundary. Offline exact
+install, reproducible bundle/inventory/notices,89 app tests and strict Clippy
+passed. The coordinator requested and verified retained-source MIT attribution
+and inventory based on emitted bytes; independent `npm run verify` passed.
+See [evidence](../evidence/ticket-17.md). Native renderer acceptance and final
+Astra review remain separate.

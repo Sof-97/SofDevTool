@@ -14,13 +14,6 @@ use wry::{
 // which makes it an actual packaged resource rather than an unused compiler
 // input or a dependency on the retained Swift source tree.
 const THIRD_PARTY_NOTICES: &str = include_str!("assets/THIRD_PARTY_NOTICES.md");
-const RENDER_PREFIX: &str =
-    "window.pierreBridge={renderDiff(e){try{let t=typeof e==\"string\"?JSON.parse(e):e,{";
-const RENDER_READY: &str =
-    "ee.render({oldFile:s,newFile:l,containerWrapper:i,lineAnnotations:t.lineAnnotations||[]}),MB(),me(\"ready\")";
-const RENDER_ERROR: &str =
-    "console.error(\"Error rendering diff:\",t),me(\"error\",{message:t.message})";
-const BRIDGE_FUNCTION: &str = "function me(e,t={}){window.webkit?.messageHandlers?.diffBridge?window.webkit.messageHandlers.diffBridge.postMessage({type:e,...t}):console.warn(\"Swift message handler not available\")}";
 
 #[derive(Clone)]
 pub(super) struct TextDiffRenderer(Rc<RefCell<RendererState>>);
@@ -45,6 +38,7 @@ struct BridgeProtocol {
     status: RendererStatus,
     last_revision: u64,
     ready: bool,
+    attached: bool,
     queued: Option<(u64, String)>,
 }
 
@@ -54,6 +48,7 @@ impl BridgeProtocol {
             status: RendererStatus::Loading,
             last_revision: 0,
             ready: false,
+            attached: false,
             queued: None,
         }
     }
@@ -64,7 +59,7 @@ impl BridgeProtocol {
         }
         self.last_revision = revision;
         self.status = RendererStatus::Loading;
-        if self.ready {
+        if self.ready && self.attached {
             Some(script)
         } else {
             self.queued = Some((revision, script));
@@ -74,12 +69,14 @@ impl BridgeProtocol {
 
     fn bridge_ready(&mut self, attached: bool) -> Option<String> {
         self.ready = true;
-        attached
+        self.attached |= attached;
+        self.attached
             .then(|| self.queued.take().map(|(_, script)| script))
             .flatten()
     }
 
     fn attached(&mut self) -> Option<String> {
+        self.attached = true;
         self.ready
             .then(|| self.queued.take().map(|(_, script)| script))
             .flatten()
@@ -96,40 +93,26 @@ impl BridgeProtocol {
     }
 }
 
-fn replace_once(source: String, needle: &str, replacement: &str) -> Result<String, &'static str> {
-    if source.matches(needle).count() != 1 {
-        return Err("The bundled local renderer is incompatible with this application build.");
-    }
-    Ok(source.replacen(needle, replacement, 1))
-}
-
 fn renderer_html() -> Result<String, &'static str> {
-    let html = include_str!("assets/diff.html")
+    Ok(include_str!("assets/diff.html")
         .replace("__THIRD_PARTY_NOTICES__", THIRD_PARTY_NOTICES)
         .replace(
             "__PIERRE_BUNDLE__",
             include_str!("assets/pierre-diffs-bundle.js"),
-        );
-    let html = replace_once(
-        html,
-        RENDER_PREFIX,
-        "window.pierreBridge={renderDiff(e){let __sofdevtoolRevision;try{let t=typeof e==\"string\"?JSON.parse(e):e;__sofdevtoolRevision=t.revision;let {",
-    )?;
-    let html = replace_once(
-        html,
-        RENDER_READY,
-        "ee.render({oldFile:s,newFile:l,containerWrapper:i,lineAnnotations:t.lineAnnotations||[]}),MB(),me(\"ready\",{revision:__sofdevtoolRevision})",
-    )?;
-    let html = replace_once(
-        html,
-        BRIDGE_FUNCTION,
-        "function me(e,t={}){window.ipc?.postMessage?window.ipc.postMessage(JSON.stringify({type:e,...t})):console.warn(\"Wry message handler not available\")}",
-    )?;
-    replace_once(
-        html,
-        RENDER_ERROR,
-        "console.error(\"Error rendering diff:\",t),me(\"error\",{message:t.message,revision:__sofdevtoolRevision})",
-    )
+        ))
+}
+
+fn allow_navigation(url: &str) -> bool {
+    url == "about:blank"
+}
+
+fn render_payload(revision: u64, old: &str, new: &str, mode: &str) -> serde_json::Value {
+    let line_diff_type = if contains_complex_emoji(old) || contains_complex_emoji(new) {
+        "none"
+    } else {
+        "word-alt"
+    };
+    serde_json::json!({"revision":revision,"oldFile":{"name":"Comparison.txt","contents":old},"newFile":{"name":"Comparison.txt","contents":new},"options":{"theme":{"dark":"pierre-dark","light":"pierre-light"},"themeType":"dark","diffStyle":mode,"overflow":"scroll","diffIndicators":"bars","hunkSeparators":"line-info","lineDiffType":line_diff_type,"tokenizeMaxLength":500000,"tokenizeMaxLineLength":10000}})
 }
 
 fn preserve_initialization_failure(
@@ -172,7 +155,7 @@ impl TextDiffRenderer {
             .with_html(html)
             // The document and bundle are constructed from local checked-in
             // bytes. Reject all later navigation, including remote URLs.
-            .with_navigation_handler(|url| url == "about:blank")
+            .with_navigation_handler(|url: String| allow_navigation(&url))
             // Wry enables inspector affordances in debug builds unless this is
             // explicitly disabled; this renderer never exposes web devtools.
             .with_devtools(false)
@@ -247,12 +230,7 @@ impl TextDiffRenderer {
     ) -> Result<(), String> {
         let mut state = self.0.borrow_mut();
         preserve_initialization_failure(state.webview.is_some(), &state.protocol.status)?;
-        let line_diff_type = if contains_complex_emoji(&old) || contains_complex_emoji(&new) {
-            "none"
-        } else {
-            "word-alt"
-        };
-        let payload = serde_json::json!({"revision":revision,"oldFile":{"name":"Comparison.txt","contents":old},"newFile":{"name":"Comparison.txt","contents":new},"options":{"theme":{"dark":"pierre-dark","light":"pierre-light"},"themeType":"dark","diffStyle":mode,"overflow":"scroll","diffIndicators":"bars","hunkSeparators":"line-info","lineDiffType":line_diff_type,"tokenizeMaxLength":500000,"tokenizeMaxLineLength":10000}});
+        let payload = render_payload(revision, &old, &new, mode);
         // Pierre can emit ready/error during the same JavaScript turn. Queue
         // it after evaluate_script returns so the IPC callback never re-borrows
         // this renderer while its native WebView is being submitted.
@@ -388,16 +366,45 @@ impl Element for WebDiffSurface {
 
 #[cfg(test)]
 mod protocol_tests {
-    use super::{preserve_initialization_failure, renderer_html, BridgeProtocol, RendererStatus};
+    use super::{
+        allow_navigation, preserve_initialization_failure, render_payload, renderer_html,
+        BridgeProtocol, RendererStatus,
+    };
 
     #[test]
-    fn renderer_html_fails_closed_unless_each_revision_patch_matches_once() {
-        let html = renderer_html().expect("checked-in Pierre bundle has each bridge needle once");
-        assert!(html.contains("revision:__sofdevtoolRevision"));
-        assert!(html.contains("window.ipc?.postMessage"));
-        assert!(html.contains(
-            "console.error(\"Error rendering diff:\",t),me(\"error\",{message:t.message,revision:__sofdevtoolRevision})"
-        ));
+    fn html_uses_only_inline_local_renderer_resources_with_network_csp() {
+        let html = renderer_html().expect("checked-in renderer resources are embedded");
+        assert!(!html.contains("__PIERRE_BUNDLE__"));
+        assert!(!html.contains("__THIRD_PARTY_NOTICES__"));
+        assert!(html.contains("window.ipc"));
+        assert!(html.contains("default-src 'none'"));
+        assert!(html.contains("connect-src 'none'"));
+        assert!(html.contains("object-src 'none'"));
+        assert!(!html.contains("<script src="));
+        assert!(!html.contains("<link rel=\"stylesheet\" href="));
+    }
+
+    #[test]
+    fn wry_allows_only_the_initial_blank_document_navigation() {
+        assert!(allow_navigation("about:blank"));
+        assert!(!allow_navigation("https://example.com/"));
+        assert!(!allow_navigation("file:///etc/passwd"));
+        assert!(!allow_navigation("javascript:alert(1)"));
+        assert!(!allow_navigation("data:text/html,remote"));
+    }
+
+    #[test]
+    fn renderer_payload_round_trips_utf8_and_selects_the_disclosed_emoji_fallback() {
+        let old = "caffè café 🇮🇹 👩🏽‍💻 1️⃣";
+        let new = "caffè cafés 🇮🇹 👩🏽‍💻 1️⃣";
+        let payload = render_payload(17, old, new, "split");
+        assert_eq!(payload["oldFile"]["contents"], old);
+        assert_eq!(payload["newFile"]["contents"], new);
+        assert_eq!(payload["options"]["lineDiffType"], "none");
+        assert_eq!(payload["revision"], 17);
+
+        let ordinary = render_payload(18, "caffè", "café", "unified");
+        assert_eq!(ordinary["options"]["lineDiffType"], "word-alt");
     }
 
     #[test]
@@ -416,14 +423,27 @@ mod protocol_tests {
         protocol.render(2, "newest".into());
         assert_eq!(protocol.bridge_ready(false), None);
         assert_eq!(protocol.queued, Some((2, "newest".into())));
-        assert_eq!(protocol.bridge_ready(true), Some("newest".into()));
+        // A new request between bridge readiness and native attachment must
+        // replace the queue instead of being submitted to a missing WebView.
+        assert_eq!(protocol.render(3, "latest before attach".into()), None);
+        assert_eq!(protocol.queued, Some((3, "latest before attach".into())));
+        assert_eq!(
+            protocol.bridge_ready(true),
+            Some("latest before attach".into())
+        );
+        assert_eq!(protocol.attached(), None);
+        assert_eq!(protocol.queued, None);
         assert_eq!(protocol.bridge_ready(true), None);
+        assert_eq!(
+            protocol.render(4, "attached".into()),
+            Some("attached".into())
+        );
     }
 
     #[test]
     fn stale_callbacks_cannot_change_the_current_renderer_status() {
         let mut protocol = BridgeProtocol::new();
-        protocol.ready = true;
+        assert_eq!(protocol.bridge_ready(true), None);
         protocol.render(7, "current".into());
         protocol.callback(Some(6), RendererStatus::Failure("old failure".into()));
         assert_eq!(protocol.status, RendererStatus::Loading);
@@ -437,5 +457,21 @@ mod protocol_tests {
             protocol.status,
             RendererStatus::Failure("current failure".into())
         );
+    }
+
+    #[test]
+    fn latest_revision_can_recover_after_a_render_error() {
+        let mut protocol = BridgeProtocol::new();
+        protocol.bridge_ready(true);
+        assert_eq!(protocol.render(4, "first".into()), Some("first".into()));
+        protocol.callback(Some(4), RendererStatus::Failure("draw failed".into()));
+        assert_eq!(
+            protocol.status,
+            RendererStatus::Failure("draw failed".into())
+        );
+        assert_eq!(protocol.render(5, "retry".into()), Some("retry".into()));
+        assert_eq!(protocol.status, RendererStatus::Loading);
+        protocol.callback(Some(5), RendererStatus::Ready);
+        assert_eq!(protocol.status, RendererStatus::Ready);
     }
 }
