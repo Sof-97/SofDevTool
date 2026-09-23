@@ -32,6 +32,13 @@ pointer click. Disabled buttons invoke no handler. Text controls retain their
 editing state across redraws; `render` takes an accessibility ID, and `focus`
 focuses the underlying editor.
 
+`NumericStepper::new(id, label, value, min, max, step)` renders a bounded,
+focusable pair of buttons and a numeric value. Pass `None` to disable it. Its
+`on_step` callback receives a signed delta, so apply it to the latest value in
+the owning view with `NumericStepper::stepped`, then notify the view. The
+component has no color or parsing policy; Color Conversion uses it for sRGB
+channels. The gallery shows keyboard activation and boundary clamping.
+
 `assign_text` silently initializes or restores text: it emits no change event
 and clears undo history. `edit_text` performs a user-style whole-text edit:
 it emits a change event and is undoable. `on_change_in` observes editing
@@ -43,6 +50,7 @@ From `rust/`, run `cargo run -p sofui --example gallery` to open the gallery.
 The gallery imports only sofui and GPUI, and demonstrates repeated labels,
 focus, disabled actions, real Copy feedback, Unicode editors, diagnostics,
 selection, confirmation, both presets and a high-contrast custom palette.
+It also demonstrates the reusable numeric control.
 `cargo test -p sofui` covers
 public component interactions; `cargo check -p sofui --all-targets` includes
 the gallery. Native launch observations require a separate acceptance run.

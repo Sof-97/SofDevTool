@@ -11,13 +11,12 @@ use gpui::{
 };
 use sofdevtool_core::session::{Session, SubmitOutcome};
 use sofdevtool_core::utilities::color::{
-    outputs_for, ColorConversion, ColorEvaluation, ColorOutputs, ColorRequest, ColorSnapshot,
-    SrgbColor,
+    evaluate, outputs_for, ColorConversion, ColorEvaluation, ColorRequest, ColorSnapshot, SrgbColor,
 };
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    DiagnosticSeverity, HistoryItem, HistoryPanel, TextField, ThemeTokens,
+    DiagnosticSeverity, HistoryItem, HistoryPanel, NumericStepper, TextField, ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
@@ -25,7 +24,7 @@ use crate::history::{HistoryEntry, HistoryRecorder};
 use crate::workbench::Workbench;
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
-const CHANNEL_STEP: i16 = 5;
+const CHANNEL_STEP: i32 = 5;
 
 type ColorSession = Session<ColorConversion>;
 
@@ -160,8 +159,8 @@ impl ColorWorkspace {
         }
     }
 
-    /// The color display never needs a separate editor: the channel picker reads
-    /// the session's settled evaluation directly.
+    /// The visible result follows current editor text, while the session still
+    /// gates settlement and History to the final requested revision.
     fn sync_display(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
         let epoch = self.session.evaluation_epoch();
         if self.display_epoch == epoch {
@@ -171,27 +170,34 @@ impl ColorWorkspace {
         self.copied = None;
     }
 
-    fn current_color(&self) -> Option<SrgbColor> {
-        self.session.evaluation().color()
+    fn current_evaluation(&self, cx: &App) -> ColorEvaluation {
+        evaluate(&self.request(cx))
+    }
+
+    fn current_color(&self, cx: &App) -> Option<SrgbColor> {
+        self.current_evaluation(cx).color()
     }
 
     fn adjust_channel(
         &mut self,
         channel: usize,
-        delta: i16,
+        delta: i32,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let base = self
-            .current_color()
-            .unwrap_or(SrgbColor::new(1.0, 1.0, 1.0, 1.0));
+        let current = self.current_evaluation(cx);
+        let base = match current {
+            ColorEvaluation::Valid { color, .. } => color,
+            ColorEvaluation::Empty => SrgbColor::new(1.0, 1.0, 1.0, 1.0),
+            ColorEvaluation::Invalid { .. } => return,
+        };
         let mut channels = [
-            (base.red * 255.0).round() as i16,
-            (base.green * 255.0).round() as i16,
-            (base.blue * 255.0).round() as i16,
-            (base.alpha * 255.0).round() as i16,
+            (base.red * 255.0).round() as i32,
+            (base.green * 255.0).round() as i32,
+            (base.blue * 255.0).round() as i32,
+            (base.alpha * 255.0).round() as i32,
         ];
-        channels[channel] = (channels[channel] + delta).clamp(0, 255);
+        channels[channel] = NumericStepper::stepped(channels[channel], delta, 0, 255);
         let next = SrgbColor::new(
             channels[0] as f64 / 255.0,
             channels[1] as f64 / 255.0,
@@ -200,10 +206,20 @@ impl ColorWorkspace {
         );
         let hex = outputs_for(next).hex;
         self.copied = None;
-        self.source.set_text(hex, window, cx);
+        self.source.edit_text(hex, window, cx);
     }
 
-    fn copy(&mut self, index: usize, value: &str, cx: &mut Context<Self>) {
+    fn copy(&mut self, index: usize, cx: &mut Context<Self>) {
+        let current = self.current_evaluation(cx);
+        let Some(outputs) = current.outputs() else {
+            return;
+        };
+        let value = match index {
+            0 => &outputs.hex,
+            1 => &outputs.rgb,
+            2 => &outputs.hsl,
+            _ => return,
+        };
         self.clipboard.write_text(value, cx);
         self.copied = Some(index);
         cx.notify();
@@ -303,9 +319,9 @@ impl ColorWorkspace {
             .collect()
     }
 
-    fn swatch(&self) -> impl IntoElement {
+    fn swatch(&self, cx: &App) -> impl IntoElement {
         let color = self
-            .current_color()
+            .current_color(cx)
             .unwrap_or(SrgbColor::new(0.0, 0.0, 0.0, 1.0));
         let channel = |value: f64| (value * 255.0).round().clamp(0.0, 255.0) as u32;
         let packed = (channel(color.red) << 24)
@@ -328,47 +344,33 @@ impl ColorWorkspace {
         label: &'static str,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let color = self.current_color();
+        let evaluation = self.current_evaluation(cx);
+        let color = evaluation.color();
         let value = match (index, color) {
             (0, Some(color)) => (color.red * 255.0).round() as i32,
             (1, Some(color)) => (color.green * 255.0).round() as i32,
             (2, Some(color)) => (color.blue * 255.0).round() as i32,
             (3, Some(color)) => (color.alpha * 255.0).round() as i32,
-            _ => 255,
+            (_, None) if matches!(evaluation, ColorEvaluation::Empty) => 255,
+            _ => 0,
         };
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .child(div().w_6().text_xs().child(label))
-            .child(
-                Button::new("−")
-                    .id(gpui::ElementId::Name(
-                        format!("color-channel-{index}-minus").into(),
-                    ))
-                    .focus_handle(self.focus.channels[index * 2].clone())
-                    .on_click(view_click(cx, move |this, window, cx| {
-                        this.adjust_channel(index, -CHANNEL_STEP, window, cx);
-                    })),
-            )
-            .child(
-                div()
-                    .w_10()
-                    .text_xs()
-                    .text_color(ThemeTokens::active().text_muted())
-                    .child(format!("{value}")),
-            )
-            .child(
-                Button::new("+")
-                    .id(gpui::ElementId::Name(
-                        format!("color-channel-{index}-plus").into(),
-                    ))
-                    .focus_handle(self.focus.channels[index * 2 + 1].clone())
-                    .on_click(view_click(cx, move |this, window, cx| {
-                        this.adjust_channel(index, CHANNEL_STEP, window, cx);
-                    })),
-            )
+        let weak = cx.weak_entity();
+        NumericStepper::new(
+            format!("color-channel-{index}"),
+            label,
+            (!matches!(evaluation, ColorEvaluation::Invalid { .. })).then_some(value),
+            0,
+            255,
+            CHANNEL_STEP,
+        )
+        .focus_handles(
+            self.focus.channels[index * 2].clone(),
+            self.focus.channels[index * 2 + 1].clone(),
+        )
+        .on_step(move |delta, window, cx| {
+            weak.update(cx, |this, cx| this.adjust_channel(index, delta, window, cx))
+                .ok();
+        })
     }
 
     fn output_row(
@@ -380,7 +382,6 @@ impl ColorWorkspace {
     ) -> impl IntoElement {
         let tokens = ThemeTokens::active();
         let text = value.unwrap_or("").to_owned();
-        let copy_value = text.clone();
         div()
             .flex()
             .flex_row()
@@ -401,7 +402,7 @@ impl ColorWorkspace {
                     .disabled(value.is_none())
                     .focus_handle(self.focus.copies[index].clone())
                     .on_click(view_click(cx, move |this, _window, cx| {
-                        this.copy(index, &copy_value, cx);
+                        this.copy(index, cx);
                     })),
             )
     }
@@ -496,13 +497,8 @@ impl Render for ColorWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_display(window, cx);
         let tokens = ThemeTokens::active();
-        let outputs: Option<ColorOutputs> = self.session.evaluation().outputs().cloned();
-        let pending = matches!(self.session.evaluation(), ColorEvaluation::Empty)
-            && self
-                .session
-                .request()
-                .map(|request| !request.source.trim().is_empty())
-                .unwrap_or(false);
+        let evaluation = self.current_evaluation(cx);
+        let outputs = evaluation.outputs();
 
         let toolbar = div()
             .flex()
@@ -591,7 +587,7 @@ impl Render for ColorWorkspace {
                             .flex_1()
                             .child(self.source.render("color-conversion.input")),
                     )
-                    .child(self.swatch()),
+                    .child(self.swatch(cx)),
             )
             .child(toolbar);
 
@@ -615,9 +611,7 @@ impl Render for ColorWorkspace {
             .child(self.channel_row(2, "B", cx))
             .child(self.channel_row(3, "A", cx));
 
-        let results = if pending {
-            empty_state("Converting…").into_any_element()
-        } else if matches!(self.session.evaluation(), ColorEvaluation::Empty) {
+        let results = if matches!(evaluation, ColorEvaluation::Empty) {
             empty_state("Enter a color to begin").into_any_element()
         } else if let Some(outputs) = &outputs {
             div()
@@ -629,12 +623,7 @@ impl Render for ColorWorkspace {
                 .child(self.output_row(2, "HSL", Some(&outputs.hsl), cx))
                 .into_any_element()
         } else {
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(self.render_diagnostics())
-                .into_any_element()
+            empty_state("Correct the color input to see conversions").into_any_element()
         };
 
         let mut workspace = div()
@@ -648,14 +637,16 @@ impl Render for ColorWorkspace {
         if self.history_visible {
             workspace = workspace.child(self.render_history(cx));
         }
-        column.child(workspace).child(self.render_diagnostics())
+        column
+            .child(workspace)
+            .child(self.render_diagnostics(&evaluation))
     }
 }
 
 impl ColorWorkspace {
-    fn render_diagnostics(&self) -> impl IntoElement {
+    fn render_diagnostics(&self, evaluation: &ColorEvaluation) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_2().w_full();
-        for diagnostic in self.session.evaluation().diagnostics() {
+        for diagnostic in evaluation.diagnostics() {
             let severity = match diagnostic.severity {
                 sofdevtool_core::diagnostic::Severity::Error => DiagnosticSeverity::Error,
                 sofdevtool_core::diagnostic::Severity::Warning => DiagnosticSeverity::Warning,
@@ -671,4 +662,183 @@ fn decode_snapshot(entry: &HistoryEntry) -> Option<ColorSnapshot> {
         return None;
     }
     serde_json::from_value(entry.payload.clone()).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use gpui::{Entity, VisualTestContext};
+
+    use crate::history::{HistoryStore, SystemClock};
+    use sofdevtool_core::utilities::color::parse;
+
+    #[derive(Default)]
+    struct TestClipboard(RefCell<Vec<String>>);
+
+    impl Clipboard for TestClipboard {
+        fn read_text(&self, _cx: &mut App) -> Option<String> {
+            None
+        }
+
+        fn write_text(&self, text: &str, _cx: &mut App) {
+            self.0.borrow_mut().push(text.to_owned());
+        }
+    }
+
+    struct TestRoot(Entity<ColorWorkspace>);
+
+    impl Render for TestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.0.clone())
+        }
+    }
+
+    fn isolated_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "sofdevtool-color-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[gpui::test]
+    fn picker_events_accumulate_latest_color_and_record_only_settled_revision(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = isolated_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        let clipboard = Rc::new(TestClipboard::default());
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view =
+                cx.new(|cx| ColorWorkspace::new(window, cx, clipboard.clone(), history.clone()));
+            captured = Some(view.clone());
+            TestRoot(view)
+        });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.source.edit_text("#102030", window, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(history.load(ColorConversion::ID).unwrap().len(), 1);
+
+        cx.update(|window, cx| {
+            let focus = workspace.read(cx).focus.channels[1].clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.source.text(cx)),
+            "#1a2030"
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.session.revision()),
+            3
+        );
+        assert_eq!(history.load(ColorConversion::ID).unwrap().len(), 1);
+        let visible = workspace.read_with(&cx, |view, cx| view.current_evaluation(cx));
+        let visible_color = visible.color().unwrap();
+        let visible_outputs = visible.outputs().unwrap();
+        assert_eq!(visible_outputs.rgb, "rgb(26 32 48)");
+        assert_eq!(parse(&visible_outputs.hsl).unwrap(), visible_color);
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.current_color(cx)),
+            Some(visible_color)
+        );
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.copies[0].clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().last().unwrap(), "#1a2030");
+        cx.update(|window, cx| {
+            let focus = workspace.read(cx).focus.copies[1].clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().last().unwrap(), "rgb(26 32 48)");
+
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(history.load(ColorConversion::ID).unwrap().len(), 2);
+        let latest = history.load(ColorConversion::ID).unwrap().remove(0);
+        assert_eq!(decode_snapshot(&latest).unwrap().outputs.hex, "#1a2030");
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.channels[1].clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.source.text(cx)),
+            "#1f2030"
+        );
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(history.load(ColorConversion::ID).unwrap().len(), 3);
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.source.edit_text("#FE2030", window, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.source.text(cx)),
+            "#ff2030"
+        );
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let revision = workspace.read_with(&cx, |view, _| view.session.revision());
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.session.revision()),
+            revision
+        );
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(history.load(ColorConversion::ID).unwrap().len(), 4);
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.source.edit_text("invalid color", window, cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert!(workspace.read_with(&cx, |view, cx| view
+            .current_evaluation(cx)
+            .outputs()
+            .is_none()));
+        let writes = clipboard.0.borrow().len();
+        cx.update(|window, cx| {
+            let focus = workspace.read(cx).focus.copies[0].clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().len(), writes);
+        assert!(workspace.read_with(&cx, |view, _| view.copied.is_none()));
+        assert_eq!(history.load(ColorConversion::ID).unwrap().len(), 4);
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        assert_eq!(history.load(ColorConversion::ID).unwrap().len(), 4);
+        fs::remove_dir_all(root).unwrap();
+    }
 }

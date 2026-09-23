@@ -3,6 +3,7 @@ mod diagnostics;
 mod editor;
 mod history;
 mod hold_button;
+mod numeric_stepper;
 mod panel;
 mod text_field;
 
@@ -13,5 +14,6 @@ pub use editor::TextEditor;
 pub use history::{HistoryAction, HistoryItem, HistoryPanel};
 pub(crate) use hold_button::register_key_bindings as register_hold_button_key_bindings;
 pub use hold_button::{HoldButton, HOLD_BUTTON_KEY_CONTEXT};
+pub use numeric_stepper::NumericStepper;
 pub use panel::{panel, LabeledField};
 pub use text_field::TextField;

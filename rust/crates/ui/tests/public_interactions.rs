@@ -2,7 +2,7 @@ use gpui::prelude::*;
 use gpui::{
     div, Context, FocusHandle, IntoElement, Render, Subscription, VisualTestContext, Window,
 };
-use sofui::{view_click, Button, TextEditor, TextField};
+use sofui::{view_click, Button, NumericStepper, TextEditor, TextField};
 
 struct Probe {
     field: TextField,
@@ -10,6 +10,8 @@ struct Probe {
     first_focus: FocusHandle,
     second_focus: FocusHandle,
     disabled_focus: FocusHandle,
+    numeric_focus: [FocusHandle; 2],
+    numeric_value: i32,
     label: &'static str,
     first_count: usize,
     second_count: usize,
@@ -37,6 +39,8 @@ impl Probe {
             first_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             second_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             disabled_focus: cx.focus_handle().tab_stop(true).tab_index(0),
+            numeric_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
+            numeric_value: 5,
             label: "Copy",
             first_count: 0,
             second_count: 0,
@@ -77,8 +81,55 @@ impl Render for Probe {
                     })),
             )
             .child(self.field.render("test.field"))
+            .child(
+                NumericStepper::new("test.numeric", "Amount", Some(self.numeric_value), 0, 10, 4)
+                    .focus_handles(self.numeric_focus[0].clone(), self.numeric_focus[1].clone())
+                    .on_step({
+                        let weak = cx.weak_entity();
+                        move |delta, _window, cx| {
+                            weak.update(cx, |this, cx| {
+                                this.numeric_value =
+                                    NumericStepper::stepped(this.numeric_value, delta, 0, 10);
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    }),
+            )
             .child(div().h_32().child(self.editor.render(false, "test.editor")))
     }
+}
+
+#[gpui::test]
+fn numeric_stepper_keyboard_path_clamps_and_disables_at_bounds(cx: &mut gpui::TestAppContext) {
+    cx.update(sofui::init);
+    let mut captured = None;
+    let window = cx.add_window(|window, cx| {
+        let probe = cx.new(|cx| Probe::new(window, cx));
+        captured = Some(probe.clone());
+        gpui_component::Root::new(probe, window, cx)
+    });
+    let probe = captured.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| {
+        let focus = probe.read(cx).numeric_focus[1].clone();
+        window.focus(&focus, cx);
+    });
+    cx.simulate_keystrokes("enter");
+    assert_eq!(probe.read_with(&cx, |view, _| view.numeric_value), 9);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_keystrokes("space");
+    assert_eq!(probe.read_with(&cx, |view, _| view.numeric_value), 10);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_keystrokes("enter");
+    assert_eq!(probe.read_with(&cx, |view, _| view.numeric_value), 10);
+    cx.update(|window, cx| {
+        let focus = probe.read(cx).numeric_focus[0].clone();
+        window.focus(&focus, cx);
+    });
+    cx.simulate_keystrokes("enter");
+    assert_eq!(probe.read_with(&cx, |view, _| view.numeric_value), 6);
 }
 
 #[gpui::test]

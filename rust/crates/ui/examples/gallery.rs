@@ -15,8 +15,8 @@ use gpui::{
 use sofui::{
     active_theme, apply_custom_theme, apply_theme, copy_feedback, diagnostic_banner, empty_state,
     init, mount, panel, view_click, Button, ButtonVariant, DiagnosticSeverity, HistoryItem,
-    HistoryPanel, HoldButton, LabeledField, TextEditor, TextField, ThemePalette, ThemeTokens,
-    ThemeVariant,
+    HistoryPanel, HoldButton, LabeledField, NumericStepper, TextEditor, TextField, ThemePalette,
+    ThemeTokens, ThemeVariant,
 };
 
 // A gallery-only custom palette with distinct focus and diagnostic colors.
@@ -45,6 +45,8 @@ struct Gallery {
     hold_focus: FocusHandle,
     confirm_focus: FocusHandle,
     cancel_focus: FocusHandle,
+    channel_focus: [FocusHandle; 2],
+    channel_value: i32,
     copied: bool,
     history_selected: Option<String>,
     history_items: Vec<HistoryItem>,
@@ -99,6 +101,8 @@ impl Gallery {
             hold_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             confirm_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             cancel_focus: cx.focus_handle().tab_stop(true).tab_index(0),
+            channel_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
+            channel_value: 250,
             copied: false,
             history_selected: Some("a".into()),
             history_items,
@@ -330,6 +334,28 @@ impl Render for Gallery {
                 div().text_xs().text_color(tokens.text_muted()).child(
                     "Tab/Shift-Tab move focus; Enter or Space activates the focused control.",
                 ),
+            )
+            .child(
+                NumericStepper::new(
+                    "gallery.numeric",
+                    "Sample channel",
+                    Some(self.channel_value),
+                    0,
+                    255,
+                    5,
+                )
+                .focus_handles(self.channel_focus[0].clone(), self.channel_focus[1].clone())
+                .on_step({
+                    let weak = cx.weak_entity();
+                    move |delta, _window, cx| {
+                        weak.update(cx, |this, cx| {
+                            this.channel_value =
+                                NumericStepper::stepped(this.channel_value, delta, 0, 255);
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                }),
             )
             .child(
                 div().w_full().child(

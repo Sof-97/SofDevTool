@@ -24,6 +24,7 @@ pub enum ButtonVariant {
 #[derive(IntoElement)]
 pub struct Button {
     label: SharedString,
+    aria_label: Option<SharedString>,
     element_id: Option<ElementId>,
     variant: ButtonVariant,
     disabled: bool,
@@ -37,6 +38,7 @@ impl Button {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
+            aria_label: None,
             element_id: None,
             variant: ButtonVariant::Secondary,
             disabled: false,
@@ -55,6 +57,13 @@ impl Button {
     /// Overrides the element id on a compatibility-constructed button.
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.element_id = Some(id.into());
+        self
+    }
+
+    /// Supplies a descriptive accessibility label when the visible label is
+    /// symbolic, such as the plus or minus button of a numeric control.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
         self
     }
 
@@ -114,6 +123,7 @@ impl RenderOnce for Button {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Button {
             label,
+            aria_label,
             element_id,
             variant,
             disabled,
@@ -145,7 +155,7 @@ impl RenderOnce for Button {
         let mut element = div()
             .id(id)
             .role(gpui::Role::Button)
-            .aria_label(label.clone())
+            .aria_label(aria_label.unwrap_or_else(|| label.clone()))
             .flex()
             .items_center()
             .justify_center()
