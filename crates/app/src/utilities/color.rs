@@ -16,7 +16,8 @@ use sofdevtool_core::utilities::color::{
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    DiagnosticSeverity, HistoryItem, HistoryPanel, NumericStepper, TextField, ThemeTokens,
+    ConfirmationBar, DiagnosticSeverity, NumericStepper, SelectableList, SelectableListFocus,
+    SelectableRow, TextField, ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
@@ -61,6 +62,7 @@ pub struct ColorWorkspace {
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_visible: bool,
+    history_focus: SelectableListFocus,
     _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
@@ -92,6 +94,7 @@ impl ColorWorkspace {
             suppress_changes: false,
             history_view,
             history_visible: true,
+            history_focus: SelectableListFocus::new(),
             _history_subscription: history_subscription,
             focus: ButtonFocus {
                 convert: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -314,20 +317,21 @@ impl ColorWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<HistoryItem> {
+    fn history_items(&self) -> Vec<SelectableRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                HistoryItem {
+                SelectableRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
                         .as_ref()
                         .map(|snapshot| format!("{} · {}", snapshot.outputs.hex, snapshot.source))
                         .unwrap_or_else(|| "Unavailable snapshot".to_owned()),
-                    available: snapshot.is_some(),
+                    status: snapshot.is_none().then(|| "Unavailable".to_owned()),
+                    selectable: true,
                 }
             })
             .collect()
@@ -412,12 +416,15 @@ impl ColorWorkspace {
             .child(div().flex_1().min_w_0().text_sm().child(text))
             .child(copy_feedback(self.copied == Some(index), "Copied"))
             .child(
-                Button::new(format!("Copy {label}"))
-                    .disabled(value.is_none())
-                    .focus_handle(self.focus.copies[index].clone())
-                    .on_click(view_click(cx, move |this, _window, cx| {
-                        this.copy(index, cx);
-                    })),
+                Button::with_id(
+                    format!("color-conversion.copy.{index}"),
+                    format!("Copy {label}"),
+                )
+                .disabled(value.is_none())
+                .focus_handle(self.focus.copies[index].clone())
+                .on_click(view_click(cx, move |this, _window, cx| {
+                    this.copy(index, cx);
+                })),
             )
     }
 
@@ -431,22 +438,26 @@ impl ColorWorkspace {
                     .iter()
                     .find(|entry| &entry.id == id)
             })
-            .map(|entry| decode_snapshot(entry).is_some())
-            .unwrap_or(false);
-        let actions = div().flex().flex_row().gap_2().child(
-            Button::new("Restore selected")
-                .disabled(!restore_enabled)
-                .focus_handle(self.focus.history_restore.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.restore_selected(window, cx);
-                })),
-        );
+            .is_some_and(|entry| decode_snapshot(entry).is_some());
+        let actions = Button::with_id(
+            "color-conversion.history.restore-selected",
+            "Restore selected",
+        )
+        .disabled(!restore_enabled)
+        .focus_handle(self.focus.history_restore.clone())
+        .on_click(view_click(cx, |this, window, cx| {
+            this.restore_selected(window, cx);
+        }));
         let weak = cx.weak_entity();
-        let panel = HistoryPanel::new(
+        let list = SelectableList::new(
+            "color-conversion.history",
+            "History",
             self.history_items(),
             selected,
             "No retained operations yet.",
+            self.history_focus.clone(),
         )
+        .summary(format!("{}/25", self.history_view.entries.len()))
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
                 if this.history_view.select(id) {
@@ -465,51 +476,25 @@ impl ColorWorkspace {
             .gap_2()
             .border_l_1()
             .border_color(ThemeTokens::active().border())
-            .child(panel)
+            .bg(ThemeTokens::active().surface())
+            .child(list)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(tokens.warning())
-            .bg(tokens.surface_raised())
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(tokens.text())
-                    .child("Restoring this History entry replaces the current color session."),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(
-                        Button::new("Restore")
-                            .variant(ButtonVariant::Primary)
-                            .focus_handle(self.focus.history_confirm.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                this.confirm_restore(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("Cancel")
-                            .focus_handle(self.focus.history_cancel.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.cancel_restore(cx);
-                            })),
-                    ),
-            )
+        ConfirmationBar::new(
+            "color-conversion.history.restore",
+            "Restoring this History entry replaces the current non-empty color session.",
+            "Restore",
+            "Cancel",
+        )
+        .focus_handles(
+            self.focus.history_confirm.clone(),
+            self.focus.history_cancel.clone(),
+        )
+        .on_confirm(view_click(cx, |this, window, cx| {
+            this.confirm_restore(window, cx)
+        }))
+        .on_cancel(view_click(cx, |this, _window, cx| this.cancel_restore(cx)))
     }
 }
 
@@ -526,7 +511,7 @@ impl Render for ColorWorkspace {
             .items_center()
             .gap_2()
             .child(
-                Button::new("Convert")
+                Button::with_id("color-conversion.convert", "Convert")
                     .variant(ButtonVariant::Primary)
                     .focus_handle(self.focus.convert.clone())
                     .on_click(view_click(cx, |this, window, cx| {
@@ -536,11 +521,14 @@ impl Render for ColorWorkspace {
             .child(div().flex_1())
             .child(copy_feedback(self.copied == Some(3), "Copied to Clipboard"))
             .child(
-                Button::new(if self.history_visible {
-                    "History: on"
-                } else {
-                    "History: off"
-                })
+                Button::with_id(
+                    "color-conversion.history.toggle",
+                    if self.history_visible {
+                        "History: on"
+                    } else {
+                        "History: off"
+                    },
+                )
                 .focus_handle(self.focus.history_toggle.clone())
                 .on_click(view_click(cx, |this, _window, cx| {
                     this.history_visible = !this.history_visible;
@@ -548,14 +536,14 @@ impl Render for ColorWorkspace {
                 })),
             )
             .child(
-                Button::new("Paste")
+                Button::with_id("color-conversion.paste", "Paste")
                     .focus_handle(self.focus.paste.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.paste(window, cx);
                     })),
             )
             .child(
-                Button::new("Clear")
+                Button::with_id("color-conversion.clear", "Clear")
                     .focus_handle(self.focus.clear.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.clear(window, cx);
@@ -569,32 +557,12 @@ impl Render for ColorWorkspace {
             .min_h_0()
             .bg(tokens.background())
             .text_color(tokens.text())
-            .p_4()
             .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Color Conversion"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.text_muted())
-                            .child("Bounded sRGB: HEX, RGB(A), HSL(A)"),
-                    ),
-            )
             .child(
                 div()
                     .text_xs()
                     .text_color(tokens.text_muted())
-                    .child("Values normalize to 8-bit sRGB; wide gamut is out of scope."),
+                    .child("Bounded 8-bit sRGB: HEX, RGB(A), HSL(A). Wide gamut is out of scope."),
             )
             .child(
                 div()
@@ -649,7 +617,7 @@ impl Render for ColorWorkspace {
         let mut workspace = div()
             .flex()
             .flex_row()
-            .gap_4()
+            .gap_3()
             .flex_1()
             .min_h_0()
             .child(panel("Picker", "interactive sRGB channels", picker))
@@ -858,6 +826,54 @@ mod tests {
         assert_eq!(history.load(ColorConversion::ID).unwrap().len(), 4);
         cx.executor().advance_clock(DEBOUNCE);
         cx.run_until_parked();
+        assert_eq!(history.load(ColorConversion::ID).unwrap().len(), 4);
+
+        let retained = history.load(ColorConversion::ID).unwrap().remove(0);
+        let retained_hex = decode_snapshot(&retained).unwrap().outputs.hex;
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let list_focus = workspace.read(cx).history_focus.clone();
+            window.focus(&list_focus.handle(&retained.id, cx), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.history_view.selected.clone()),
+            Some(retained.id.clone())
+        );
+        assert!(workspace.read_with(&cx, |view, _| {
+            view.history_view
+                .entries
+                .iter()
+                .find(|entry| entry.id == retained.id)
+                .is_some_and(|entry| {
+                    view.history_view
+                        .retained(&history, ColorConversion::ID, entry)
+                })
+        }));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.history_restore.clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_some()));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.history_confirm.clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.source.text(cx)),
+            retained_hex
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view
+                .current_evaluation(cx)
+                .outputs()
+                .unwrap()
+                .hex
+                .clone()),
+            retained_hex
+        );
         assert_eq!(history.load(ColorConversion::ID).unwrap().len(), 4);
         fs::remove_dir_all(root).unwrap();
     }

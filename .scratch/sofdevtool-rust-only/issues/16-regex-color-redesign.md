@@ -4,7 +4,7 @@
 
 **Blocked by:** [03: Propagate History changes through conversion and inspection workspaces](03-history-conversion-workspaces.md); [04: Propagate History changes through generators, Regex and Text Diff](04-history-generator-comparison-workspaces.md); [05: Keep Regex responsive and reject obsolete evaluations](05-responsive-regex.md); [12: Apply the approved design to navigation, Launcher and Settings](12-workbench-launcher-settings-redesign.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Adopt the approved controls and generic History presentation in both workspaces, removing this batch's old API calls.
 - [ ] Re-exercise demanding Regex evaluation, bounded scheduling, stale completion, clear/restore and all resource refusals through the redesigned UI.

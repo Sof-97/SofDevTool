@@ -24,7 +24,8 @@ use sofdevtool_core::utilities::regex::{
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    DiagnosticSeverity, HistoryItem, HistoryPanel, TextEditor, TextField, ThemeTokens,
+    ConfirmationBar, DiagnosticSeverity, SelectableList, SelectableListFocus, SelectableRow,
+    TextEditor, TextField, ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
@@ -216,8 +217,7 @@ impl Flag {
         }
     }
 
-    /// A distinct, mnemonic label. Distinct labels also keep each [`Button`]'s
-    /// element id unique.
+    /// A distinct, mnemonic label; stable Button identities use flag indices.
     fn label(self) -> &'static str {
         match self {
             Flag::CaseInsensitive => "i  case-insensitive",
@@ -293,6 +293,7 @@ pub struct RegexWorkspace {
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_visible: bool,
+    history_focus: SelectableListFocus,
     _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
@@ -341,6 +342,7 @@ impl RegexWorkspace {
             suppress_changes: false,
             history_view,
             history_visible: true,
+            history_focus: SelectableListFocus::new(),
             _history_subscription: history_subscription,
             focus: ButtonFocus {
                 flags: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
@@ -564,13 +566,13 @@ impl RegexWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<HistoryItem> {
+    fn history_items(&self) -> Vec<SelectableRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                HistoryItem {
+                SelectableRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
@@ -583,14 +585,15 @@ impl RegexWorkspace {
                             )
                         })
                         .unwrap_or_else(|| "Unavailable snapshot".to_owned()),
-                    available: snapshot.is_some(),
+                    status: snapshot.is_none().then(|| "Unavailable".to_owned()),
+                    selectable: true,
                 }
             })
             .collect()
     }
 
     fn flag_button(&self, flag: Flag, cx: &mut Context<Self>) -> Button {
-        Button::new(flag.label())
+        Button::with_id(format!("regex.flag.{}", flag.index()), flag.label())
             .variant(if flag.enabled(self.flags) {
                 ButtonVariant::Primary
             } else {
@@ -675,22 +678,23 @@ impl RegexWorkspace {
                     .iter()
                     .find(|entry| &entry.id == id)
             })
-            .map(|entry| decode_snapshot(entry).is_some())
-            .unwrap_or(false);
-        let actions = div().flex().flex_row().gap_2().child(
-            Button::new("Restore selected")
-                .disabled(!restore_enabled)
-                .focus_handle(self.focus.history_restore.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.restore_selected(window, cx);
-                })),
-        );
+            .is_some_and(|entry| decode_snapshot(entry).is_some());
+        let actions = Button::with_id("regex.history.restore-selected", "Restore selected")
+            .disabled(!restore_enabled)
+            .focus_handle(self.focus.history_restore.clone())
+            .on_click(view_click(cx, |this, window, cx| {
+                this.restore_selected(window, cx);
+            }));
         let weak = cx.weak_entity();
-        let panel = HistoryPanel::new(
+        let list = SelectableList::new(
+            "regex.history",
+            "History",
             self.history_items(),
             selected,
             "No retained operations yet.",
+            self.history_focus.clone(),
         )
+        .summary(format!("{}/25", self.history_view.entries.len()))
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
                 if this.history_view.select(id) {
@@ -709,48 +713,25 @@ impl RegexWorkspace {
             .gap_2()
             .border_l_1()
             .border_color(ThemeTokens::active().border())
-            .child(panel)
+            .bg(ThemeTokens::active().surface())
+            .child(list)
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(tokens.warning())
-            .bg(tokens.surface_raised())
-            .child(div().text_xs().text_color(tokens.text()).child(
-                "Restoring this History entry replaces the current non-empty Regex session.",
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(
-                        Button::new("Restore")
-                            .variant(ButtonVariant::Primary)
-                            .focus_handle(self.focus.history_confirm.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                this.confirm_restore(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("Cancel")
-                            .focus_handle(self.focus.history_cancel.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.cancel_restore(cx);
-                            })),
-                    ),
-            )
+        ConfirmationBar::new(
+            "regex.history.restore",
+            "Restoring this History entry replaces the current non-empty Regex session.",
+            "Restore",
+            "Cancel",
+        )
+        .focus_handles(
+            self.focus.history_confirm.clone(),
+            self.focus.history_cancel.clone(),
+        )
+        .on_confirm(view_click(cx, |this, window, cx| {
+            this.confirm_restore(window, cx)
+        }))
+        .on_cancel(view_click(cx, |this, _window, cx| this.cancel_restore(cx)))
     }
 }
 
@@ -849,11 +830,14 @@ impl Render for RegexWorkspace {
             .child(div().flex_1())
             .child(copy_feedback(self.copied, "Copied to Clipboard"))
             .child(
-                Button::new(if self.history_visible {
-                    "History: on"
-                } else {
-                    "History: off"
-                })
+                Button::with_id(
+                    "regex.history.toggle",
+                    if self.history_visible {
+                        "History: on"
+                    } else {
+                        "History: off"
+                    },
+                )
                 .focus_handle(self.focus.history_toggle.clone())
                 .on_click(view_click(cx, |this, _window, cx| {
                     this.history_visible = !this.history_visible;
@@ -861,14 +845,14 @@ impl Render for RegexWorkspace {
                 })),
             )
             .child(
-                Button::new("Paste")
+                Button::with_id("regex.paste", "Paste")
                     .focus_handle(self.focus.paste.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.paste(window, cx);
                     })),
             )
             .child(
-                Button::new("Copy Result")
+                Button::with_id("regex.copy-result", "Copy Result")
                     .disabled(!can_copy)
                     .focus_handle(self.focus.copy.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
@@ -876,7 +860,7 @@ impl Render for RegexWorkspace {
                     })),
             )
             .child(
-                Button::new("Clear")
+                Button::with_id("regex.clear", "Clear")
                     .focus_handle(self.focus.clear.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.clear(window, cx);
@@ -890,27 +874,7 @@ impl Render for RegexWorkspace {
             .min_h_0()
             .bg(tokens.background())
             .text_color(tokens.text())
-            .p_4()
             .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Regex"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.text_muted())
-                            .child("Local, offline. No ICU emulation."),
-                    ),
-            )
             .child(guidance)
             .child(flags_row)
             .child(pattern_row)
@@ -961,7 +925,7 @@ impl Render for RegexWorkspace {
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .gap_4()
+            .gap_3()
             .child(panel(
                 "Test Text",
                 "exact UTF-8 bytes",
@@ -976,7 +940,7 @@ impl Render for RegexWorkspace {
         let mut workspace = div()
             .flex()
             .flex_row()
-            .gap_4()
+            .gap_3()
             .flex_1()
             .min_h_0()
             .child(left)
@@ -1050,6 +1014,8 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    use gpui::{Entity, VisualTestContext};
+
     use sofdevtool_core::utilities::regex::evaluate;
 
     use crate::history::{HistoryStore, SystemClock};
@@ -1062,6 +1028,14 @@ mod tests {
         }
 
         fn write_text(&self, _text: &str, _cx: &mut App) {}
+    }
+
+    struct TestRoot(Entity<RegexWorkspace>);
+
+    impl Render for TestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.0.clone())
+        }
     }
 
     fn test_root() -> PathBuf {
@@ -1302,6 +1276,86 @@ mod tests {
             range: Some(sofdevtool_core::utilities::regex::TextRange { start: 0, end: 3 }),
         };
         assert_eq!(capture_line(&matched), "  $0 = a\\nb [0..3)");
+    }
+
+    #[gpui::test]
+    fn flag_and_history_keyboard_controls_restore_without_reexecution(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = test_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        let request = RegexRequest::new("word", "word");
+        let snapshot = <Regex as Utility>::snapshot(&request, &evaluate(&request)).unwrap();
+        let entry = HistoryEntry {
+            id: "retained-regex".into(),
+            captured_at: "2026-01-01T00:00:00Z".into(),
+            utility_id: Regex::ID.into(),
+            snapshot_version: Regex::SNAPSHOT_VERSION,
+            payload: serde_json::to_value(snapshot).unwrap(),
+        };
+        history.store().record(entry.clone()).unwrap();
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| RegexWorkspace::new(window, cx, clipboard, history.clone()));
+            captured = Some(view.clone());
+            TestRoot(view)
+        });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.flags[0].clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(workspace.read_with(&cx, |view, _| view.flags.case_insensitive));
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.pattern.assign_text("different", window, cx);
+                view.text.assign_text("different", window, cx);
+            });
+            window.draw(cx).clear(cx);
+            let list_focus = workspace.read(cx).history_focus.clone();
+            window.focus(&list_focus.handle(&entry.id, cx), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.history_view.selected.clone()),
+            Some(entry.id.clone())
+        );
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.history_restore.clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_some()));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.focus(&workspace.read(cx).focus.history_confirm.clone(), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.pattern.text(cx)),
+            "word"
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.text.text(cx)),
+            "word"
+        );
+        assert!(!workspace.read_with(&cx, |view, _| view.flags.case_insensitive));
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.session.evaluation().matches().len()),
+            1
+        );
+        assert!(!workspace.read_with(&cx, |view, _| view.worker.has_current_work()));
+        assert_eq!(history.load(Regex::ID).unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[gpui::test]

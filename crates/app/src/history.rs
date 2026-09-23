@@ -151,8 +151,7 @@ impl HistoryStore {
                 .then_with(|| b.id.cmp(&a.id))
         });
         entries.truncate(RETENTION);
-        self.write(&utility_id, &entries)?;
-        Ok(entries)
+        self.write(&utility_id, &entries)
     }
 
     /// Removes all retained entries for `utility_id`. The current workspace is
@@ -282,7 +281,11 @@ impl HistoryStore {
         }
     }
 
-    fn write(&self, utility_id: &str, entries: &[HistoryEntry]) -> Result<(), HistoryError> {
+    fn write(
+        &self,
+        utility_id: &str,
+        entries: &[HistoryEntry],
+    ) -> Result<Vec<HistoryEntry>, HistoryError> {
         let path = self.path(utility_id)?;
         fs::create_dir_all(&self.root).map_err(|_| HistoryError::Unavailable)?;
         let serialized = serde_json::to_vec_pretty(&HistoryFile {
@@ -291,6 +294,11 @@ impl HistoryStore {
             entries: entries.to_vec(),
         })
         .map_err(|_| HistoryError::Unavailable)?;
+        // The JSON float parser may canonicalize a Value differently from its
+        // in-memory form. Return exactly what a later load will see, so the
+        // exact-entry restore guard accepts a newly recorded operation.
+        let persisted: HistoryFile =
+            serde_json::from_slice(&serialized).map_err(|_| HistoryError::Unavailable)?;
         // Same-directory temporary file, then atomic replacement. A crash or a
         // failed replace leaves the previous valid file in place.
         let temporary = self.root.join(format!(
@@ -311,7 +319,7 @@ impl HistoryStore {
             }
         }
         match fs::rename(&temporary, &path) {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(persisted.entries),
             Err(_) => {
                 let _ = fs::remove_file(&temporary);
                 Err(HistoryError::Unavailable)
@@ -821,6 +829,27 @@ mod tests {
 
         assert_eq!(retained, vec![record.clone()]);
         assert_eq!(store.load("json").expect("load"), vec![record]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn float_payload_record_returns_the_exact_persisted_restore_target() {
+        let root = temporary_root("float-round-trip");
+        let recorder = HistoryRecorder::new(HistoryStore::new(root.clone()), Box::new(FixedClock));
+        let mut operation = entry("color-conversion", "color", "2026-01-01T00:00:01Z", 1);
+        operation.payload = serde_json::json!({
+            "red": 16.0_f64 / 255.0,
+            "green": 31.0_f64 / 255.0,
+            "blue": 48.0_f64 / 255.0,
+        });
+
+        let returned = recorder.store().record(operation).expect("record");
+        let loaded = recorder.load("color-conversion").expect("load");
+        assert_eq!(returned, loaded);
+        let mut view = HistoryViewState::default();
+        view.apply_record(&recorder, "color-conversion", Ok(returned));
+        assert!(view.select("color"));
+        assert!(view.retained(&recorder, "color-conversion", &view.entries[0]));
         fs::remove_dir_all(root).unwrap();
     }
 
