@@ -14,7 +14,7 @@ use sofdevtool_app::identity;
 use sofdevtool_app::preferences::{HistoryPreferences, ShortcutPreferences, StartupShortcut};
 use sofdevtool_app::registry::{OpenUtility, UtilityId, UtilityRegistry};
 use sofdevtool_app::workbench::Workbench;
-use sofdevtool_ui::{init, mount, set_dark_theme};
+use sofdevtool_ui::{apply_theme, init, mount, ThemeVariant};
 
 gpui::actions!(application_actions, [Quit, Copy, Paste]);
 
@@ -104,7 +104,7 @@ fn main() {
     application.run(move |cx: &mut App| {
         init(cx);
         sofdevtool_app::launcher::init(cx);
-        set_dark_theme(None, cx);
+        apply_theme(ThemeVariant::Graphite, cx);
         // `MenuItem::os_action` gives macOS the responder-chain selector,
         // while these bindings give its menu item the standard key
         // equivalent. The selector is therefore delivered to a focused

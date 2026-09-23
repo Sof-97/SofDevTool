@@ -4,7 +4,7 @@
 
 **Blocked by:** [01: Use sofui's owned component interfaces in JSON and the gallery](01-sofui-json-gallery.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Provide observable application-wide semantic tokens, both existing presets and custom tokens; Graphite remains the fresh default.
 - [ ] Keep persisted theme choice in the application. Consumers do not need manual per-window redraw recipes or direct dependency-internal theme types.
@@ -26,3 +26,11 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Implementation handoff
+
+GPT-6 Sol completed the candidate on 2026-09-23. Public theme APIs update
+all windows and wrapped editor colors, including windows created afterward.
+Eight sofui tests, its Clippy gate and app compilation passed.
+[Evidence](../evidence/ticket-10.md). Native acceptance and the final Astra
+review remain pending; the ticket stays claimed.

@@ -56,6 +56,11 @@ impl TextEditor {
         self.state.read(cx).focus_handle(cx).focus(window, cx);
     }
 
+    /// Reports whether this retained editor owns keyboard focus.
+    pub fn is_focused(&self, window: &Window, cx: &App) -> bool {
+        self.state.read(cx).focus_handle(cx).is_focused(window)
+    }
+
     /// Subscribe inside a view's context. The handler receives the view, window
     /// and context so it can recompute and notify without naming the engine type.
     pub fn on_change_in<T: 'static>(

@@ -14,8 +14,7 @@ use gpui::{
     Subscription, Window,
 };
 use sofdevtool_ui::{
-    panel, set_active_theme, view_click, Button, ButtonVariant, TextField, ThemeTokens,
-    ThemeVariant,
+    apply_theme, panel, view_click, Button, ButtonVariant, TextField, ThemeTokens, ThemeVariant,
 };
 
 use crate::clipboard::Clipboard;
@@ -95,7 +94,7 @@ impl Workbench {
         } else {
             ThemeVariant::Graphite
         };
-        set_active_theme(theme);
+        apply_theme(theme, cx);
 
         let search = TextField::new(window, cx);
         let search_subscription = search.on_change_in(window, cx, |_this, _window, cx| {
@@ -189,7 +188,7 @@ impl Workbench {
             ThemeVariant::Graphite => ThemeVariant::CatppuccinFrappe,
             ThemeVariant::CatppuccinFrappe => ThemeVariant::Graphite,
         };
-        set_active_theme(self.theme);
+        apply_theme(self.theme, cx);
         self.persist_workspace();
         cx.notify();
     }

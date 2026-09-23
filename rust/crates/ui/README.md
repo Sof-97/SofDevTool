@@ -15,8 +15,14 @@ used only by the gallery example; a consumer supplies its own GPUI entrypoint.
 Initialize components with `sofui::init(cx)` after the consumer's GPUI app
 starts. Make an application view, then pass it to `sofui::mount(view, window,
 cx)` as the window root. This mount supplies the input registry required by
-the editor. `sofui::set_dark_theme` and `sofui::set_active_theme` configure the
-shared theme; a consumer redraws its views after a theme change.
+the editor. Call `sofui::apply_theme(ThemeVariant::Graphite, cx)` for the fresh
+default, or choose `CatppuccinFrappe`. `apply_custom_theme` accepts
+`ThemeTokens::from_palette(ThemePalette { ... })` with `0xRRGGBB` semantic
+colors. Both calls update every open window and the wrapped editor's background,
+text, caret and focus colors without recreating editor or view entities. A
+window opened later inherits the same palette. The consuming application owns
+theme-choice persistence; sofui's `set_dark_theme` and `set_active_theme` remain
+compatibility accessors and do not provide the complete observable update.
 
 Use `Button::with_id(id, label)` or `Button::primary_with_id(id, label)` with
 a stable ID for each logical control. Labels may repeat or change while IDs
@@ -36,7 +42,8 @@ remain for workspaces still being migrated.
 From `rust/`, run `cargo run -p sofui --example gallery` to open the gallery.
 The gallery imports only sofui and GPUI, and demonstrates repeated labels,
 focus, disabled actions, real Copy feedback, Unicode editors, diagnostics,
-selection, confirmation and theme switching. `cargo test -p sofui` covers
+selection, confirmation, both presets and a high-contrast custom palette.
+`cargo test -p sofui` covers
 public component interactions; `cargo check -p sofui --all-targets` includes
 the gallery. Native launch observations require a separate acceptance run.
 

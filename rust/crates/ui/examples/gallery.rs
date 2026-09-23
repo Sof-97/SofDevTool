@@ -13,10 +13,24 @@ use gpui::{
     WindowOptions,
 };
 use sofui::{
-    active_theme, copy_feedback, diagnostic_banner, empty_state, init, mount, panel,
-    set_active_theme, set_dark_theme, view_click, Button, ButtonVariant, DiagnosticSeverity,
-    HistoryItem, HistoryPanel, HoldButton, LabeledField, TextEditor, TextField, ThemeTokens,
+    active_theme, apply_custom_theme, apply_theme, copy_feedback, diagnostic_banner, empty_state,
+    init, mount, panel, view_click, Button, ButtonVariant, DiagnosticSeverity, HistoryItem,
+    HistoryPanel, HoldButton, LabeledField, TextEditor, TextField, ThemePalette, ThemeTokens,
     ThemeVariant,
+};
+
+// A gallery-only custom palette with distinct focus and diagnostic colors.
+const GALLERY_CUSTOM: ThemePalette = ThemePalette {
+    background: 0x171c1a,
+    surface: 0x202a26,
+    surface_raised: 0x2a3831,
+    border: 0x52665a,
+    text: 0xf0f4ed,
+    text_muted: 0xb4c3b7,
+    accent: 0x8ae0b0,
+    accent_text: 0x102218,
+    danger: 0xff9a9e,
+    warning: 0xf5ca79,
 };
 
 struct Gallery {
@@ -27,6 +41,7 @@ struct Gallery {
     secondary_focus: FocusHandle,
     variant_focus: FocusHandle,
     theme_focus: FocusHandle,
+    custom_focus: FocusHandle,
     hold_focus: FocusHandle,
     confirm_focus: FocusHandle,
     cancel_focus: FocusHandle,
@@ -80,6 +95,7 @@ impl Gallery {
             secondary_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             variant_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             theme_focus: cx.focus_handle().tab_stop(true).tab_index(0),
+            custom_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             hold_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             confirm_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             cancel_focus: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -232,8 +248,21 @@ impl Render for Gallery {
                                 ThemeVariant::Graphite => ThemeVariant::CatppuccinFrappe,
                                 ThemeVariant::CatppuccinFrappe => ThemeVariant::Graphite,
                             };
-                            set_active_theme(next);
-                            cx.notify();
+                            apply_theme(next, cx);
+                        })),
+                    )
+                    .child(
+                        Button::with_id(
+                            "gallery.custom-theme",
+                            if ThemeTokens::active().palette() == GALLERY_CUSTOM {
+                                "Custom palette: on"
+                            } else {
+                                "Custom palette"
+                            },
+                        )
+                        .focus_handle(self.custom_focus.clone())
+                        .on_click(view_click(cx, |_this, _window, cx| {
+                            apply_custom_theme(ThemeTokens::from_palette(GALLERY_CUSTOM), cx);
                         })),
                     )
                     .child(
@@ -366,7 +395,7 @@ impl Render for Gallery {
 fn main() {
     gpui_platform::application().run(|cx: &mut App| {
         init(cx);
-        set_dark_theme(None, cx);
+        apply_theme(ThemeVariant::Graphite, cx);
         cx.open_window(WindowOptions::default(), |window, cx| {
             let view = cx.new(|cx| Gallery::new(window, cx));
             mount(view, window, cx)

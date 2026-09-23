@@ -1,6 +1,6 @@
 //! Semantic theme tokens owned by the component library.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::RwLock;
 
 use gpui::{rgb, Hsla};
 
@@ -19,52 +19,69 @@ impl ThemeVariant {
             Self::CatppuccinFrappe => "Catppuccin Frappé",
         }
     }
-
-    fn code(self) -> u8 {
-        match self {
-            Self::Graphite => 0,
-            Self::CatppuccinFrappe => 1,
-        }
-    }
-
-    fn from_code(code: u8) -> Self {
-        match code {
-            1 => Self::CatppuccinFrappe,
-            _ => Self::Graphite,
-        }
-    }
 }
 
-/// The application's active theme. The component library is single-window and
-/// UI-threaded, so one process-wide selection is sufficient and lets every
-/// semantic token call site stay free of an explicit context argument.
-static ACTIVE_THEME: AtomicU8 = AtomicU8::new(0);
+#[derive(Clone, Copy)]
+struct ThemeState {
+    last_preset: ThemeVariant,
+    tokens: ThemeTokens,
+}
 
-/// Selects the process-wide theme. Callers must request a redraw.
+// A single application-wide palette is intentional. GPUI uses the App context
+// to refresh all windows after mutations; component rendering reads this small
+// immutable snapshot without passing product-owned context through each view.
+static ACTIVE_THEME: RwLock<ThemeState> = RwLock::new(ThemeState {
+    last_preset: ThemeVariant::Graphite,
+    tokens: ThemeTokens::for_variant(ThemeVariant::Graphite),
+});
+
+/// Compatibility setter for the active preset. Prefer [`crate::apply_theme`]
+/// when an application is running: it also updates editor colors and redraws
+/// every open window.
 pub fn set_active_theme(variant: ThemeVariant) {
-    ACTIVE_THEME.store(variant.code(), Ordering::Release);
+    let mut state = ACTIVE_THEME
+        .write()
+        .unwrap_or_else(|error| error.into_inner());
+    *state = ThemeState {
+        last_preset: variant,
+        tokens: ThemeTokens::for_variant(variant),
+    };
 }
 
+/// Returns the last selected preset. A custom palette is available through
+/// [`ThemeTokens::active`] without inventing a third built-in preset.
 pub fn active_theme() -> ThemeVariant {
-    ThemeVariant::from_code(ACTIVE_THEME.load(Ordering::Acquire))
+    ACTIVE_THEME
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .last_preset
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Palette {
-    background: u32,
-    surface: u32,
-    surface_raised: u32,
-    border: u32,
-    text: u32,
-    text_muted: u32,
-    accent: u32,
-    accent_text: u32,
-    danger: u32,
-    warning: u32,
+pub(crate) fn set_custom_tokens(tokens: ThemeTokens) {
+    ACTIVE_THEME
+        .write()
+        .unwrap_or_else(|error| error.into_inner())
+        .tokens = tokens;
 }
 
-impl Palette {
-    const GRAPHITE: Palette = Palette {
+/// Semantic colors supplied by an application. Each value is `0xRRGGBB`.
+/// Keep text, focus and diagnostic colors legible against their surfaces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThemePalette {
+    pub background: u32,
+    pub surface: u32,
+    pub surface_raised: u32,
+    pub border: u32,
+    pub text: u32,
+    pub text_muted: u32,
+    pub accent: u32,
+    pub accent_text: u32,
+    pub danger: u32,
+    pub warning: u32,
+}
+
+impl ThemePalette {
+    pub const GRAPHITE: ThemePalette = ThemePalette {
         background: 0x1b1c1f,
         surface: 0x24262b,
         surface_raised: 0x2d3037,
@@ -77,7 +94,7 @@ impl Palette {
         warning: 0xe0b25e,
     };
 
-    const CATPPUCCIN_FRAPPE: Palette = Palette {
+    pub const CATPPUCCIN_FRAPPE: ThemePalette = ThemePalette {
         background: 0x303446,
         surface: 0x292c3c,
         surface_raised: 0x414559,
@@ -91,16 +108,16 @@ impl Palette {
     };
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThemeTokens {
-    palette: Palette,
+    palette: ThemePalette,
 }
 
 impl ThemeTokens {
     pub const fn for_variant(variant: ThemeVariant) -> Self {
         let palette = match variant {
-            ThemeVariant::Graphite => Palette::GRAPHITE,
-            ThemeVariant::CatppuccinFrappe => Palette::CATPPUCCIN_FRAPPE,
+            ThemeVariant::Graphite => ThemePalette::GRAPHITE,
+            ThemeVariant::CatppuccinFrappe => ThemePalette::CATPPUCCIN_FRAPPE,
         };
         Self { palette }
     }
@@ -109,9 +126,21 @@ impl ThemeTokens {
         Self::for_variant(ThemeVariant::Graphite)
     }
 
+    /// Builds a product-defined palette without exposing editor dependency types.
+    pub const fn from_palette(palette: ThemePalette) -> Self {
+        Self { palette }
+    }
+
+    pub const fn palette(self) -> ThemePalette {
+        self.palette
+    }
+
     /// The currently active theme's tokens.
     pub fn active() -> Self {
-        Self::for_variant(active_theme())
+        ACTIVE_THEME
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .tokens
     }
 
     pub fn background(&self) -> Hsla {
