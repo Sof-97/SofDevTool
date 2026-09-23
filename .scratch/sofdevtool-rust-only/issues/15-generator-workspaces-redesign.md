@@ -4,7 +4,7 @@
 
 **Blocked by:** [04: Propagate History changes through generators, Regex and Text Diff](04-history-generator-comparison-workspaces.md); [07: Protect generated results when restoring History](07-generator-restore-confirmation.md); [08: Remember Random String controls independently of History](08-random-string-preferences.md); [12: Apply the approved design to navigation, Launcher and Settings](12-workbench-launcher-settings-redesign.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Retain every UUID/ULID/KSUID mode and bound, Random String cryptographic/alphabet rules, and Sample Data schema/row/field/JSON/CSV behavior.
 - [ ] Use reusable selection, stepping, lists and confirmation mechanics while keeping formats, schema logic, entropy and generation in app/core ownership.

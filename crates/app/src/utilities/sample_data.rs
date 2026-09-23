@@ -15,12 +15,15 @@ use sofdevtool_core::utilities::sample_data::{
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    DiagnosticSeverity, HistoryItem, HistoryPanel, LabeledField, TextEditor, TextField,
-    ThemeTokens,
+    ConfirmationBar, DiagnosticSeverity, LabeledField, NumericStepper, SegmentedControl,
+    SegmentedControlFocus, SegmentedOption, SelectableList, SelectableListFocus, SelectableRow,
+    TextEditor, TextField, ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
-use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::history::{
+    HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState, RETENTION,
+};
 use crate::workbench::Workbench;
 
 type SampleDataSession = Session<SampleData>;
@@ -39,10 +42,6 @@ pub fn construct(
 /// Distinct focus handles for buttons that persist across renders. Field-local
 /// buttons own their handles in [`FieldState`].
 struct ButtonFocus {
-    json: FocusHandle,
-    csv: FocusHandle,
-    row_decrement: FocusHandle,
-    row_increment: FocusHandle,
     add_field: FocusHandle,
     generate: FocusHandle,
     clear: FocusHandle,
@@ -56,7 +55,6 @@ struct ButtonFocus {
 /// Per-field focus handles. Each simultaneously rendered button needs its own
 /// handle and an explicit element id, or GPUI aborts on a duplicate a11y node.
 struct FieldFocus {
-    cycle_type: FocusHandle,
     toggle_integer: FocusHandle,
     up: FocusHandle,
     down: FocusHandle,
@@ -66,6 +64,7 @@ struct FieldFocus {
 /// The editable state of one field, including its own text fields so reordering
 /// moves the whole editor and removal drops its subscriptions.
 struct FieldState {
+    ui_id: u64,
     field_type: SampleFieldType,
     number_is_integer: bool,
     name: TextField,
@@ -83,6 +82,7 @@ impl FieldState {
         window: &mut Window,
         cx: &mut Context<SampleDataWorkspace>,
         definition: &FieldDefinition,
+        ui_id: u64,
     ) -> Self {
         let name = TextField::new(window, cx);
         let number_minimum = TextField::new(window, cx);
@@ -107,6 +107,7 @@ impl FieldState {
         ];
 
         Self {
+            ui_id,
             field_type: definition.field_type,
             number_is_integer: definition.number_is_integer,
             name,
@@ -116,7 +117,6 @@ impl FieldState {
             date_maximum,
             choices,
             focus: FieldFocus {
-                cycle_type: cx.focus_handle().tab_stop(true).tab_index(0),
                 toggle_integer: cx.focus_handle().tab_stop(true).tab_index(0),
                 up: cx.focus_handle().tab_stop(true).tab_index(0),
                 down: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -147,6 +147,7 @@ impl FieldState {
 
 pub struct SampleDataWorkspace {
     fields: Vec<FieldState>,
+    next_field_id: u64,
     row_count: u32,
     output_format: SampleDataFormat,
     session: SampleDataSession,
@@ -158,9 +159,13 @@ pub struct SampleDataWorkspace {
     copied: bool,
     suppress_changes: bool,
     history_view: HistoryViewState,
+    history_focus: SelectableListFocus,
+    format_focus: SegmentedControlFocus,
+    field_type_focus: SegmentedControlFocus,
     history_visible: bool,
     _history_subscription: HistorySubscription,
     focus: ButtonFocus,
+    row_stepper_focus: [FocusHandle; 2],
 }
 
 impl SampleDataWorkspace {
@@ -171,11 +176,13 @@ impl SampleDataWorkspace {
         history: Rc<HistoryRecorder>,
     ) -> Self {
         let default = SampleDataRequest::default();
-        let fields = default
+        let fields: Vec<FieldState> = default
             .fields
             .iter()
-            .map(|definition| FieldState::new(window, cx, definition))
+            .enumerate()
+            .map(|(index, definition)| FieldState::new(window, cx, definition, index as u64))
             .collect();
+        let next_field_id = fields.len() as u64;
         let result = TextEditor::new(window, cx);
         let history_view = HistoryViewState::load(&history, SampleData::ID);
         let weak = cx.weak_entity();
@@ -184,6 +191,7 @@ impl SampleDataWorkspace {
         });
         Self {
             fields,
+            next_field_id,
             row_count: default.row_count,
             output_format: default.output,
             session: SampleDataSession::new(),
@@ -195,13 +203,12 @@ impl SampleDataWorkspace {
             copied: false,
             suppress_changes: false,
             history_view,
+            history_focus: SelectableListFocus::new(),
+            format_focus: SegmentedControlFocus::new(),
+            field_type_focus: SegmentedControlFocus::new(),
             history_visible: true,
             _history_subscription: history_subscription,
             focus: ButtonFocus {
-                json: cx.focus_handle().tab_stop(true).tab_index(0),
-                csv: cx.focus_handle().tab_stop(true).tab_index(0),
-                row_decrement: cx.focus_handle().tab_stop(true).tab_index(0),
-                row_increment: cx.focus_handle().tab_stop(true).tab_index(0),
                 add_field: cx.focus_handle().tab_stop(true).tab_index(0),
                 generate: cx.focus_handle().tab_stop(true).tab_index(0),
                 clear: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -211,6 +218,9 @@ impl SampleDataWorkspace {
                 history_confirm: cx.focus_handle().tab_stop(true).tab_index(0),
                 history_cancel: cx.focus_handle().tab_stop(true).tab_index(0),
             },
+            row_stepper_focus: std::array::from_fn(|_| {
+                cx.focus_handle().tab_stop(true).tab_index(0)
+            }),
         }
     }
 
@@ -313,7 +323,10 @@ impl SampleDataWorkspace {
         let index = self.fields.len();
         let definition =
             FieldDefinition::new(format!("field{}", index + 1), SampleFieldType::Enumeration);
-        self.fields.push(FieldState::new(window, cx, &definition));
+        let ui_id = self.next_field_id;
+        self.next_field_id = self.next_field_id.wrapping_add(1);
+        self.fields
+            .push(FieldState::new(window, cx, &definition, ui_id));
         self.invalidate(cx);
     }
 
@@ -333,13 +346,17 @@ impl SampleDataWorkspace {
         self.invalidate(cx);
     }
 
-    fn cycle_field_type(&mut self, index: usize, cx: &mut Context<Self>) {
-        let next = self
-            .fields
-            .get(index)
-            .map(|field| field.field_type.successor());
-        if let Some(next) = next {
-            self.fields[index].field_type = next;
+    fn set_field_type(
+        &mut self,
+        index: usize,
+        field_type: SampleFieldType,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(field) = self.fields.get_mut(index) {
+            if field.field_type == field_type {
+                return;
+            }
+            field.field_type = field_type;
             self.invalidate(cx);
         }
     }
@@ -406,11 +423,17 @@ impl SampleDataWorkspace {
     ) {
         self.suppress_changes = true;
         let request = snapshot.request.clone();
+        let mut next_field_id = self.next_field_id;
         self.fields = request
             .fields
             .iter()
-            .map(|definition| FieldState::new(window, cx, definition))
+            .map(|definition| {
+                let ui_id = next_field_id;
+                next_field_id = next_field_id.wrapping_add(1);
+                FieldState::new(window, cx, definition, ui_id)
+            })
             .collect();
+        self.next_field_id = next_field_id;
         self.row_count = request.row_count;
         self.output_format = request.output;
         self.session.restore(snapshot);
@@ -469,43 +492,58 @@ impl SampleDataWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<HistoryItem> {
+    fn history_items(&self) -> Vec<SelectableRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                HistoryItem {
+                SelectableRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
                         .as_ref()
                         .map(|snapshot| preview_line(&snapshot.output))
                         .unwrap_or_else(|| "Unavailable snapshot".to_owned()),
-                    available: snapshot.is_some(),
+                    status: snapshot.is_none().then(|| "Unavailable".to_owned()),
+                    selectable: snapshot.is_some(),
                 }
             })
             .collect()
     }
 
-    fn format_button(&self, format: SampleDataFormat, cx: &mut Context<Self>) -> Button {
-        Button::new(format.label())
-            .variant(if self.output_format == format {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Secondary
-            })
-            .focus_handle(match format {
-                SampleDataFormat::Json => self.focus.json.clone(),
-                SampleDataFormat::Csv => self.focus.csv.clone(),
-            })
-            .on_click(view_click(cx, move |this, _window, cx| {
-                this.set_output_format(format, cx);
-            }))
-    }
-
     fn render_field(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let field = &self.fields[index];
+        let field_id = field.ui_id;
+        let field_type_control = SegmentedControl::new(
+            format!("sample-data.field.{field_id}.type"),
+            "Field type",
+            SampleFieldType::ALL
+                .into_iter()
+                .map(|field_type| {
+                    SegmentedOption::new(field_type_id(field_type), field_type.label())
+                })
+                .collect(),
+            Some(field_type_id(field.field_type).to_owned()),
+            self.field_type_focus.clone(),
+        )
+        .on_change({
+            let weak = cx.weak_entity();
+            Rc::new(move |id, _window, cx| {
+                let field_type = match id {
+                    "fictional-name" => SampleFieldType::FictionalName,
+                    "fictional-email" => SampleFieldType::FictionalEmail,
+                    "number" => SampleFieldType::Number,
+                    "boolean" => SampleFieldType::Boolean,
+                    "date" => SampleFieldType::Date,
+                    "uuid" => SampleFieldType::Uuid,
+                    "enumeration" => SampleFieldType::Enumeration,
+                    _ => return,
+                };
+                weak.update(cx, |this, cx| this.set_field_type(index, field_type, cx))
+                    .ok();
+            })
+        });
         let mut row = div()
             .flex()
             .flex_row()
@@ -517,14 +555,7 @@ impl SampleDataWorkspace {
                 "Name",
                 field.name.render("sample-data.field.name"),
             )))
-            .child(
-                Button::new(format!("Type: {}", field.field_type.label()))
-                    .id(format!("sample-data.field.{index}.type"))
-                    .focus_handle(field.focus.cycle_type.clone())
-                    .on_click(view_click(cx, move |this, _window, cx| {
-                        this.cycle_field_type(index, cx);
-                    })),
-            );
+            .child(field_type_control);
 
         match field.field_type {
             SampleFieldType::Number => {
@@ -538,11 +569,14 @@ impl SampleDataWorkspace {
                         field.number_maximum.render("sample-data.field.number-max"),
                     )))
                     .child(
-                        Button::new(if field.number_is_integer {
-                            "Integer: on"
-                        } else {
-                            "Integer: off"
-                        })
+                        Button::with_id(
+                            format!("sample-data.field.{field_id}.integer"),
+                            if field.number_is_integer {
+                                "Integer: on"
+                            } else {
+                                "Integer: off"
+                            },
+                        )
                         .id(format!("sample-data.field.{index}.integer"))
                         .variant(if field.number_is_integer {
                             ButtonVariant::Primary
@@ -582,8 +616,7 @@ impl SampleDataWorkspace {
         }
 
         row.child(
-            Button::new("Up")
-                .id(format!("sample-data.field.{index}.up"))
+            Button::with_id(format!("sample-data.field.{field_id}.up"), "Up")
                 .disabled(index == 0)
                 .focus_handle(field.focus.up.clone())
                 .on_click(view_click(cx, move |this, _window, cx| {
@@ -591,8 +624,7 @@ impl SampleDataWorkspace {
                 })),
         )
         .child(
-            Button::new("Down")
-                .id(format!("sample-data.field.{index}.down"))
+            Button::with_id(format!("sample-data.field.{field_id}.down"), "Down")
                 .disabled(index + 1 == self.fields.len())
                 .focus_handle(field.focus.down.clone())
                 .on_click(view_click(cx, move |this, _window, cx| {
@@ -600,8 +632,7 @@ impl SampleDataWorkspace {
                 })),
         )
         .child(
-            Button::new("Remove")
-                .id(format!("sample-data.field.{index}.remove"))
+            Button::with_id(format!("sample-data.field.{field_id}.remove"), "Remove")
                 .focus_handle(field.focus.remove.clone())
                 .on_click(view_click(cx, move |this, _window, cx| {
                     this.remove_field(index, cx);
@@ -653,7 +684,7 @@ impl SampleDataWorkspace {
             .map(|entry| decode_snapshot(entry).is_some())
             .unwrap_or(false);
         let actions = div().flex().flex_row().gap_2().child(
-            Button::new("Restore selected")
+            Button::with_id("sample-data.history.restore-selected", "Restore selected")
                 .disabled(!restore_enabled)
                 .focus_handle(self.focus.history_restore.clone())
                 .on_click(view_click(cx, |this, window, cx| {
@@ -661,11 +692,15 @@ impl SampleDataWorkspace {
                 })),
         );
         let weak = cx.weak_entity();
-        let history = HistoryPanel::new(
+        let history = SelectableList::new(
+            "sample-data.history",
+            "History",
             self.history_items(),
             selected,
             "No retained operations yet.",
+            self.history_focus.clone(),
         )
+        .summary(format!("{}/{}", self.history_view.entries.len(), RETENTION))
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
                 if this.history_view.select(id) {
@@ -688,46 +723,22 @@ impl SampleDataWorkspace {
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(tokens.warning())
-            .bg(tokens.surface_raised())
-            .child(
-                div().text_xs().text_color(tokens.text()).child(
-                    "Restoring this History entry replaces the current Sample Data session.",
-                ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(
-                        Button::new("Restore")
-                            .variant(ButtonVariant::Primary)
-                            .focus_handle(self.focus.history_confirm.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                this.confirm_restore(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("Cancel")
-                            .focus_handle(self.focus.history_cancel.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.cancel_restore(cx);
-                            })),
-                    ),
-            )
+        ConfirmationBar::new(
+            "sample-data.restore-confirmation",
+            "Restoring this entry replaces the current Sample Data session.",
+            "Restore",
+            "Cancel",
+        )
+        .focus_handles(
+            self.focus.history_confirm.clone(),
+            self.focus.history_cancel.clone(),
+        )
+        .on_confirm(view_click(cx, |this, window, cx| {
+            this.confirm_restore(window, cx);
+        }))
+        .on_cancel(view_click(cx, |this, _window, cx| {
+            this.cancel_restore(cx);
+        }))
     }
 }
 
@@ -736,6 +747,47 @@ impl Render for SampleDataWorkspace {
         self.sync_display(window, cx);
         let tokens = ThemeTokens::active();
         let can_copy = self.session.evaluation().is_valid_operation();
+        let output_format = SegmentedControl::new(
+            "sample-data.output-format",
+            "Output format",
+            SampleDataFormat::ALL
+                .into_iter()
+                .map(|format| SegmentedOption::new(output_format_id(format), format.label()))
+                .collect(),
+            Some(output_format_id(self.output_format).to_owned()),
+            self.format_focus.clone(),
+        )
+        .on_change({
+            let weak = cx.weak_entity();
+            Rc::new(move |id, _window, cx| {
+                let format = match id {
+                    "json" => SampleDataFormat::Json,
+                    "csv" => SampleDataFormat::Csv,
+                    _ => return,
+                };
+                weak.update(cx, |this, cx| this.set_output_format(format, cx))
+                    .ok();
+            })
+        });
+        let row_count = NumericStepper::new(
+            "sample-data.row-count",
+            "Rows",
+            Some(self.row_count as i32),
+            MINIMUM_ROW_COUNT as i32,
+            MAXIMUM_ROW_COUNT as i32,
+            1,
+        )
+        .focus_handles(
+            self.row_stepper_focus[0].clone(),
+            self.row_stepper_focus[1].clone(),
+        )
+        .on_step({
+            let weak = cx.weak_entity();
+            move |delta, _window, cx| {
+                weak.update(cx, |this, cx| this.adjust_row_count(i64::from(delta), cx))
+                    .ok();
+            }
+        });
 
         let toolbar = div()
             .flex()
@@ -743,32 +795,10 @@ impl Render for SampleDataWorkspace {
             .flex_wrap()
             .items_center()
             .gap_2()
-            .child(self.format_button(SampleDataFormat::Json, cx))
-            .child(self.format_button(SampleDataFormat::Csv, cx))
+            .child(output_format)
+            .child(row_count)
             .child(
-                Button::new("−")
-                    .disabled(self.row_count <= MINIMUM_ROW_COUNT)
-                    .focus_handle(self.focus.row_decrement.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
-                        this.adjust_row_count(-1, cx);
-                    })),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(tokens.text())
-                    .child(format!("Rows: {}", self.row_count)),
-            )
-            .child(
-                Button::new("+")
-                    .disabled(self.row_count >= MAXIMUM_ROW_COUNT)
-                    .focus_handle(self.focus.row_increment.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
-                        this.adjust_row_count(1, cx);
-                    })),
-            )
-            .child(
-                Button::new("Add Field")
+                Button::with_id("sample-data.add-field", "Add Field")
                     .disabled(self.fields.len() >= MAXIMUM_FIELD_COUNT)
                     .focus_handle(self.focus.add_field.clone())
                     .on_click(view_click(cx, |this, window, cx| {
@@ -778,11 +808,14 @@ impl Render for SampleDataWorkspace {
             .child(div().flex_1())
             .child(copy_feedback(self.copied, "Copied to Clipboard"))
             .child(
-                Button::new(if self.history_visible {
-                    "History: on"
-                } else {
-                    "History: off"
-                })
+                Button::with_id(
+                    "sample-data.history.toggle",
+                    if self.history_visible {
+                        "History: on"
+                    } else {
+                        "History: off"
+                    },
+                )
                 .focus_handle(self.focus.history_toggle.clone())
                 .on_click(view_click(cx, |this, _window, cx| {
                     this.history_visible = !this.history_visible;
@@ -790,15 +823,14 @@ impl Render for SampleDataWorkspace {
                 })),
             )
             .child(
-                Button::new("Generate")
-                    .variant(ButtonVariant::Primary)
+                Button::primary_with_id("sample-data.generate", "Generate")
                     .focus_handle(self.focus.generate.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.generate(window, cx);
                     })),
             )
             .child(
-                Button::new("Copy Result")
+                Button::with_id("sample-data.copy-result", "Copy Result")
                     .disabled(!can_copy)
                     .focus_handle(self.focus.copy.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
@@ -806,7 +838,7 @@ impl Render for SampleDataWorkspace {
                     })),
             )
             .child(
-                Button::new("Clear")
+                Button::with_id("sample-data.clear", "Clear")
                     .focus_handle(self.focus.clear.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.clear(window, cx);
@@ -828,7 +860,7 @@ impl Render for SampleDataWorkspace {
             .min_h_0()
             .bg(tokens.background())
             .text_color(tokens.text())
-            .p_4()
+            .p_3()
             .gap_3()
             .child(
                 div()
@@ -895,6 +927,25 @@ fn decode_snapshot(entry: &HistoryEntry) -> Option<SampleDataSnapshot> {
     serde_json::from_value(entry.payload.clone()).ok()
 }
 
+fn output_format_id(format: SampleDataFormat) -> &'static str {
+    match format {
+        SampleDataFormat::Json => "json",
+        SampleDataFormat::Csv => "csv",
+    }
+}
+
+fn field_type_id(field_type: SampleFieldType) -> &'static str {
+    match field_type {
+        SampleFieldType::FictionalName => "fictional-name",
+        SampleFieldType::FictionalEmail => "fictional-email",
+        SampleFieldType::Number => "number",
+        SampleFieldType::Boolean => "boolean",
+        SampleFieldType::Date => "date",
+        SampleFieldType::Uuid => "uuid",
+        SampleFieldType::Enumeration => "enumeration",
+    }
+}
+
 fn preview_line(output: &str) -> String {
     let single_line = output.replace('\n', " ");
     let trimmed = single_line.trim();
@@ -948,20 +999,23 @@ fn restore_decision<C: PartialEq, O: PartialEq>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::fs;
     use std::path::PathBuf;
 
     use crate::history::{HistoryClock, HistoryEntry, HistoryStore};
 
-    struct TestClipboard;
+    #[derive(Default)]
+    struct TestClipboard(RefCell<Option<String>>);
 
     impl Clipboard for TestClipboard {
         fn read_text(&self, _cx: &mut App) -> Option<String> {
             None
         }
 
-        fn write_text(&self, _text: &str, _cx: &mut App) {}
+        fn write_text(&self, text: &str, _cx: &mut App) {
+            *self.0.borrow_mut() = Some(text.to_owned());
+        }
     }
 
     struct CountingClock(Rc<Cell<usize>>);
@@ -1104,7 +1158,7 @@ mod tests {
         };
         let entry = history_entry("captured", snapshot.clone());
         history.store().record(entry.clone()).unwrap();
-        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard::default());
         let (workspace, cx) = cx.add_window_view(|window, cx| {
             SampleDataWorkspace::new(window, cx, clipboard, history.clone())
         });
@@ -1201,7 +1255,7 @@ mod tests {
         };
         let entry = history_entry("captured", snapshot.clone());
         history.store().record(entry.clone()).unwrap();
-        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard::default());
         let (workspace, cx) = cx.add_window_view(|window, cx| {
             SampleDataWorkspace::new(window, cx, clipboard, history.clone())
         });
@@ -1256,7 +1310,7 @@ mod tests {
         };
         let entry = history_entry("captured", snapshot.clone());
         history.store().record(entry.clone()).unwrap();
-        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard::default());
         let (workspace, cx) = cx.add_window_view(|window, cx| {
             SampleDataWorkspace::new(window, cx, clipboard, history.clone())
         });
@@ -1280,6 +1334,78 @@ mod tests {
             });
             assert_eq!(history.load(SampleData::ID).unwrap().len(), 1);
         });
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn segmented_schema_and_copy_result_actions_preserve_exact_output(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = isolated_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(crate::history::SystemClock::new()),
+        ));
+        let clipboard = Rc::new(TestClipboard::default());
+        let app_clipboard: Rc<dyn Clipboard> = clipboard.clone();
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            SampleDataWorkspace::new(window, cx, app_clipboard, history.clone())
+        });
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let format_focus = workspace.read(cx).format_focus.clone();
+            let focus = format_focus.handle("sample-data.output-format", "csv", cx);
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(cx, |view, _| view.output_format),
+            SampleDataFormat::Csv
+        );
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let group_id = format!(
+                "sample-data.field.{}.type",
+                workspace.read(cx).fields[0].ui_id
+            );
+            let field_type_focus = workspace.read(cx).field_type_focus.clone();
+            let focus = field_type_focus.handle(&group_id, "number", cx);
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(cx, |view, _| view.fields[0].field_type),
+            SampleFieldType::Number
+        );
+
+        for _ in 0..2 {
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                let focus = workspace.read(cx).focus.generate.clone();
+                window.focus(&focus, cx);
+            });
+            cx.simulate_keystrokes("enter");
+        }
+        let output = workspace.read_with(cx, |view, _| {
+            view.session.evaluation().output().unwrap().to_owned()
+        });
+        assert!(
+            output.contains(','),
+            "CSV output should be copied as generated"
+        );
+        assert_eq!(history.load(SampleData::ID).unwrap().len(), 2);
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.copy.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().as_deref(), Some(output.as_str()));
+        assert_eq!(history.load(SampleData::ID).unwrap().len(), 2);
         fs::remove_dir_all(root).unwrap();
     }
 }

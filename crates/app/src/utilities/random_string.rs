@@ -17,11 +17,14 @@ use sofdevtool_core::utilities::random_string::{
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    DiagnosticSeverity, HistoryItem, HistoryPanel, TextField, ThemeTokens,
+    ConfirmationBar, DiagnosticSeverity, NumericStepper, SelectableList, SelectableListFocus,
+    SelectableRow, TextField, ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
-use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::history::{
+    HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState, RETENTION,
+};
 use crate::preferences::{RandomStringControlsPreferences, RandomStringControlsStartup};
 use crate::workbench::Workbench;
 
@@ -176,10 +179,6 @@ pub fn construct(
 /// handle across two visible buttons aborts GPUI when both request focus in a
 /// single frame; per-result Copy buttons get handles from `item_focus`.
 struct ButtonFocus {
-    length_down: FocusHandle,
-    length_up: FocusHandle,
-    count_down: FocusHandle,
-    count_up: FocusHandle,
     uppercase: FocusHandle,
     lowercase: FocusHandle,
     digits: FocusHandle,
@@ -211,10 +210,13 @@ pub struct RandomStringWorkspace {
     session: RandomStringSession,
     copied: Option<String>,
     history_view: HistoryViewState,
+    history_focus: SelectableListFocus,
     history_visible: bool,
     _history_subscription: HistorySubscription,
     item_focus: Vec<FocusHandle>,
     focus: ButtonFocus,
+    length_stepper_focus: [FocusHandle; 2],
+    count_stepper_focus: [FocusHandle; 2],
     _subscriptions: Vec<Subscription>,
 }
 
@@ -268,14 +270,11 @@ impl RandomStringWorkspace {
             session: RandomStringSession::new(),
             copied: None,
             history_view,
+            history_focus: SelectableListFocus::new(),
             history_visible: true,
             _history_subscription: history_subscription,
             item_focus: Vec::new(),
             focus: ButtonFocus {
-                length_down: cx.focus_handle().tab_stop(true).tab_index(0),
-                length_up: cx.focus_handle().tab_stop(true).tab_index(0),
-                count_down: cx.focus_handle().tab_stop(true).tab_index(0),
-                count_up: cx.focus_handle().tab_stop(true).tab_index(0),
                 uppercase: cx.focus_handle().tab_stop(true).tab_index(0),
                 lowercase: cx.focus_handle().tab_stop(true).tab_index(0),
                 digits: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -290,6 +289,12 @@ impl RandomStringWorkspace {
                 history_confirm: cx.focus_handle().tab_stop(true).tab_index(0),
                 history_cancel: cx.focus_handle().tab_stop(true).tab_index(0),
             },
+            length_stepper_focus: std::array::from_fn(|_| {
+                cx.focus_handle().tab_stop(true).tab_index(0)
+            }),
+            count_stepper_focus: std::array::from_fn(|_| {
+                cx.focus_handle().tab_stop(true).tab_index(0)
+            }),
             _subscriptions: subscriptions,
         }
     }
@@ -523,20 +528,21 @@ impl RandomStringWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<HistoryItem> {
+    fn history_items(&self) -> Vec<SelectableRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                HistoryItem {
+                SelectableRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
                         .as_ref()
                         .map(|snapshot| preview_line(&snapshot.values))
                         .unwrap_or_else(|| "Unavailable snapshot".to_owned()),
-                    available: snapshot.is_some(),
+                    status: snapshot.is_none().then(|| "Unavailable".to_owned()),
+                    selectable: snapshot.is_some(),
                 }
             })
             .collect()
@@ -544,13 +550,14 @@ impl RandomStringWorkspace {
 
     fn toggle_button(
         &self,
+        id: &'static str,
         label: &'static str,
         on: bool,
         handle: FocusHandle,
         cx: &mut Context<Self>,
         toggle: impl Fn(&mut Self) + 'static,
     ) -> Button {
-        Button::new(label)
+        Button::with_id(id, label)
             .variant(if on {
                 ButtonVariant::Primary
             } else {
@@ -594,7 +601,10 @@ impl RandomStringWorkspace {
             .gap_1()
             .overflow_y_scroll();
         for (index, value) in values.iter().enumerate() {
-            let mut copy = Button::new(format!("Copy {}", index + 1));
+            let mut copy = Button::with_id(
+                format!("random-string.copy.{index}"),
+                format!("Copy {}", index + 1),
+            );
             if let Some(handle) = self.item_focus.get(index).cloned() {
                 copy = copy.focus_handle(handle);
             }
@@ -646,7 +656,7 @@ impl RandomStringWorkspace {
             .map(|entry| decode_snapshot(entry).is_some())
             .unwrap_or(false);
         let actions = div().flex().flex_row().gap_2().child(
-            Button::new("Restore selected")
+            Button::with_id("random-string.history.restore-selected", "Restore selected")
                 .disabled(!restore_enabled)
                 .focus_handle(self.focus.history_restore.clone())
                 .on_click(view_click(cx, |this, window, cx| {
@@ -654,11 +664,15 @@ impl RandomStringWorkspace {
                 })),
         );
         let weak = cx.weak_entity();
-        let panel = HistoryPanel::new(
+        let panel = SelectableList::new(
+            "random-string.history",
+            "History",
             self.history_items(),
             selected,
             "No retained operations yet.",
+            self.history_focus.clone(),
         )
+        .summary(format!("{}/{}", self.history_view.entries.len(), RETENTION))
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
                 if this.history_view.select(id) {
@@ -681,47 +695,22 @@ impl RandomStringWorkspace {
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(tokens.warning())
-            .bg(tokens.surface_raised())
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(tokens.text())
-                    .child("Restoring this History entry replaces the current generated results."),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(
-                        Button::new("Restore")
-                            .variant(ButtonVariant::Primary)
-                            .focus_handle(self.focus.history_confirm.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                this.confirm_restore(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("Cancel")
-                            .focus_handle(self.focus.history_cancel.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.cancel_restore(cx);
-                            })),
-                    ),
-            )
+        ConfirmationBar::new(
+            "random-string.restore-confirmation",
+            "Restoring this entry replaces the current generated results.",
+            "Restore",
+            "Cancel",
+        )
+        .focus_handles(
+            self.focus.history_confirm.clone(),
+            self.focus.history_cancel.clone(),
+        )
+        .on_confirm(view_click(cx, |this, window, cx| {
+            this.confirm_restore(window, cx);
+        }))
+        .on_cancel(view_click(cx, |this, _window, cx| {
+            this.cancel_restore(cx);
+        }))
     }
 }
 
@@ -771,6 +760,7 @@ impl Render for RandomStringWorkspace {
             .items_center()
             .gap_2()
             .child(self.toggle_button(
+                "random-string.class.uppercase",
                 "A-Z",
                 self.uppercase,
                 self.focus.uppercase.clone(),
@@ -778,18 +768,23 @@ impl Render for RandomStringWorkspace {
                 |this| this.uppercase = !this.uppercase,
             ))
             .child(self.toggle_button(
+                "random-string.class.lowercase",
                 "a-z",
                 self.lowercase,
                 self.focus.lowercase.clone(),
                 cx,
                 |this| this.lowercase = !this.lowercase,
             ))
-            .child(
-                self.toggle_button("0-9", self.digits, self.focus.digits.clone(), cx, |this| {
-                    this.digits = !this.digits
-                }),
-            )
             .child(self.toggle_button(
+                "random-string.class.digits",
+                "0-9",
+                self.digits,
+                self.focus.digits.clone(),
+                cx,
+                |this| this.digits = !this.digits,
+            ))
+            .child(self.toggle_button(
+                "random-string.class.symbols",
                 "Symbols",
                 self.symbols,
                 self.focus.symbols.clone(),
@@ -797,6 +792,7 @@ impl Render for RandomStringWorkspace {
                 |this| this.symbols = !this.symbols,
             ))
             .child(self.toggle_button(
+                "random-string.class.exclude-ambiguous",
                 "Exclude ambiguous",
                 self.exclude_ambiguous,
                 self.focus.ambiguous.clone(),
@@ -804,83 +800,57 @@ impl Render for RandomStringWorkspace {
                 |this| this.exclude_ambiguous = !this.exclude_ambiguous,
             ));
 
+        let length_stepper = NumericStepper::new(
+            "random-string.length",
+            "Length",
+            Some(self.length as i32),
+            MIN_LENGTH as i32,
+            MAX_LENGTH as i32,
+            1,
+        )
+        .focus_handles(
+            self.length_stepper_focus[0].clone(),
+            self.length_stepper_focus[1].clone(),
+        )
+        .on_step({
+            let weak = cx.weak_entity();
+            move |delta, _window, cx| {
+                weak.update(cx, |this, cx| {
+                    this.set_length(delta as isize, cx);
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
+        let count_stepper = NumericStepper::new(
+            "random-string.count",
+            "Count",
+            Some(self.count as i32),
+            MIN_COUNT as i32,
+            MAX_COUNT as i32,
+            1,
+        )
+        .focus_handles(
+            self.count_stepper_focus[0].clone(),
+            self.count_stepper_focus[1].clone(),
+        )
+        .on_step({
+            let weak = cx.weak_entity();
+            move |delta, _window, cx| {
+                weak.update(cx, |this, cx| {
+                    this.set_count(delta as isize, cx);
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
         let numbers = div()
             .flex()
             .flex_row()
             .items_center()
             .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.text_muted())
-                            .child("Length"),
-                    )
-                    .child(
-                        Button::new("Length -")
-                            .focus_handle(self.focus.length_down.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.set_length(-1, cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .w_12()
-                            .text_center()
-                            .text_sm()
-                            .child(self.length.to_string()),
-                    )
-                    .child(
-                        Button::new("Length +")
-                            .focus_handle(self.focus.length_up.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.set_length(1, cx);
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(tokens.text_muted())
-                            .child("Count"),
-                    )
-                    .child(
-                        Button::new("Count -")
-                            .focus_handle(self.focus.count_down.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.set_count(-1, cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .w_12()
-                            .text_center()
-                            .text_sm()
-                            .child(self.count.to_string()),
-                    )
-                    .child(
-                        Button::new("Count +")
-                            .focus_handle(self.focus.count_up.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.set_count(1, cx);
-                                cx.notify();
-                            })),
-                    ),
-            );
+            .child(length_stepper)
+            .child(count_stepper);
 
         let custom = div()
             .flex()
@@ -902,22 +872,21 @@ impl Render for RandomStringWorkspace {
             .items_center()
             .gap_2()
             .child(
-                Button::new("Generate")
-                    .variant(ButtonVariant::Primary)
+                Button::primary_with_id("random-string.generate", "Generate")
                     .focus_handle(self.focus.generate.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
                         this.generate(cx);
                     })),
             )
             .child(
-                Button::new("Paste custom")
+                Button::with_id("random-string.paste-custom", "Paste custom")
                     .focus_handle(self.focus.paste.clone())
                     .on_click(view_click(cx, |this, window, cx| {
                         this.paste_custom(window, cx);
                     })),
             )
             .child(
-                Button::new("Copy All")
+                Button::with_id("random-string.copy-all", "Copy All")
                     .disabled(!has_results)
                     .focus_handle(self.focus.copy_all.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
@@ -925,7 +894,7 @@ impl Render for RandomStringWorkspace {
                     })),
             )
             .child(
-                Button::new("Clear results")
+                Button::with_id("random-string.clear-results", "Clear results")
                     .disabled(!has_results)
                     .focus_handle(self.focus.clear.clone())
                     .on_click(view_click(cx, |this, _window, cx| {
@@ -938,11 +907,14 @@ impl Render for RandomStringWorkspace {
                 self.copied.as_deref().unwrap_or(""),
             ))
             .child(
-                Button::new(if self.history_visible {
-                    "History: on"
-                } else {
-                    "History: off"
-                })
+                Button::with_id(
+                    "random-string.history.toggle",
+                    if self.history_visible {
+                        "History: on"
+                    } else {
+                        "History: off"
+                    },
+                )
                 .focus_handle(self.focus.history_toggle.clone())
                 .on_click(view_click(cx, |this, _window, cx| {
                     this.history_visible = !this.history_visible;
@@ -957,7 +929,7 @@ impl Render for RandomStringWorkspace {
             .min_h_0()
             .bg(tokens.background())
             .text_color(tokens.text())
-            .p_4()
+            .p_3()
             .gap_3()
             .child(header)
             .child(classes)
@@ -1043,6 +1015,7 @@ fn truncate(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -1051,14 +1024,17 @@ mod tests {
     use super::*;
     use crate::history::{HistoryPolicy, HistoryRecorder, HistoryStore, SystemClock};
 
-    struct TestClipboard;
+    #[derive(Default)]
+    struct TestClipboard(RefCell<Option<String>>);
 
     impl Clipboard for TestClipboard {
         fn read_text(&self, _cx: &mut App) -> Option<String> {
             None
         }
 
-        fn write_text(&self, _text: &str, _cx: &mut App) {}
+        fn write_text(&self, text: &str, _cx: &mut App) {
+            *self.0.borrow_mut() = Some(text.to_owned());
+        }
     }
 
     /// The store's file name, mirrored from `preferences.rs` for fixture
@@ -1396,7 +1372,7 @@ mod tests {
             Box::new(SystemClock::new()),
         ));
         let controls = reopen(&root);
-        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard::default());
         let (workspace, cx) = cx.add_window_view(|window, cx| {
             RandomStringWorkspace::new_with_controls(
                 window,
@@ -1456,6 +1432,71 @@ mod tests {
             });
             assert_eq!(history.load(RandomString::ID).unwrap().len(), 1);
         });
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn repeated_generation_and_copy_actions_preserve_exact_batch_values(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = temporary_root("copy-actions");
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.join("History")),
+            Box::new(SystemClock::new()),
+        ));
+        let clipboard = Rc::new(TestClipboard::default());
+        let app_clipboard: Rc<dyn Clipboard> = clipboard.clone();
+        let controls = reopen(&root);
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            RandomStringWorkspace::new_with_controls(
+                window,
+                cx,
+                app_clipboard,
+                history.clone(),
+                controls,
+            )
+        });
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).count_stepper_focus[1].clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(workspace.read_with(cx, |view, _| view.count), 2);
+
+        for _ in 0..2 {
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                let focus = workspace.read(cx).focus.generate.clone();
+                window.focus(&focus, cx);
+            });
+            cx.simulate_keystrokes("enter");
+        }
+        let values = workspace.read_with(cx, |view, _| view.session.evaluation().values().to_vec());
+        assert_eq!(values.len(), 2);
+        assert_eq!(history.load(RandomString::ID).unwrap().len(), 2);
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).item_focus[1].clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(clipboard.0.borrow().as_deref(), Some(values[1].as_str()));
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.copy_all.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            clipboard.0.borrow().as_deref(),
+            Some(values.join("\n").as_str())
+        );
+        assert_eq!(history.load(RandomString::ID).unwrap().len(), 2);
         fs::remove_dir_all(root).unwrap();
     }
 }
