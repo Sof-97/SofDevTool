@@ -13,9 +13,7 @@ use gpui::{
     div, px, AnyView, AnyWindowHandle, App, Context, Entity, FocusHandle, IntoElement, Render,
     ScrollHandle, Subscription, Window,
 };
-use sofdevtool_ui::{
-    apply_theme, view_click, Button, ButtonVariant, TextField, ThemeTokens, ThemeVariant,
-};
+use sofui::{apply_theme, view_click, Button, ButtonVariant, TextField, ThemeTokens, ThemeVariant};
 
 use crate::clipboard::Clipboard;
 use crate::history::HistoryRecorder;

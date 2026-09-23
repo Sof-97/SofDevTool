@@ -22,7 +22,7 @@ use sofdevtool_core::utilities::regex::{
     RUST_REGEX_FLAGS_NOTE, RUST_REGEX_REPLACEMENT_NOTE,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
     ConfirmationBar, DiagnosticSeverity, SelectableList, SelectableListFocus, SelectableRow,
     TextEditor, TextField, ThemeTokens,
@@ -440,9 +440,9 @@ impl RegexWorkspace {
         match self.session.evaluation() {
             RegexEvaluation::Valid { replacement, .. } => {
                 self.preview
-                    .set_text(replacement.clone().unwrap_or_default(), window, cx);
+                    .assign_text(replacement.clone().unwrap_or_default(), window, cx);
             }
-            _ => self.preview.set_text("", window, cx),
+            _ => self.preview.assign_text("", window, cx),
         }
     }
 
@@ -454,7 +454,7 @@ impl RegexWorkspace {
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            self.text.replace_all(text, window, cx);
+            self.text.edit_text(text, window, cx);
         }
     }
 
@@ -470,9 +470,9 @@ impl RegexWorkspace {
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
         self.suppress_changes = true;
-        self.pattern.replace_all("", window, cx);
-        self.text.replace_all("", window, cx);
-        self.replacement.replace_all("", window, cx);
+        self.pattern.edit_text("", window, cx);
+        self.text.edit_text("", window, cx);
+        self.replacement.edit_text("", window, cx);
         self.suppress_changes = false;
         self.session.clear();
         self.worker.invalidate(self.session.revision());
@@ -514,11 +514,11 @@ impl RegexWorkspace {
     ) {
         self.suppress_changes = true;
         self.pattern
-            .set_text(snapshot.request.pattern.clone(), window, cx);
+            .assign_text(snapshot.request.pattern.clone(), window, cx);
         self.text
-            .set_text(snapshot.request.text.clone(), window, cx);
+            .assign_text(snapshot.request.text.clone(), window, cx);
         self.replacement
-            .set_text(snapshot.request.replacement.clone(), window, cx);
+            .assign_text(snapshot.request.replacement.clone(), window, cx);
         self.flags = snapshot.request.flags;
         self.session.restore(snapshot);
         self.worker.invalidate(self.session.revision());
@@ -1282,7 +1282,7 @@ mod tests {
     fn flag_and_history_keyboard_controls_restore_without_reexecution(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = test_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),
@@ -1364,7 +1364,7 @@ mod tests {
     ) {
         use std::sync::mpsc;
 
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = test_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),

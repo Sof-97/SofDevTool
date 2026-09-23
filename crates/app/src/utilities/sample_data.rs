@@ -13,7 +13,7 @@ use sofdevtool_core::utilities::sample_data::{
     SampleDataSnapshot, SampleFieldType, MAXIMUM_FIELD_COUNT, MAXIMUM_ROW_COUNT, MINIMUM_ROW_COUNT,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
     ConfirmationBar, DiagnosticSeverity, LabeledField, NumericStepper, SegmentedControl,
     SegmentedControlFocus, SegmentedOption, SelectableList, SelectableListFocus, SelectableRow,
@@ -90,12 +90,12 @@ impl FieldState {
         let date_minimum = TextField::new(window, cx);
         let date_maximum = TextField::new(window, cx);
         let choices = TextField::new(window, cx);
-        name.set_text(definition.name.clone(), window, cx);
-        number_minimum.set_text(number_text(definition.number_minimum), window, cx);
-        number_maximum.set_text(number_text(definition.number_maximum), window, cx);
-        date_minimum.set_text(number_text(definition.date_minimum_seconds), window, cx);
-        date_maximum.set_text(number_text(definition.date_maximum_seconds), window, cx);
-        choices.set_text(definition.enum_choices.join(","), window, cx);
+        name.assign_text(definition.name.clone(), window, cx);
+        number_minimum.assign_text(number_text(definition.number_minimum), window, cx);
+        number_maximum.assign_text(number_text(definition.number_maximum), window, cx);
+        date_minimum.assign_text(number_text(definition.date_minimum_seconds), window, cx);
+        date_maximum.assign_text(number_text(definition.date_maximum_seconds), window, cx);
+        choices.assign_text(definition.enum_choices.join(","), window, cx);
 
         let subscriptions = vec![
             name.on_change_in(window, cx, |this, _window, cx| this.invalidate(cx)),
@@ -296,7 +296,7 @@ impl SampleDataWorkspace {
             .output()
             .unwrap_or_default()
             .to_owned();
-        self.result.set_text(output, window, cx);
+        self.result.assign_text(output, window, cx);
     }
 
     fn set_output_format(&mut self, format: SampleDataFormat, cx: &mut Context<Self>) {
@@ -577,7 +577,6 @@ impl SampleDataWorkspace {
                                 "Integer: off"
                             },
                         )
-                        .id(format!("sample-data.field.{index}.integer"))
                         .variant(if field.number_is_integer {
                             ButtonVariant::Primary
                         } else {
@@ -1141,7 +1140,7 @@ mod tests {
     fn workspace_restore_confirmation_cancel_and_confirm_use_captured_output(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let clock_calls = Rc::new(Cell::new(0));
         let history = Rc::new(HistoryRecorder::new(
@@ -1241,7 +1240,7 @@ mod tests {
     fn invalid_edited_sample_schema_requires_confirmation_and_survives_cancel(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let clock_calls = Rc::new(Cell::new(0));
         let history = Rc::new(HistoryRecorder::new(
@@ -1297,7 +1296,7 @@ mod tests {
     fn empty_and_equivalent_sample_data_workspaces_restore_without_confirmation(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),
@@ -1341,7 +1340,7 @@ mod tests {
     fn segmented_schema_and_copy_result_actions_preserve_exact_output(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),

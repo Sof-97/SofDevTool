@@ -12,7 +12,7 @@ use sofdevtool_core::utilities::whitespace::{
     WhitespaceSnapshot, DEFAULT_TAB_WIDTH, MAX_TAB_WIDTH, MIN_TAB_WIDTH,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ConfirmationBar,
     DiagnosticSeverity, NumericStepper, SegmentedControl, SegmentedControlFocus, SegmentedOption,
     SelectableList, SelectableListFocus, SelectableRow, TextEditor, ThemeTokens,
@@ -178,9 +178,9 @@ impl WhitespaceWorkspace {
         self.display_epoch = epoch;
         match self.session.evaluation() {
             WhitespaceEvaluation::Valid { output } => {
-                self.result.set_text(output.clone(), window, cx);
+                self.result.assign_text(output.clone(), window, cx);
             }
-            _ => self.result.set_text("", window, cx),
+            _ => self.result.assign_text("", window, cx),
         }
     }
 
@@ -218,7 +218,7 @@ impl WhitespaceWorkspace {
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            self.input.replace_all(text, window, cx);
+            self.input.edit_text(text, window, cx);
         }
     }
 
@@ -233,7 +233,7 @@ impl WhitespaceWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
-        self.input.replace_all("", window, cx);
+        self.input.edit_text("", window, cx);
     }
 
     fn request_restore(
@@ -268,7 +268,7 @@ impl WhitespaceWorkspace {
         self.line_ending = snapshot.request.line_ending;
         self.tab_width = snapshot.request.tab_width;
         self.input
-            .set_text(snapshot.request.input.clone(), window, cx);
+            .assign_text(snapshot.request.input.clone(), window, cx);
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
@@ -677,7 +677,7 @@ mod interaction_tests {
 
     #[gpui::test]
     fn tab_stop_stepper_line_endings_copy_and_restore(cx: &mut gpui::TestAppContext) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = std::env::temp_dir().join(format!(
             "sofdevtool-whitespace-redesign-{}-{}",
             std::process::id(),

@@ -15,7 +15,7 @@ use sofdevtool_core::json::{
 };
 use sofdevtool_core::session::SubmitOutcome;
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
     ConfirmationBar, DiagnosticSeverity, LabeledField, SegmentedControl, SegmentedControlFocus,
     SegmentedOption, SelectableList, SelectableListFocus, SelectableRow, TextEditor, TextField,
@@ -678,7 +678,7 @@ mod tests {
     fn selectable_history_and_confirmation_reconcile_after_settings_deletion(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),

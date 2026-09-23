@@ -35,10 +35,8 @@ static ACTIVE_THEME: RwLock<ThemeState> = RwLock::new(ThemeState {
     tokens: ThemeTokens::for_variant(ThemeVariant::Graphite),
 });
 
-/// Compatibility setter for the active preset. Prefer [`crate::apply_theme`]
-/// when an application is running: it also updates editor colors and redraws
-/// every open window.
-pub fn set_active_theme(variant: ThemeVariant) {
+/// Updates the preset backing the application-wide appearance change.
+pub(crate) fn set_active_theme(variant: ThemeVariant) {
     let mut state = ACTIVE_THEME
         .write()
         .unwrap_or_else(|error| error.into_inner());

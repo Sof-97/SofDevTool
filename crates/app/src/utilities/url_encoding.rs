@@ -13,7 +13,7 @@ use sofdevtool_core::utilities::url_encoding::{
     UrlEncodingSnapshot,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ConfirmationBar,
     DiagnosticSeverity, SegmentedControl, SegmentedControlFocus, SegmentedOption, SelectableList,
     SelectableListFocus, SelectableRow, TextEditor, ThemeTokens,
@@ -174,9 +174,9 @@ impl UrlEncodingWorkspace {
         self.display_epoch = epoch;
         match self.session.evaluation() {
             UrlEncodingEvaluation::Valid { output } => {
-                self.result.set_text(output.clone(), window, cx);
+                self.result.assign_text(output.clone(), window, cx);
             }
-            _ => self.result.set_text("", window, cx),
+            _ => self.result.assign_text("", window, cx),
         }
     }
 
@@ -207,7 +207,7 @@ impl UrlEncodingWorkspace {
             UrlEncodingDirection::Decode => UrlEncodingDirection::Encode,
         };
         self.suppress_changes = true;
-        self.input.replace_all(prior_output, window, cx);
+        self.input.edit_text(prior_output, window, cx);
         self.suppress_changes = false;
         self.copied = false;
         self.schedule(window, cx);
@@ -216,7 +216,7 @@ impl UrlEncodingWorkspace {
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            self.input.replace_all(text, window, cx);
+            self.input.edit_text(text, window, cx);
         }
     }
 
@@ -231,7 +231,7 @@ impl UrlEncodingWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
-        self.input.replace_all("", window, cx);
+        self.input.edit_text("", window, cx);
     }
 
     fn request_restore(
@@ -265,7 +265,7 @@ impl UrlEncodingWorkspace {
         self.direction = snapshot.request.direction;
         self.mode = snapshot.request.mode;
         self.input
-            .set_text(snapshot.request.input.clone(), window, cx);
+            .assign_text(snapshot.request.input.clone(), window, cx);
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
@@ -650,7 +650,7 @@ mod interaction_tests {
     fn keyboard_mode_changes_percent_bytes_and_invalid_copy_stays_blocked(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = std::env::temp_dir().join(format!(
             "sofdevtool-url-redesign-{}-{}",
             std::process::id(),

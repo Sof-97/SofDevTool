@@ -22,7 +22,7 @@ serde_json.workspace = true
 wry.workspace = true
 raw-window-handle.workspace = true
 sofdevtool-core = { path = "../core" }
-sofdevtool-ui = { package = "sofui", path = "../ui" }
+sofui = { path = "../ui" }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

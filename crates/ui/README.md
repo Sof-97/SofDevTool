@@ -21,8 +21,7 @@ default, or choose `CatppuccinFrappe`. `apply_custom_theme` accepts
 colors. Both calls update every open window and the wrapped editor's background,
 text, caret and focus colors without recreating editor or view entities. A
 window opened later inherits the same palette. The consuming application owns
-theme-choice persistence; sofui's `set_dark_theme` and `set_active_theme` remain
-compatibility accessors and do not provide the complete observable update.
+theme-choice persistence.
 
 Use `Button::with_id(id, label)` or `Button::primary_with_id(id, label)` with
 a stable ID for each logical control. Labels may repeat or change while IDs
@@ -39,13 +38,20 @@ the owning view with `NumericStepper::stepped`, then notify the view. The
 component has no color or parsing policy; Color Conversion uses it for sRGB
 channels. The gallery shows keyboard activation and boundary clamping.
 
+`SegmentedControl::new(id, label, options, selected_id, focus)` presents an
+arbitrary set of caller-labelled choices, each with a stable option ID and an
+optional disabled state. Retain `SegmentedControlFocus` in the owning view.
+Click or Enter/Space activates a focused option; Left/Right wraps over enabled
+choices and Home/End selects the first/last enabled choice. The `on_change`
+callback fires only when the selected ID changes; the consumer owns that value
+and its domain meaning. Rows wrap when the available width is narrow.
+
 `SelectableList::new(id, title, rows, selected, empty_message, focus)` accepts
 plain `SelectableRow`s. Supply the count or quota wording with `summary` and
 retain the required `SelectableListFocus` in the owning view across redraws.
 Click, Enter and Space select a row with a stable ID and retained
 focus. Rows can show a caller-defined status or be disabled. The consumer owns
-the selected ID and any response to selection. The older `HistoryPanel` shape
-temporarily delegates to this generic list for workspaces awaiting migration.
+the selected ID and any response to selection.
 
 Retain one `HoldController` per destructive action and pass it to
 `HoldButton::new(id, label, controller)` with the caller's `duration`. The
@@ -60,8 +66,7 @@ performs persistence; sofui only manages the interaction.
 and clears undo history. `edit_text` performs a user-style whole-text edit:
 it emits a change event and is undoable. `on_change_in` observes editing
 events. Consumers that silently assign text and need to evaluate it must
-schedule that work explicitly. The legacy `set_text` and `replace_all` aliases
-remain for workspaces still being migrated.
+schedule that work explicitly.
 
 From the repository root, run `cargo run -p sofui --example gallery` to open the gallery.
 The gallery imports only sofui and GPUI, and demonstrates repeated labels,
@@ -72,7 +77,15 @@ the numeric control. `cargo test -p sofui` covers public component interactions;
 `cargo check -p sofui --all-targets` includes the gallery. Native launch
 observations require a separate acceptance run.
 
-The application currently imports this package under the compatibility alias
-`sofdevtool-ui`. Remaining workspaces and shell views will migrate to the
-`sofui` crate name and explicit IDs/text method names in ticket 19; that
-cleanup can then remove the alias and compatibility methods.
+`crates/ui/tests/consumer` is an independent Cargo package with its own
+`[workspace]` boundary. From the repository root, run
+`cargo build --offline --locked --manifest-path crates/ui/tests/consumer/Cargo.toml` to compile a
+second GPUI application using only sofui's public controls and declared
+dependencies. Run it with
+`cargo run --manifest-path crates/ui/tests/consumer/Cargo.toml` for a standalone editor, choice control
+and stable-ID button. It imports no SofDevTool application or core crate.
+`bash scripts/rust/verify-sofui-isolation.sh` copies only the library and
+consumer sources to a temporary directory outside this repository, then builds
+both the gallery and consumer against their dedicated lockfiles. This is part
+of `make verify-full`. The copied library requires neither the repository root
+manifest nor any application/core source or asset path.

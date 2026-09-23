@@ -11,7 +11,7 @@ use sofdevtool_core::utilities::base64::{
     Base64, Base64Alphabet, Base64Evaluation, Base64Mode, Base64Request, Base64Snapshot,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
     ConfirmationBar, DiagnosticSeverity, SegmentedControl, SegmentedControlFocus, SegmentedOption,
     SelectableList, SelectableListFocus, SelectableRow, TextEditor, ThemeTokens,
@@ -175,9 +175,9 @@ impl Base64Workspace {
         self.display_epoch = epoch;
         match self.session.evaluation() {
             Base64Evaluation::Valid { output } => {
-                self.result.set_text(output.clone(), window, cx);
+                self.result.assign_text(output.clone(), window, cx);
             }
-            _ => self.result.set_text("", window, cx),
+            _ => self.result.assign_text("", window, cx),
         }
     }
 
@@ -204,7 +204,7 @@ impl Base64Workspace {
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            self.input.replace_all(text, window, cx);
+            self.input.edit_text(text, window, cx);
         }
     }
 
@@ -219,7 +219,7 @@ impl Base64Workspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
-        self.input.replace_all("", window, cx);
+        self.input.edit_text("", window, cx);
     }
 
     fn request_restore(
@@ -254,7 +254,7 @@ impl Base64Workspace {
         self.alphabet = snapshot.request.alphabet;
         self.padded = snapshot.request.padded;
         self.input
-            .set_text(snapshot.request.input.clone(), window, cx);
+            .assign_text(snapshot.request.input.clone(), window, cx);
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
@@ -652,7 +652,7 @@ mod interaction_tests {
 
     #[gpui::test]
     fn keyboard_mode_copy_invalid_and_exact_history_restore(cx: &mut gpui::TestAppContext) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),

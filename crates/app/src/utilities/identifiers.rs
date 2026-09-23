@@ -16,7 +16,7 @@ use sofdevtool_core::utilities::identifiers::{
     MAXIMUM_ORDERED_KSUID_COUNT,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
     ConfirmationBar, DiagnosticSeverity, LabeledField, NumericStepper, SegmentedControl,
     SegmentedControlFocus, SegmentedOption, SelectableList, SelectableListFocus, SelectableRow,
@@ -101,7 +101,7 @@ impl IdentifiersWorkspace {
         let namespace = TextField::new(window, cx);
         let name = TextField::new(window, cx);
         let inspect = TextField::new(window, cx);
-        namespace.set_text(DEFAULT_NAMESPACE, window, cx);
+        namespace.assign_text(DEFAULT_NAMESPACE, window, cx);
         let subscriptions = vec![
             namespace.on_change_in(window, cx, |this, _window, cx| this.invalidate(cx)),
             name.on_change_in(window, cx, |this, _window, cx| this.invalidate(cx)),
@@ -302,7 +302,7 @@ impl IdentifiersWorkspace {
     fn paste_inspect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.suppress_changes = true;
-            self.inspect.replace_all(text, window, cx);
+            self.inspect.edit_text(text, window, cx);
             self.suppress_changes = false;
             self.invalidate(cx);
         }
@@ -329,7 +329,7 @@ impl IdentifiersWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.suppress_changes = true;
-        self.inspect.replace_all("", window, cx);
+        self.inspect.edit_text("", window, cx);
         self.suppress_changes = false;
         self.session.clear();
         self.copied_all = false;
@@ -392,11 +392,11 @@ impl IdentifiersWorkspace {
             None
         };
         self.namespace
-            .set_text(snapshot.request.namespace.clone(), window, cx);
+            .assign_text(snapshot.request.namespace.clone(), window, cx);
         self.name
-            .set_text(snapshot.request.name.clone(), window, cx);
+            .assign_text(snapshot.request.name.clone(), window, cx);
         self.inspect
-            .set_text(snapshot.request.input.clone(), window, cx);
+            .assign_text(snapshot.request.input.clone(), window, cx);
         self.session.restore(snapshot);
         // Advance past the restored nonce so the next explicit action is always
         // a new revision rather than being deduplicated as an unchanged request.
@@ -1229,7 +1229,7 @@ mod tests {
     fn workspace_restore_confirmation_cancel_and_confirm_use_the_captured_batch(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let clock_calls = Rc::new(Cell::new(0));
         let history = Rc::new(HistoryRecorder::new(
@@ -1321,7 +1321,7 @@ mod tests {
     fn empty_and_equivalent_identifier_workspaces_restore_without_confirmation(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let clock_calls = Rc::new(Cell::new(0));
         let history = Rc::new(HistoryRecorder::new(
@@ -1363,7 +1363,7 @@ mod tests {
     fn segmented_modes_repeat_generation_and_copy_actions_preserve_exact_values(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),

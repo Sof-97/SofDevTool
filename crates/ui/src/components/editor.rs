@@ -37,16 +37,6 @@ impl TextEditor {
             .update(cx, |state, cx| state.replace_all(text, window, cx));
     }
 
-    /// Compatibility alias for silent assignment.
-    pub fn set_text(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
-        self.assign_text(text, window, cx);
-    }
-
-    /// Compatibility alias for a user-style edit.
-    pub fn replace_all(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
-        self.edit_text(text, window, cx);
-    }
-
     pub fn text(&self, cx: &App) -> String {
         self.state.read(cx).value().to_string()
     }

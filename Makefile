@@ -9,7 +9,7 @@ help:
 	@echo '  make gallery      Open the independent sofui component gallery'
 	@echo '  make format       Apply Rust formatting'
 	@echo '  make verify       Format check, Clippy, tests, Debug app/gallery build'
-	@echo '  make verify-full  Verify plus Release, Text Diff assets and both bundles'
+	@echo '  make verify-full  Verify plus Release, sofui isolation, Text Diff assets and both bundles'
 	@echo '  make release      Package artifacts/SofDevTool.app'
 	@echo '  make install      Install Release to INSTALL_DESTINATION (default ~/Applications)'
 

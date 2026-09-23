@@ -9,7 +9,7 @@ mod components;
 pub mod theme;
 
 pub use components::*;
-pub use theme::{active_theme, set_active_theme, ThemePalette, ThemeTokens, ThemeVariant};
+pub use theme::{active_theme, ThemePalette, ThemeTokens, ThemeVariant};
 
 use gpui::{AnyView, App, AppContext as _, Entity, Render, Window};
 
@@ -39,16 +39,11 @@ pub fn init(cx: &mut gpui::App) {
     components::register_selectable_list_key_bindings(cx);
 }
 
-/// Applies the dark appearance used by the Workbench and gallery.
-pub fn set_dark_theme(window: Option<&mut gpui::Window>, cx: &mut gpui::App) {
-    gpui_component::Theme::change(gpui_component::ThemeMode::Dark, window, cx);
-}
-
 /// Selects one of the built-in palettes for every open window and the wrapped
 /// text editor. Existing view and editor entities keep their identity, focus,
 /// contents and undo history. The consumer owns persistence of the choice.
 pub fn apply_theme(variant: ThemeVariant, cx: &mut App) {
-    set_active_theme(variant);
+    theme::set_active_theme(variant);
     sync_editor_theme(ThemeTokens::active(), cx);
     cx.refresh_windows();
 }

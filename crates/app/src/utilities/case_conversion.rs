@@ -13,7 +13,7 @@ use sofdevtool_core::utilities::case_conversion::{
     CaseConversionStyle,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, empty_state, panel, view_click, Button, ConfirmationBar, DiagnosticSeverity,
     SegmentedControl, SegmentedControlFocus, SegmentedOption, SelectableList, SelectableListFocus,
     SelectableRow, TextEditor, ThemeTokens,
@@ -176,9 +176,9 @@ impl CaseConversionWorkspace {
         self.display_epoch = epoch;
         match self.session.evaluation() {
             CaseConversionEvaluation::Valid { output, .. } => {
-                self.result.set_text(output.clone(), window, cx);
+                self.result.assign_text(output.clone(), window, cx);
             }
-            _ => self.result.set_text("", window, cx),
+            _ => self.result.assign_text("", window, cx),
         }
     }
 
@@ -195,7 +195,7 @@ impl CaseConversionWorkspace {
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            self.input.replace_all(text, window, cx);
+            self.input.edit_text(text, window, cx);
         }
     }
 
@@ -210,7 +210,7 @@ impl CaseConversionWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
-        self.input.replace_all("", window, cx);
+        self.input.edit_text("", window, cx);
     }
 
     fn request_restore(
@@ -243,7 +243,7 @@ impl CaseConversionWorkspace {
         self.suppress_changes = true;
         self.style = snapshot.request.style;
         self.input
-            .set_text(snapshot.request.input.clone(), window, cx);
+            .assign_text(snapshot.request.input.clone(), window, cx);
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
@@ -323,7 +323,7 @@ impl CaseConversionWorkspace {
                 sofdevtool_core::diagnostic::Severity::Warning => DiagnosticSeverity::Warning,
             };
             let location = diagnostic.location.map(|l| (l.line, l.column));
-            column = column.child(sofdevtool_ui::diagnostic_banner(
+            column = column.child(sofui::diagnostic_banner(
                 severity,
                 &diagnostic.message,
                 location,
@@ -503,7 +503,7 @@ impl Render for CaseConversionWorkspace {
             column = column.child(self.render_restore_confirmation(cx));
         }
         if let Some(error) = self.history_view.error.clone() {
-            column = column.child(sofdevtool_ui::diagnostic_banner(
+            column = column.child(sofui::diagnostic_banner(
                 DiagnosticSeverity::Warning,
                 &format!("Case Conversion History: {error}"),
                 None,
@@ -623,7 +623,7 @@ mod interaction_tests {
 
     #[gpui::test]
     fn unicode_style_keyboard_copy_and_exact_history_restore(cx: &mut gpui::TestAppContext) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = std::env::temp_dir().join(format!(
             "sofdevtool-case-redesign-{}-{}",
             std::process::id(),

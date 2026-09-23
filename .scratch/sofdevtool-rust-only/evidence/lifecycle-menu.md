@@ -25,6 +25,21 @@ action dispatch. The non-macOS fallback uses GPUI's `remove_window`.
   application tests; 101 of 102 passed, with a separate ticket 14 Hashes
   empty-Copy test failure. The combined gate stopped there, so this is not a
   full-gate pass.
-- **Native Cmd-W/fullscreen observations remain pending the coordinator's
-  running-app check.** No native app was launched by this worker for this
-  correction.
+- Coordinator native observations are recorded below; uninstrumented installed
+  Release acceptance remains pending. No native app was launched by this worker
+  for this correction.
+
+## Native result for e3cb13b and corrected action dispatch
+
+On macOS 26.2 arm64, the fully loaded Settings window ignored synthesized Cmd-W and File > Close Window. Custom View > Toggle Full Screen also had no effect; the native red close button and AppKit's automatic Enter/Exit Full Screen menu items worked. GPUI's global Bubble action listener ran inside the active window's update; immediately updating that window again failed due to re-entry. The implementation now defers the target update until the action effect cycle ends and selects the frontmost window from GPUI's window stack.
+
+The coordinator then built a frozen Debug candidate with opt-in temporary
+action tracing. Settings Cmd-W closed the Settings window and returned AX to
+the Workbench. Ctrl-Cmd-F entered and exited Workbench fullscreen; native
+window controls disappeared and reappeared. The trace showed the deferred
+Settings target update succeeded, both Workbench fullscreen updates succeeded,
+and Workbench Cmd-W scheduled `performClose:`. The temporary tracing was then
+removed from maintained source. CUA could still retrieve the retained
+Workbench window after its Cmd-W, so this checkpoint does not claim that
+Workbench hiding was visibly confirmed. Final uninstrumented installed Release
+acceptance remains with the coordinator.

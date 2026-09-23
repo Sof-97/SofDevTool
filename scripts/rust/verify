@@ -41,6 +41,9 @@ cargo build --workspace --bins --examples
 if [ "$full" -eq 1 ]; then
   echo "== release build (bins + examples) =="
   cargo build --release --workspace --bins --examples
+
+  echo "== sofui extraction boundary =="
+  bash scripts/rust/verify-sofui-isolation.sh
 fi
 
 echo "gate passed"

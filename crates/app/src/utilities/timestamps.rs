@@ -13,7 +13,7 @@ use sofdevtool_core::utilities::timestamps::{
     TimestampsEvaluation, TimestampsRequest, TimestampsSnapshot,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ConfirmationBar,
     DiagnosticSeverity, SegmentedControl, SegmentedControlFocus, SegmentedOption, SelectableList,
     SelectableListFocus, SelectableRow, TextEditor, TextField, ThemeTokens,
@@ -85,7 +85,7 @@ impl TimestampsWorkspace {
         let input = TextEditor::new(window, cx);
         let result = TextEditor::new(window, cx);
         let zone = TextField::new(window, cx);
-        zone.set_text(DEFAULT_ZONE, window, cx);
+        zone.assign_text(DEFAULT_ZONE, window, cx);
         let subscriptions = vec![
             input.on_change_in(window, cx, |this, window, cx| {
                 if this.suppress_changes {
@@ -183,7 +183,7 @@ impl TimestampsWorkspace {
         self.origin = TimestampOrigin::Now;
         self.mode = request.mode;
         self.suppress_changes = true;
-        self.input.set_text(request.input.clone(), window, cx);
+        self.input.assign_text(request.input.clone(), window, cx);
         self.suppress_changes = false;
         let SubmitOutcome::Scheduled(revision) = self.session.submit(request) else {
             return;
@@ -224,9 +224,9 @@ impl TimestampsWorkspace {
                 representations, ..
             } => {
                 self.result
-                    .set_text(representations.display_text(), window, cx);
+                    .assign_text(representations.display_text(), window, cx);
             }
-            _ => self.result.set_text("", window, cx),
+            _ => self.result.assign_text("", window, cx),
         }
     }
 
@@ -240,7 +240,7 @@ impl TimestampsWorkspace {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
             self.origin = TimestampOrigin::Typed;
-            self.input.replace_all(text, window, cx);
+            self.input.edit_text(text, window, cx);
         }
     }
 
@@ -256,7 +256,7 @@ impl TimestampsWorkspace {
         self.copied = false;
         self.origin = TimestampOrigin::Typed;
         self.suppress_changes = true;
-        self.input.replace_all("", window, cx);
+        self.input.edit_text("", window, cx);
         self.suppress_changes = false;
         self.session.clear();
         self.display_epoch = u64::MAX;
@@ -298,8 +298,8 @@ impl TimestampsWorkspace {
         self.suppress_changes = true;
         self.mode = mode;
         self.origin = origin;
-        self.zone.set_text(zone, window, cx);
-        self.input.set_text(input, window, cx);
+        self.zone.assign_text(zone, window, cx);
+        self.input.assign_text(input, window, cx);
         self.session.restore(snapshot);
         // Advance past the restored nonce so the next deliberate Now is always
         // a new revision rather than being deduplicated.
@@ -674,7 +674,7 @@ mod interaction_tests {
 
     #[gpui::test]
     fn auto_inference_dst_gap_copy_and_restore_keep_exact_instant(cx: &mut gpui::TestAppContext) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = std::env::temp_dir().join(format!(
             "sofdevtool-timestamps-redesign-{}-{}",
             std::process::id(),

@@ -18,7 +18,7 @@ use sofdevtool_core::utilities::text_diff::{
     TextDiff, TextDiffMode, TextDiffRequest, TextDiffSnapshot,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, panel, view_click, Button, ConfirmationBar,
     DiagnosticSeverity, SegmentedControl, SegmentedControlFocus, SegmentedOption, SelectableList,
     SelectableListFocus, SelectableRow, TextEditor, ThemeTokens,
@@ -103,8 +103,8 @@ impl TextDiffWorkspace {
     ) -> Self {
         let old = TextEditor::new(window, cx);
         let new = TextEditor::new(window, cx);
-        old.set_text("let café = \"👨‍👩‍👧‍👦\"\nlet flag = \"🏳️‍🌈\"\n", window, cx);
-        new.set_text(
+        old.assign_text("let café = \"👨‍👩‍👧‍👦\"\nlet flag = \"🏳️‍🌈\"\n", window, cx);
+        new.assign_text(
             "let café = \"family 👨‍👩‍👧‍👦\"\nlet flag = \"🏳️‍🌈\"\nlet ready = true\n",
             window,
             cx,
@@ -268,7 +268,7 @@ impl TextDiffWorkspace {
     fn paste(&self, editor: &TextEditor, window: &mut Window, cx: &mut Context<Self>) {
         self.renderer.focus_parent();
         if let Some(text) = self.clipboard.read_text(cx) {
-            editor.replace_all(text, window, cx);
+            editor.edit_text(text, window, cx);
         }
     }
 
@@ -308,8 +308,8 @@ impl TextDiffWorkspace {
         cx: &mut Context<Self>,
     ) {
         self.suppress_render = true;
-        self.old.set_text(snapshot.old.clone(), window, cx);
-        self.new.set_text(snapshot.new.clone(), window, cx);
+        self.old.assign_text(snapshot.old.clone(), window, cx);
+        self.new.assign_text(snapshot.new.clone(), window, cx);
         self.mode = DisplayMode::from_core(snapshot.mode);
         self.suppress_render = false;
         // Mark the next render as already captured before it can report
@@ -721,7 +721,7 @@ mod interaction_tests {
 
     #[gpui::test]
     fn mode_copy_and_exact_history_restore_use_live_controls(cx: &mut gpui::TestAppContext) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),

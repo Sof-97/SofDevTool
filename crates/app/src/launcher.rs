@@ -5,7 +5,7 @@ use gpui::{
     div, point, px, size, AnyWindowHandle, App, Context, DisplayId, IntoElement, Render,
     ScrollHandle, Window, WindowBounds, WindowKind, WindowOptions,
 };
-use sofdevtool_ui::{mount, view_click, Button, TextField, ThemeTokens};
+use sofui::{mount, view_click, Button, TextField, ThemeTokens};
 
 use crate::registry::{OpenUtility, UtilityId, UtilityRegistry};
 use crate::workbench::Workbench;
@@ -240,9 +240,9 @@ impl Render for LauncherView {
                                 definition.name,
                             )
                             .variant(if selected {
-                                sofdevtool_ui::ButtonVariant::Primary
+                                sofui::ButtonVariant::Primary
                             } else {
-                                sofdevtool_ui::ButtonVariant::Secondary
+                                sofui::ButtonVariant::Secondary
                             })
                             .on_click(view_click(
                                 cx,

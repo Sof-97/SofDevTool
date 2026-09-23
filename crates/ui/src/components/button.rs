@@ -25,7 +25,7 @@ pub enum ButtonVariant {
 pub struct Button {
     label: SharedString,
     aria_label: Option<SharedString>,
-    element_id: Option<ElementId>,
+    element_id: ElementId,
     variant: ButtonVariant,
     disabled: bool,
     focus: Option<FocusHandle>,
@@ -33,13 +33,14 @@ pub struct Button {
 }
 
 impl Button {
-    /// Compatibility constructor for existing consumers. Prefer [`Self::with_id`]
-    /// so identity remains independent of a changing or repeated visible label.
-    pub fn new(label: impl Into<SharedString>) -> Self {
+    /// Constructs a button with a caller-owned stable identity. Keep `id`
+    /// unchanged across redraws, even when the visible label changes. Distinct
+    /// controls sharing one label must use distinct ids.
+    pub fn with_id(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
             aria_label: None,
-            element_id: None,
+            element_id: id.into(),
             variant: ButtonVariant::Secondary,
             disabled: false,
             focus: None,
@@ -47,28 +48,11 @@ impl Button {
         }
     }
 
-    /// Constructs a button with a caller-owned stable identity. Keep `id`
-    /// unchanged across redraws, even when the visible label changes. Distinct
-    /// controls sharing one label must use distinct ids.
-    pub fn with_id(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
-        Self::new(label).id(id)
-    }
-
-    /// Overrides the element id on a compatibility-constructed button.
-    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
-        self.element_id = Some(id.into());
-        self
-    }
-
     /// Supplies a descriptive accessibility label when the visible label is
     /// symbolic, such as the plus or minus button of a numeric control.
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.aria_label = Some(label.into());
         self
-    }
-
-    pub fn primary(label: impl Into<SharedString>) -> Self {
-        Self::new(label).variant(ButtonVariant::Primary)
     }
 
     /// Primary variant with stable identity independent of its label.
@@ -151,9 +135,8 @@ impl RenderOnce for Button {
             base_border
         };
 
-        let id = element_id.unwrap_or_else(|| ElementId::Name(label.clone()));
         let mut element = div()
-            .id(id)
+            .id(element_id)
             .role(gpui::Role::Button)
             .aria_label(aria_label.unwrap_or_else(|| label.clone()))
             .flex()

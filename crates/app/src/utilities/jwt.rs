@@ -17,7 +17,7 @@ use sofdevtool_core::utilities::jwt::{
     Jwt, JwtEvaluation, JwtRequest, JwtSnapshot, JWT_NO_VERIFICATION_NOTICE,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
     ConfirmationBar, DiagnosticSeverity, SelectableList, SelectableListFocus, SelectableRow,
     TextEditor, ThemeTokens,
@@ -184,12 +184,12 @@ impl JwtWorkspace {
             JwtEvaluation::Valid {
                 header, payload, ..
             } => {
-                self.header.set_text(header.clone(), window, cx);
-                self.payload.set_text(payload.clone(), window, cx);
+                self.header.assign_text(header.clone(), window, cx);
+                self.payload.assign_text(payload.clone(), window, cx);
             }
             _ => {
-                self.header.set_text("", window, cx);
-                self.payload.set_text("", window, cx);
+                self.header.assign_text("", window, cx);
+                self.payload.assign_text("", window, cx);
             }
         }
     }
@@ -204,7 +204,7 @@ impl JwtWorkspace {
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            self.input.replace_all(text, window, cx);
+            self.input.edit_text(text, window, cx);
         }
     }
 
@@ -228,7 +228,7 @@ impl JwtWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
-        self.input.replace_all("", window, cx);
+        self.input.edit_text("", window, cx);
     }
 
     fn request_restore(
@@ -260,7 +260,7 @@ impl JwtWorkspace {
     ) {
         self.suppress_changes = true;
         self.input
-            .set_text(snapshot.request.input.clone(), window, cx);
+            .assign_text(snapshot.request.input.clone(), window, cx);
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
@@ -737,7 +737,7 @@ mod interaction_tests {
     fn valid_copy_invalid_state_and_opt_in_history_use_live_controls(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = std::env::temp_dir().join(format!(
             "sofdevtool-jwt-redesign-{}-{}",
             std::process::id(),

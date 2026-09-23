@@ -2,7 +2,6 @@ mod button;
 mod confirmation;
 mod diagnostics;
 mod editor;
-mod history;
 mod hold_button;
 mod numeric_stepper;
 mod panel;
@@ -15,7 +14,6 @@ pub use button::{view_click, Button, ButtonVariant, ClickHandler, BUTTON_KEY_CON
 pub use confirmation::ConfirmationBar;
 pub use diagnostics::{copy_feedback, diagnostic_banner, empty_state, DiagnosticSeverity};
 pub use editor::TextEditor;
-pub use history::{HistoryAction, HistoryItem, HistoryPanel};
 pub(crate) use hold_button::register_key_bindings as register_hold_button_key_bindings;
 pub use hold_button::{HoldButton, HoldController, HOLD_BUTTON_KEY_CONTEXT};
 pub use numeric_stepper::NumericStepper;

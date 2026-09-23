@@ -12,9 +12,9 @@ use sofdevtool_app::clipboard::{Clipboard, GpuiClipboard};
 use sofdevtool_app::history::{HistoryPolicy, HistoryRecorder, HistoryStore, SystemClock};
 use sofdevtool_app::identity;
 use sofdevtool_app::preferences::{HistoryPreferences, ShortcutPreferences, StartupShortcut};
-use sofdevtool_app::registry::{OpenUtility, UtilityId, UtilityRegistry};
+use sofdevtool_app::registry::UtilityRegistry;
 use sofdevtool_app::workbench::Workbench;
-use sofdevtool_ui::{apply_theme, init, mount, ThemeVariant};
+use sofui::{apply_theme, init, mount, ThemeVariant};
 
 gpui::actions!(
     application_actions,
@@ -33,11 +33,16 @@ fn window_options(bounds: Option<WindowBounds>) -> WindowOptions {
     }
 }
 
+/// GPUI's macOS `active_window` reads NSApplication.mainWindow. A separate
+/// Settings window or nonactivating Launcher can be key and frontmost without
+/// being main, so route window menu commands by AppKit stacking order first.
+fn frontmost_window(cx: &App) -> Option<AnyWindowHandle> {
+    cx.window_stack()
+        .and_then(|windows| windows.into_iter().next())
+        .or_else(|| cx.active_window())
+}
+
 fn main() {
-    // A deterministic native Ticket 02 check: launches the ordinary
-    // application composition with Text Diff selected, without requiring the
-    // Ticket 03 launcher panel or a registered global shortcut.
-    let text_diff_proof = std::env::args().any(|argument| argument == "--text-diff-proof");
     let workbench: Rc<RefCell<Option<Entity<Workbench>>>> = Rc::new(RefCell::new(None));
     let visible = Rc::new(Cell::new(true));
     let native_window: Rc<RefCell<Option<AnyWindowHandle>>> = Rc::new(RefCell::new(None));
@@ -125,18 +130,25 @@ fn main() {
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.on_action(|_: &CloseWindow, cx| {
-            if let Some(active) = cx.active_window() {
-                let _ = active.update(cx, |_, window, _| {
-                    sofdevtool_app::native_window::request_close(window);
+            if let Some(target) = frontmost_window(cx) {
+                // GPUI invokes global action handlers while dispatching in the
+                // active window. Updating that same window here re-enters its
+                // borrow and fails. Defer until the action cycle releases it.
+                cx.defer(move |cx| {
+                    let _ = target.update(cx, |_, window, _| {
+                        sofdevtool_app::native_window::request_close(window);
+                    });
                 });
             }
         });
         cx.on_action(|_: &ToggleFullScreen, cx| {
-            if let Some(active) = cx.active_window() {
-                let _ = active.update(cx, |_, window, _| {
-                    if window.is_resizable() {
-                        window.toggle_fullscreen();
-                    }
+            if let Some(target) = frontmost_window(cx) {
+                cx.defer(move |cx| {
+                    let _ = target.update(cx, |_, window, _| {
+                        if window.is_resizable() {
+                            window.toggle_fullscreen();
+                        }
+                    });
                 });
             }
         });
@@ -175,9 +187,6 @@ fn main() {
             let view = cx.new(|cx| Workbench::new(window, cx, clipboard.clone(), history.clone()));
             view.update(cx, |workbench, cx| {
                 workbench.restore_shortcut_preferences(preferences, startup, cx);
-                if text_diff_proof {
-                    workbench.open(OpenUtility(UtilityId::TextDiff), cx);
-                }
             });
             *initial_native_window.borrow_mut() = Some(window.window_handle());
             *initial_workbench.borrow_mut() = Some(view.clone());

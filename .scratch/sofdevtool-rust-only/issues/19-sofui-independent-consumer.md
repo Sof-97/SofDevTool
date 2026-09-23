@@ -4,7 +4,7 @@
 
 **Blocked by:** [13: Redesign JSON, YAML/JSON, Base64, URL Encoding and JWT](13-text-inspection-workspaces-redesign.md); [14: Redesign Hashes, Timestamps, Case and Whitespace Conversion](14-conversion-workspaces-redesign.md); [15: Redesign Identifier Generator, Random String and Sample Data](15-generator-workspaces-redesign.md); [16: Redesign Regex and Color Conversion without regressing corrections](16-regex-color-redesign.md); [18: Redesign Text Diff and preserve native WebView interactions](18-text-diff-redesign.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Contract the expanded APIs only after every application consumer has migrated; remove obsolete UI and History coordination adapters and temporary preview scaffolding.
 - [ ] Audit exported components for product wording, retention policy, Utility types, preference/file access and application startup; keep only reusable presentation/interaction logic.

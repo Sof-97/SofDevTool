@@ -9,7 +9,7 @@ use gpui::{
     div, px, size, App, Context, FocusHandle, IntoElement, KeyDownEvent, Render, Window,
     WindowBounds, WindowKind, WindowOptions,
 };
-use sofdevtool_ui::{
+use sofui::{
     diagnostic_banner, mount, view_click, Button, ConfirmationBar, DiagnosticSeverity, HoldButton,
     HoldController, ThemeTokens,
 };
@@ -361,18 +361,18 @@ impl Render for SettingsView {
                     .border_color(tokens.border())
                     .child(div().flex_1().text_sm().child(row.name.clone()))
                     .child(
-                        Button::new(if recording {
-                            "Recording: on"
-                        } else {
-                            "Recording: off"
-                        })
-                        .id(gpui::ElementId::Name(
-                            format!("history-record-{}", row.id).into(),
-                        ))
+                        Button::with_id(
+                            format!("history-record-{}", row.id),
+                            if recording {
+                                "Recording: on"
+                            } else {
+                                "Recording: off"
+                            },
+                        )
                         .variant(if recording {
-                            sofdevtool_ui::ButtonVariant::Primary
+                            sofui::ButtonVariant::Primary
                         } else {
-                            sofdevtool_ui::ButtonVariant::Secondary
+                            sofui::ButtonVariant::Secondary
                         })
                         .focus_handle(focus.record.clone())
                         .on_click(view_click(
@@ -395,10 +395,7 @@ impl Render for SettingsView {
                         let retry_id = row.id.clone();
                         this.child(div().text_xs().text_color(tokens.warning()).child("paused"))
                             .child(
-                                Button::new("Retry")
-                                    .id(gpui::ElementId::Name(
-                                        format!("history-retry-{}", row.id).into(),
-                                    ))
+                                Button::with_id(format!("history-retry-{}", row.id), "Retry")
                                     .focus_handle(focus.retry.clone())
                                     .on_click(view_click(cx, move |this, _window, cx| {
                                         this.retry_recording(&retry_id, cx);
@@ -584,9 +581,9 @@ impl Render for SettingsView {
                                             },
                                         )
                                         .variant(if policy.global_enabled {
-                                            sofdevtool_ui::ButtonVariant::Primary
+                                            sofui::ButtonVariant::Primary
                                         } else {
-                                            sofdevtool_ui::ButtonVariant::Secondary
+                                            sofui::ButtonVariant::Secondary
                                         })
                                         .focus_handle(self.global_record_focus.clone())
                                         .on_click(view_click(cx, |this, _window, cx| {
@@ -841,7 +838,7 @@ mod tests {
     fn settings_keyboard_confirmation_and_two_second_hold_clear_isolated_history(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = test_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),

@@ -14,7 +14,7 @@ use sofdevtool_core::utilities::color::{
     evaluate, outputs_for, ColorConversion, ColorEvaluation, ColorRequest, ColorSnapshot, SrgbColor,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
     ConfirmationBar, DiagnosticSeverity, NumericStepper, SelectableList, SelectableListFocus,
     SelectableRow, TextField, ThemeTokens,
@@ -229,13 +229,13 @@ impl ColorWorkspace {
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = None;
-            self.source.replace_all(text, window, cx);
+            self.source.edit_text(text, window, cx);
         }
     }
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = None;
-        self.source.replace_all("", window, cx);
+        self.source.edit_text("", window, cx);
     }
 
     fn request_restore(
@@ -266,7 +266,7 @@ impl ColorWorkspace {
         cx: &mut Context<Self>,
     ) {
         self.suppress_changes = true;
-        self.source.set_text(snapshot.source.clone(), window, cx);
+        self.source.assign_text(snapshot.source.clone(), window, cx);
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
@@ -700,7 +700,7 @@ mod tests {
     fn picker_events_accumulate_latest_color_and_record_only_settled_revision(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),

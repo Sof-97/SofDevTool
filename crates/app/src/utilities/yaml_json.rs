@@ -16,7 +16,7 @@ use sofdevtool_core::utilities::yaml_json::{
     YamlJson, YamlJsonDirection, YamlJsonEvaluation, YamlJsonRequest, YamlJsonSnapshot,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ConfirmationBar,
     DiagnosticSeverity, SegmentedControl, SegmentedControlFocus, SegmentedOption, SelectableList,
     SelectableListFocus, SelectableRow, TextEditor, ThemeTokens,
@@ -176,9 +176,9 @@ impl YamlJsonWorkspace {
         self.display_epoch = epoch;
         match self.session.evaluation() {
             YamlJsonEvaluation::Valid { output } => {
-                self.result.set_text(output.clone(), window, cx);
+                self.result.assign_text(output.clone(), window, cx);
             }
-            _ => self.result.set_text("", window, cx),
+            _ => self.result.assign_text("", window, cx),
         }
     }
 
@@ -208,14 +208,14 @@ impl YamlJsonWorkspace {
         if previous_output.is_empty() {
             self.schedule(window, cx);
         } else {
-            self.input.replace_all(previous_output, window, cx);
+            self.input.edit_text(previous_output, window, cx);
         }
     }
 
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            self.input.replace_all(text, window, cx);
+            self.input.edit_text(text, window, cx);
         }
     }
 
@@ -230,7 +230,7 @@ impl YamlJsonWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
-        self.input.replace_all("", window, cx);
+        self.input.edit_text("", window, cx);
     }
 
     fn request_restore(
@@ -263,7 +263,7 @@ impl YamlJsonWorkspace {
         self.suppress_changes = true;
         self.direction = snapshot.request.direction;
         self.input
-            .set_text(snapshot.request.input.clone(), window, cx);
+            .assign_text(snapshot.request.input.clone(), window, cx);
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
@@ -650,7 +650,7 @@ mod history_tests {
     fn clear_reaches_visible_and_hidden_workspaces_without_changing_sessions(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = test_root();
         let history = recorder(&root);
         let retained = entry("retained", snapshot("old: value", "{\"old\":\"value\"}"));
@@ -744,7 +744,7 @@ mod history_tests {
     fn failed_recording_and_corruption_warn_without_overwriting_or_changing_output(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = test_root();
         let history = recorder(&root);
         let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
@@ -837,7 +837,7 @@ mod interaction_tests {
 
     #[gpui::test]
     fn keyboard_direction_and_copy_track_current_valid_result(cx: &mut gpui::TestAppContext) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = std::env::temp_dir().join(format!(
             "sofdevtool-yaml-redesign-{}-{}",
             std::process::id(),

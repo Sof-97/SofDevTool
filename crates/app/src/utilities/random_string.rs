@@ -15,7 +15,7 @@ use sofdevtool_core::utilities::random_string::{
     RandomStringSnapshot, MAX_COUNT, MAX_LENGTH, MIN_COUNT, MIN_LENGTH,
 };
 use sofdevtool_core::utility::Utility;
-use sofdevtool_ui::{
+use sofui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
     ConfirmationBar, DiagnosticSeverity, NumericStepper, SelectableList, SelectableListFocus,
     SelectableRow, TextField, ThemeTokens,
@@ -244,7 +244,7 @@ impl RandomStringWorkspace {
         // Silent assignment: loading the saved controls never emits a user
         // edit, so it cannot trigger a save, a generation or a History
         // operation. The workspace opens neutral until Generate.
-        custom.set_text(controls.controls().custom_alphabet.clone(), window, cx);
+        custom.assign_text(controls.controls().custom_alphabet.clone(), window, cx);
         let initial = controls.controls().clone();
         let subscriptions = vec![custom.on_change_in(window, cx, |this, _window, cx| {
             this.custom_alphabet_changed(cx);
@@ -405,7 +405,7 @@ impl RandomStringWorkspace {
     fn paste_custom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = None;
-            self.custom.replace_all(text, window, cx);
+            self.custom.edit_text(text, window, cx);
         }
     }
 
@@ -473,7 +473,7 @@ impl RandomStringWorkspace {
         self.symbols = request.symbols;
         self.exclude_ambiguous = request.exclude_ambiguous;
         self.custom
-            .set_text(request.custom_alphabet.clone(), window, cx);
+            .assign_text(request.custom_alphabet.clone(), window, cx);
         // Never let a later deliberate generation reuse an already-recorded
         // nonce for the same configuration.
         self.nonce = self.nonce.max(request.nonce);
@@ -1365,7 +1365,7 @@ mod tests {
     fn workspace_clear_preserves_generated_batch_and_restore_does_not_record(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = temporary_root("history-workspace");
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.join("History")),
@@ -1439,7 +1439,7 @@ mod tests {
     fn repeated_generation_and_copy_actions_preserve_exact_batch_values(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofdevtool_ui::init);
+        cx.update(sofui::init);
         let root = temporary_root("copy-actions");
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.join("History")),
