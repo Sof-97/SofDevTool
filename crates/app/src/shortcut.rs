@@ -128,6 +128,11 @@ pub mod macos {
 
     use super::{RegisteredShortcut, Shortcut, ShortcutError, ShortcutRegistrar};
 
+    // HIToolbox/CarbonEvents.h: kEventClassKeyboard and kEventHotKeyPressed.
+    // kEventHotKeyReleased is 6; subscribing to it misses press-only delivery.
+    const KEYBOARD_EVENT_CLASS: u32 = u32::from_be_bytes(*b"keyb");
+    const HOT_KEY_PRESSED_EVENT: u32 = 5;
+
     type OsStatus = i32;
     type EventTargetRef = *mut c_void;
     type EventHandlerRef = *mut c_void;
@@ -210,9 +215,8 @@ pub mod macos {
                 return Ok(());
             }
             let event_type = EventTypeSpec {
-                // kEventClassKeyboard / kEventHotKeyPressed.
-                event_class: u32::from_be_bytes(*b"keyb"),
-                event_kind: 6,
+                event_class: KEYBOARD_EVENT_CLASS,
+                event_kind: HOT_KEY_PRESSED_EVENT,
             };
             let mut handler = std::ptr::null_mut();
             let result = unsafe {
