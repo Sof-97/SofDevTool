@@ -4,12 +4,12 @@
 
 **Blocked by:** [06: Synchronize color controls, output and retained operations](06-synchronized-color.md); [09: Use generic lists, holds and confirmations for JSON History](09-generic-history-interactions.md); [10: Apply observable themes across all open surfaces and editors](10-observable-themes.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Show realistic catalog density, central editor/result, trailing History, representative selection/numeric/color/confirmation controls and both theme presets.
-- [ ] Use synthetic in-memory data and public controls, with enough resizing, focused, invalid and disabled states to assess density and behavior.
-- [ ] Record the running native preview and visual evidence; incorporate requested feedback within the agreed direction.
-- [ ] Completion requires explicit owner approval recorded with the reviewed candidate. A working preview alone does not unblock 12.
+- [x] Show realistic catalog density, central editor/result, trailing History, representative selection/numeric/color/confirmation controls and both theme presets.
+- [x] Use synthetic in-memory data and public controls, with enough resizing, focused, invalid and disabled states to assess density and behavior.
+- [x] Record the running native preview and visual evidence; incorporate requested feedback within the agreed direction.
+- [x] Completion requires explicit owner approval recorded with the reviewed candidate. A working preview alone does not unblock 12.
 
 ## Testing
 
@@ -32,3 +32,7 @@ Publication is documentation only. Begin implementation only under a subsequent 
 GPT-6 Sol supplied the compiling native example and its
 [evidence](../evidence/ticket-11.md). No owner approval has yet been recorded;
 12 remains blocked pending review of the runnable candidate.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-11.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

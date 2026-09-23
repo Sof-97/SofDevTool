@@ -4,12 +4,12 @@
 
 **Blocked by:** [20: Run and install distinct Debug/Release apps from the root workspace](20-root-workspace-packaging.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Before deletion, retain all needed independent fixtures, established icon resources and renderer source/provenance; source retirement leaves legacy installed apps and personal data untouched.
-- [ ] Remove the Swift product/test targets, Xcode/Swift-only tooling, retired wrappers, executable spikes, obsolete plans/WIP and duplicate resources; Git history retains retired material.
-- [ ] Complete the root README and agent guide with actual commands/source ownership, the component-only future sofui release rule, current domain contracts, profile/install behavior and evidence limits.
-- [ ] Consolidate useful current contracts/evidence and repair retained links before old planning sources disappear. Root gates and renderer/fixture checks still pass with no hidden dependency on retired files.
+- [x] Before deletion, retain all needed independent fixtures, established icon resources and renderer source/provenance; source retirement leaves legacy installed apps and personal data untouched.
+- [x] Remove the Swift product/test targets, Xcode/Swift-only tooling, retired wrappers, executable spikes, obsolete plans/WIP and duplicate resources; Git history retains retired material.
+- [x] Complete the root README and agent guide with actual commands/source ownership, the component-only future sofui release rule, current domain contracts, profile/install behavior and evidence limits.
+- [x] Consolidate useful current contracts/evidence and repair retained links before old planning sources disappear. Root gates and renderer/fixture checks still pass with no hidden dependency on retired files.
 
 ## Testing
 
@@ -26,3 +26,7 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-21.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

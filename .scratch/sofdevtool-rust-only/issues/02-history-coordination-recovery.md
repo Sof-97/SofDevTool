@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Expand application-owned coordination and adapt JSON, Base64 and Settings first; retain an adapter for the other workspaces while they migrate.
-- [ ] Clear one/all removes affected retained entries, selection and pending restore in both open workspaces, including a hidden one, while preserving current workspace content.
-- [ ] Enforce per-Utility pause at the shared recording boundary used by all callers. Failed writes preserve the previous file/result; ordinary operations stay paused; retry/relaunch follows the specified corruption and duplicate rules.
-- [ ] Verify global/per-Utility policy, newest-25 retention, unavailable entries, atomic failure, partial deletion and unknown Utility files. This ticket does not claim all-workspace invalidation until 03 and 04 complete.
+- [x] Expand application-owned coordination and adapt JSON, Base64 and Settings first; retain an adapter for the other workspaces while they migrate.
+- [x] Clear one/all removes affected retained entries, selection and pending restore in both open workspaces, including a hidden one, while preserving current workspace content.
+- [x] Enforce per-Utility pause at the shared recording boundary used by all callers. Failed writes preserve the previous file/result; ordinary operations stay paused; retry/relaunch follows the specified corruption and duplicate rules.
+- [x] Verify global/per-Utility policy, newest-25 retention, unavailable entries, atomic failure, partial deletion and unknown Utility files. This ticket does not claim all-workspace invalidation until 03 and 04 complete.
 
 ## Testing
 
@@ -35,3 +35,7 @@ integration requested a Clippy fix and legacy-filename deletion coverage; both
 are included. 69 app tests, all-target Clippy and owned formatting passed.
 [Evidence](../evidence/ticket-02.md). Native acceptance and final Astra review
 remain pending, so the ticket stays claimed.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-02.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

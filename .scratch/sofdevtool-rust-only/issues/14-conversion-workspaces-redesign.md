@@ -4,12 +4,12 @@
 
 **Blocked by:** [03: Propagate History changes through conversion and inspection workspaces](03-history-conversion-workspaces.md); [12: Apply the approved design to navigation, Launcher and Settings](12-workbench-launcher-settings-redesign.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Migrate all four workspaces and their History presentation; use demonstrated selection/numeric controls rather than Utility logic in sofui.
-- [ ] Preserve explicit hashing including empty bytes/legacy labels, timestamp inference/DST diagnostics, all case styles and whitespace actions/ranges.
-- [ ] Verify neutral/invalid states, Copy, switching and exact restore; retain independent expected values and Unicode regressions.
-- [ ] Remove this batch's compatibility calls and keep the application green before other batches finish.
+- [x] Migrate all four workspaces and their History presentation; use demonstrated selection/numeric controls rather than Utility logic in sofui.
+- [x] Preserve explicit hashing including empty bytes/legacy labels, timestamp inference/DST diagnostics, all case styles and whitespace actions/ranges.
+- [x] Verify neutral/invalid states, Copy, switching and exact restore; retain independent expected values and Unicode regressions.
+- [x] Remove this batch's compatibility calls and keep the application green before other batches finish.
 
 ## Testing
 
@@ -26,3 +26,7 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-14.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

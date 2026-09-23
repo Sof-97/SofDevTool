@@ -4,12 +4,12 @@
 
 **Blocked by:** [03: Propagate History changes through conversion and inspection workspaces](03-history-conversion-workspaces.md); [04: Propagate History changes through generators, Regex and Text Diff](04-history-generator-comparison-workspaces.md); [05: Keep Regex responsive and reject obsolete evaluations](05-responsive-regex.md); [12: Apply the approved design to navigation, Launcher and Settings](12-workbench-launcher-settings-redesign.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Adopt the approved controls and generic History presentation in both workspaces, removing this batch's old API calls.
-- [ ] Re-exercise demanding Regex evaluation, bounded scheduling, stale completion, clear/restore and all resource refusals through the redesigned UI.
-- [ ] Re-exercise consecutive color adjustments around settlement, invalid text, channel controls, swatch/output/Copy agreement and single-operation recording.
-- [ ] Preserve the specified Regex semantics and bounded sRGB representations; add no unsupported dialect/color-space features.
+- [x] Adopt the approved controls and generic History presentation in both workspaces, removing this batch's old API calls.
+- [x] Re-exercise demanding Regex evaluation, bounded scheduling, stale completion, clear/restore and all resource refusals through the redesigned UI.
+- [x] Re-exercise consecutive color adjustments around settlement, invalid text, channel controls, swatch/output/Copy agreement and single-operation recording.
+- [x] Preserve the specified Regex semantics and bounded sRGB representations; add no unsupported dialect/color-space features.
 
 ## Testing
 
@@ -26,3 +26,7 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-16.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

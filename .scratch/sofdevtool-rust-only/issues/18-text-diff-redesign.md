@@ -4,12 +4,12 @@
 
 **Blocked by:** [04: Propagate History changes through generators, Regex and Text Diff](04-history-generator-comparison-workspaces.md); [12: Apply the approved design to navigation, Launcher and Settings](12-workbench-launcher-settings-redesign.md); [17: Make Text Diff assets independently maintainable and locally bundled](17-text-diff-asset-pipeline.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Adopt approved editors, controls, diagnostics and generic History presentation; preserve the application-owned replaceable renderer boundary.
-- [ ] Exercise Unicode and disclosed complex-emoji fallback, exact old/new text restore, readiness, stale result rejection and visible recovery.
-- [ ] Verify resize/clipping, selection, scrolling, native Copy and focus handoff between GPUI and the embedded WebView in a running application.
-- [ ] Remove this batch's old component calls while retaining local-only resources and the independently maintainable asset pipeline.
+- [x] Adopt approved editors, controls, diagnostics and generic History presentation; preserve the application-owned replaceable renderer boundary.
+- [x] Exercise Unicode and disclosed complex-emoji fallback, exact old/new text restore, readiness, stale result rejection and visible recovery.
+- [x] Verify resize/clipping, selection, scrolling, native Copy and focus handoff between GPUI and the embedded WebView in a running application.
+- [x] Remove this batch's old component calls while retaining local-only resources and the independently maintainable asset pipeline.
 
 ## Testing
 
@@ -26,3 +26,7 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-18.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). For Text Diff, the corrected installed Release also demonstrated bounded resize/clipping, ten pages of native comparison scrolling, Unicode selection and keyboard Copy into a GPUI editor. Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

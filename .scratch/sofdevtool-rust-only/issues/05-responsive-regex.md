@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Move actual compilation, matching, capture collection and replacement off the UI thread; bound running work and pending requests.
-- [ ] New edits, clear and restore invalidate old work. Reject obsolete results and snapshots, and check cancellation between controllable stages.
-- [ ] Preserve all specified pattern/program/text/replacement/match/capture/output budgets, dialect diagnostics and replacement guidance; do not present partial success.
-- [ ] Remove the blanket linear-time claim. Demonstrate both controlled stale completion and a demanding real-engine case without promising interruption inside an engine call.
+- [x] Move actual compilation, matching, capture collection and replacement off the UI thread; bound running work and pending requests.
+- [x] New edits, clear and restore invalidate old work. Reject obsolete results and snapshots, and check cancellation between controllable stages.
+- [x] Preserve all specified pattern/program/text/replacement/match/capture/output budgets, dialect diagnostics and replacement guidance; do not present partial success.
+- [x] Remove the blanket linear-time claim. Demonstrate both controlled stale completion and a demanding real-engine case without promising interruption inside an engine call.
 
 ## Testing
 
@@ -33,3 +33,7 @@ files changed. The preserved session can be resumed when that provider is
 available; acceptance remains open. See [attempt evidence](../evidence/ticket-05.md).
 
 **Implementation:** GPT-6 Sol candidate integrated with focused checks on 2026-09-23; see [evidence](../evidence/ticket-05.md). Native acceptance and final Astra review remain open; status stays claimed.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-05.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

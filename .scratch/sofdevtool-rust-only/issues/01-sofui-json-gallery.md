@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Name and independently version the library as sofui 0.1.0; document its future separate release and component-only rule in the agent guide. Move process startup into application/gallery composition.
-- [ ] Introduce stable identities, focus/keyboard behavior and explicit silent-assignment versus edit/undo semantics; retain the existing editing engine behind owned interfaces.
-- [ ] Adopt the new interfaces in JSON and representative gallery controls, covering repeated labels, redraw, Unicode editing, disabled actions and Copy feedback through public behavior.
-- [ ] Keep compatibility adapters for unmigrated consumers so application and gallery builds remain green. Record the remaining consumers for removal in ticket 19.
+- [x] Name and independently version the library as sofui 0.1.0; document its future separate release and component-only rule in the agent guide. Move process startup into application/gallery composition.
+- [x] Introduce stable identities, focus/keyboard behavior and explicit silent-assignment versus edit/undo semantics; retain the existing editing engine behind owned interfaces.
+- [x] Adopt the new interfaces in JSON and representative gallery controls, covering repeated labels, redraw, Unicode editing, disabled actions and Copy feedback through public behavior.
+- [x] Keep compatibility adapters for unmigrated consumers so application and gallery builds remain green. Record the remaining consumers for removal in ticket 19.
 
 ## Testing
 
@@ -28,3 +28,7 @@ Test observable behavior at this existing seam using the parent specification's 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
 
 **Implementation:** GPT-6 Sol candidate integrated with focused checks on 2026-09-23; see [evidence](../evidence/ticket-01.md). Native acceptance and final Astra review remain open; status stays claimed.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-01.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

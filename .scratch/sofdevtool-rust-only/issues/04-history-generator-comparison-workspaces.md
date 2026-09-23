@@ -4,12 +4,12 @@
 
 **Blocked by:** [02: Coordinate JSON and Base64 History with enforced recording recovery](02-history-coordination-recovery.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Migrate Identifier Generator, Random String, Sample Data, Regex and Text Diff to the shared coordinator without erasing their Utility-owned snapshot types.
-- [ ] Deleted entries cannot remain selected, previewable or restorable; current generated results, comparison inputs and in-flight session revisions remain intact.
-- [ ] Preview and restore reproduce captured state without fresh random/clock execution or a new History entry; deliberate repeated operations still record separately.
-- [ ] Keep the conversion batch independently green. Record completion of this consumer batch without claiming the whole migration unless 03 has also completed.
+- [x] Migrate Identifier Generator, Random String, Sample Data, Regex and Text Diff to the shared coordinator without erasing their Utility-owned snapshot types.
+- [x] Deleted entries cannot remain selected, previewable or restorable; current generated results, comparison inputs and in-flight session revisions remain intact.
+- [x] Preview and restore reproduce captured state without fresh random/clock execution or a new History entry; deliberate repeated operations still record separately.
+- [x] Keep the conversion batch independently green. Record completion of this consumer batch without claiming the whole migration unless 03 has also completed.
 
 ## Testing
 
@@ -33,3 +33,7 @@ GPT-6 Sol completed all five consumers and actual-workspace regressions;
 85 app tests, owned formatting and strict all-target Clippy passed. See
 [evidence](../evidence/ticket-04.md). Final native Text Diff acceptance and
 the comprehensive Astra review remain outstanding.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-04.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

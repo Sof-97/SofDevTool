@@ -4,12 +4,12 @@
 
 **Blocked by:** [13: Redesign JSON, YAML/JSON, Base64, URL Encoding and JWT](13-text-inspection-workspaces-redesign.md); [14: Redesign Hashes, Timestamps, Case and Whitespace Conversion](14-conversion-workspaces-redesign.md); [15: Redesign Identifier Generator, Random String and Sample Data](15-generator-workspaces-redesign.md); [16: Redesign Regex and Color Conversion without regressing corrections](16-regex-color-redesign.md); [18: Redesign Text Diff and preserve native WebView interactions](18-text-diff-redesign.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Contract the expanded APIs only after every application consumer has migrated; remove obsolete UI and History coordination adapters and temporary preview scaffolding.
-- [ ] Audit exported components for product wording, retention policy, Utility types, preference/file access and application startup; keep only reusable presentation/interaction logic.
-- [ ] Build/run the standalone gallery and an independent consumer using declared metadata/dependencies; no application/core imports or product resource paths are required.
-- [ ] Document setup, mounting, IDs/focus, text events/undo, holds, tokens and dependency/licenses; exercise public interactions. Keep independent versioning; create no external repository or published package.
+- [x] Contract the expanded APIs only after every application consumer has migrated; remove obsolete UI and History coordination adapters and temporary preview scaffolding.
+- [x] Audit exported components for product wording, retention policy, Utility types, preference/file access and application startup; keep only reusable presentation/interaction logic.
+- [x] Build/run the standalone gallery and an independent consumer using declared metadata/dependencies; no application/core imports or product resource paths are required.
+- [x] Document setup, mounting, IDs/focus, text events/undo, holds, tokens and dependency/licenses; exercise public interactions. Keep independent versioning; create no external repository or published package.
 
 ## Testing
 
@@ -26,3 +26,7 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-19.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

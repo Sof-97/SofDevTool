@@ -2,12 +2,13 @@
 
 ## Current authorization
 
-On 2026-09-23 the owner authorized the coordinator to implement every remaining
-ticket using parallel GPT-6 Sol workers, with GPT-6 Luna for simpler assignments,
-and to launch GPT-6 Astra for the comprehensive review only after implementation
-of all tickets. This supersedes the earlier pi/Kimi trial limit and its sequential
-worker policy. Ticket 08 is already integrated at `5748a16`; starting branch head
-is `54be475` on `feat/rust-gpui-migration`. No remote publication is authorized.
+The owner's latest instruction requires **GPT-6 Sol for every implementation and
+correction**. The root coordinator orchestrates, validates, performs authorized
+native acceptance and GitButler integration; GPT-6 Astra performs the independent
+final review. Earlier GPT-6 Luna contributions to tickets 07 and 17, and the
+segmented control foundation, are historical work already integrated and are
+not rewritten as Sol work. The earlier pi/Kimi trial limit and its sequential
+worker policy were superseded on 2026-09-23. No remote publication is authorized.
 
 ## Worker contract
 
@@ -21,8 +22,8 @@ workers' edits; request a handoff before touching a file owned by another worker
 Do not run workspace-wide formatting while other workers edit; format owned
 files only. Use installed dependency sources and keep pinned versions.
 
-The coordinator alone changes ticket status and uses GitButler for commits and
-integration. Workers leave their candidate uncommitted and report changed files,
+The coordinator approves ticket status changes and alone uses GitButler for
+commits and integration. Workers leave their candidate uncommitted and report changed files,
 commands/results, acceptance coverage and remaining checks in the assigned
 evidence file. Raw Git status has a synthetic index: deletion/untracked pairs
 can describe unchanged files. Compare actual bytes with `git show HEAD:path`
@@ -39,17 +40,18 @@ boundary agreed by all active application writers.
 ## Dependencies and acceptance
 
 The coordinator checks contracts, builds and regression evidence at each
-integration boundary so dependent workers can proceed. This is implementation
-integration, not the requested final independent reviewer. Keep each implemented
-ticket claimed with an implementation/evidence note until final Astra review
-and any required native acceptance are complete.
+integration boundary so dependent workers can proceed. Ticket status is resolved
+only for clauses covered by recorded evidence; unverified native requirements
+remain claimed. Ticket 22 separately owns final installed Release acceptance.
 
 The owner explicitly approved ticket 11 candidate `b7e28f0` on 2026-09-23.
 Ticket 12 and subsequent Utility rollout use that accepted compact native
 direction. Keep later native and final installed Release checks distinct from
 that visual approval.
 
-After every implementation and required native gate, dispatch GPT-6 Astra to
-review the complete branch against the current specification and standards.
-Address findings with the implementation workers; re-review affected changes.
-Resolve tickets honestly and leave a clean committed local branch.
+The comprehensive Astra Standards review reported zero findings. Its Specification
+review reported two Text Diff findings; GPT-6 Sol corrected both in `df95bd3`,
+and Astra's read-only recheck found no remaining regression. The corrected source
+passed the full offline gate. The installed Release and remaining native limits
+are tracked in [ticket 22 evidence](evidence/ticket-22.md); final branch
+cleanliness and local delivery remain coordinator-owned.

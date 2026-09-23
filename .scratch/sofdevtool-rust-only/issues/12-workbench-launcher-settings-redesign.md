@@ -6,10 +6,10 @@
 
 **Status:** claimed
 
-- [ ] Preserve Library/Recent/Favorites, grouping, search, keyboard selection, separate Settings and trailing collapsible History.
-- [ ] Use the approved component treatment for shell controls; old workspace bodies remain usable until their individual rollout tickets land.
+- [x] Preserve Library/Recent/Favorites, grouping, search, keyboard selection, separate Settings and trailing collapsible History.
+- [x] Use the approved component treatment for shell controls; old workspace bodies remain usable until their individual rollout tickets land.
 - [ ] Exercise configurable shortcut failure, nonactivating dismissal, current-Space/full-screen behavior, opening a Utility, Dock reopen, closing the last window and explicit Quit.
-- [ ] Verify switching and theme changes preserve input/results, focus where applicable and native editor/WebView handoff; report runtime limits honestly.
+- [x] Verify switching and theme changes preserve input/results, focus where applicable and native editor/WebView handoff; report runtime limits honestly.
 
 ## Testing
 
@@ -26,3 +26,7 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Acceptance closeout — 2026-09-23
+
+The first, second and fourth clauses are supported by [ticket-specific evidence](../evidence/ticket-12.md), the [final source review](../evidence/final-review.md) and the [installed Release observations](../evidence/ticket-22.md). The third clause remains open: a physical global Launcher shortcut, literal Dock click and other-Space behavior have not been established by synthetic key events or the application-open API. Ticket 22 owns that remaining native acceptance. Earlier integration notes record their then-current state; this closeout records the current boundary.

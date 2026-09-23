@@ -4,12 +4,12 @@
 
 **Blocked by:** [01: Use sofui's owned component interfaces in JSON and the gallery](01-sofui-json-gallery.md); [02: Coordinate JSON and Base64 History with enforced recording recovery](02-history-coordination-recovery.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] sofui owns reusable timing/progress, selection, focus and confirmation mechanics; application code supplies labels, quota, duration, destructive action and recording policy.
-- [ ] Preserve one-second Clear Utility and two-second Clear All holds, cancellation on release/exit/Escape, and ordinary confirmation for keyboard activation.
-- [ ] Demonstrate empty, unavailable, selected, disabled and failure states using generic gallery data and real JSON/Settings actions.
-- [ ] Keep temporary adapters for unmigrated History presentations; final product-vocabulary and old-API removal belongs to 19 after the rollout batches.
+- [x] sofui owns reusable timing/progress, selection, focus and confirmation mechanics; application code supplies labels, quota, duration, destructive action and recording policy.
+- [x] Preserve one-second Clear Utility and two-second Clear All holds, cancellation on release/exit/Escape, and ordinary confirmation for keyboard activation.
+- [x] Demonstrate empty, unavailable, selected, disabled and failure states using generic gallery data and real JSON/Settings actions.
+- [x] Keep temporary adapters for unmigrated History presentations; final product-vocabulary and old-API removal belongs to 19 after the rollout batches.
 
 ## Testing
 
@@ -33,3 +33,7 @@ GPT-6 Sol completed the generic public controls and JSON/Settings integration.
 The coordinator's frozen310-test default gate passed. See
 [evidence](../evidence/ticket-09.md). Final native acceptance and Astra review
 remain separate.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-09.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

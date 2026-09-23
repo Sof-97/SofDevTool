@@ -7,9 +7,9 @@
 **Status:** claimed
 
 - [ ] Relocate the three-crate Cargo workspace to the root with pinned toolchain/dependencies intact and make help/run/gallery/format/verify/verify-full/release/install working from a fresh checkout.
-- [ ] Use SofDevTool 0.2.0 and the exact agreed Release/Debug names, bundle IDs, data namespaces and established normal/orange-DEV artwork; include deliberate build identifier, immutable revision and channel from authoritative metadata.
-- [ ] Keep profile bundles and preferences/History/Random String controls separate, preserve test-data-root override and legacy data, and honor a nondefault Cargo target directory.
-- [ ] Verify packaging/install failures propagate and replacement stays within the intended bundle. Document the default home Applications destination and override; exercise a temporary destination now, reserving the actual default install acceptance for 22.
+- [x] Use SofDevTool 0.2.0 and the exact agreed Release/Debug names, bundle IDs, data namespaces and established normal/orange-DEV artwork; include deliberate build identifier, immutable revision and channel from authoritative metadata.
+- [x] Keep profile bundles and preferences/History/Random String controls separate, preserve test-data-root override and legacy data, and honor a nondefault Cargo target directory.
+- [x] Verify packaging/install failures propagate and replacement stays within the intended bundle. Document the default home Applications destination and override; exercise a temporary destination now, reserving the actual default install acceptance for 22.
 
 ## Testing
 
@@ -30,3 +30,7 @@ Publication is documentation only. Begin implementation only under a subsequent 
 ## Implementation checkpoint — 2026-09-23
 
 Root workspace, separate Debug/Release identity, authoritative bundle metadata, retained artwork, root Makefile and scoped installer are implemented. `make verify` and `make verify-full` pass; temporary-destination install and packaging failure checks pass. See [implementation evidence](../evidence/ticket-20.md). Actual default installation and final native Release acceptance belong to ticket 22.
+
+## Acceptance closeout — 2026-09-23
+
+The second through fourth clauses are supported by [ticket-specific evidence](../evidence/ticket-20.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). The first clause's workspace relocation and build/package paths are evidenced, but its compound command-surface claim remains open: the recorded checks did not directly run `make run`, `make gallery` and `make format` from a fresh checkout. Earlier implementation notes describe their then-current state; ticket 22 retains separate final Release and local-delivery acceptance.

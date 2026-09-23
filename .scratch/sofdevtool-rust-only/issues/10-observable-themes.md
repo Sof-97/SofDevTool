@@ -4,12 +4,12 @@
 
 **Blocked by:** [01: Use sofui's owned component interfaces in JSON and the gallery](01-sofui-json-gallery.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Provide observable application-wide semantic tokens, both existing presets and custom tokens; Graphite remains the fresh default.
-- [ ] Keep persisted theme choice in the application. Consumers do not need manual per-window redraw recipes or direct dependency-internal theme types.
-- [ ] Verify changes across multiple open windows without recreating sessions, losing focus context, changing Recents or generating History.
-- [ ] Demonstrate public customization in the gallery and preserve useful focus/diagnostic contrast; independent per-window themes remain outside scope.
+- [x] Provide observable application-wide semantic tokens, both existing presets and custom tokens; Graphite remains the fresh default.
+- [x] Keep persisted theme choice in the application. Consumers do not need manual per-window redraw recipes or direct dependency-internal theme types.
+- [x] Verify changes across multiple open windows without recreating sessions, losing focus context, changing Recents or generating History.
+- [x] Demonstrate public customization in the gallery and preserve useful focus/diagnostic contrast; independent per-window themes remain outside scope.
 
 ## Testing
 
@@ -34,3 +34,7 @@ all windows and wrapped editor colors, including windows created afterward.
 Eight sofui tests, its Clippy gate and app compilation passed.
 [Evidence](../evidence/ticket-10.md). Native acceptance and the final Astra
 review remain pending; the ticket stays claimed.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-10.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

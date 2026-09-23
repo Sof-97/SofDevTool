@@ -2,11 +2,14 @@
 
 ## Current execution state
 
-The active workflow is parallel GPT-6 Sol/Luna implementation followed by a
-comprehensive GPT-6 Astra review after all implementations. The owner approved
-preview `b7e28f0`; the Rust workspace is at the root and Swift retirement is
-integrated. See the [execution contract](parallel-execution.md) and the latest
-entries below. The pi trial and its stopping-point notes are dated history.
+The implementation and independent Astra source review are complete. The
+corrected source passed the full gate and installed Release checks continue
+under ticket 22. The owner's latest instruction reserves all implementation
+and corrections for GPT-6 Sol; earlier Sol/Luna parallel work below is dated
+history. The approved preview was `b7e28f0`, the Rust workspace is at the root,
+and Swift retirement is integrated. See the [execution contract](parallel-execution.md)
+and the latest entry below. The pi trial and its stopping-point notes are dated
+history.
 
 
 The owner authorized dedicated pi prompts with Kimi K3 after approving and committing the specification/tickets. This execution instruction supersedes the earlier documentation-only stopping point for dispatched work. The native-preview approval gate remains unchanged.
@@ -169,3 +172,33 @@ not modify ticket statuses. The coordinator integrates and runs shared gates.
 - Ticket16 integrated at `24ef557`, including a regression found by the redesigned Color restore interaction: immediate History record results now match persisted floating-point payloads exactly. Focused History/Regex/Color checks and app Clippy passed.
 - Native lifecycle diagnosis confirmed nested GPUI window updates were rejecting custom menu actions; deferred dispatch succeeded for Settings Cmd-W and Workbench fullscreen entry/exit. Temporary tracing is being removed before final acceptance. Native Edit > Copy in Text Diff succeeded; synthesized Cmd-C/global shortcut require separate evidence.
 - Final15-Utility native runbook is prepared as an ignored execution aid. Ticket22 acceptance preparation has begun; installed Release and final Astra review are still pending.
+
+## Final source review and installed acceptance — 2026-09-23
+
+The latest owner instruction assigns every implementation and correction to
+GPT-6 Sol. The coordinator continues orchestration, validation, native checks
+and GitButler integration; GPT-6 Astra supplied the independent final review.
+Earlier Luna work in this history remains accurately attributed to Luna.
+
+- Astra reviewed the integrated branch and found zero Standards issues and two
+  Specification P2 issues, both in Text Diff: shipped demonstration input and
+  per-edit History recording. Sol removed the demo input and added one cancelable
+  200 ms current-revision settlement task. Correction commit `df95bd3` passed
+  Astra's read-only recheck with both findings resolved and no new findings.
+  See [final review](evidence/final-review.md) and [ticket 18](evidence/ticket-18.md).
+- The corrected source passed `make verify-full` offline: 339 Rust tests, five
+  packaging/install tests, first-party strict Clippy, copied-out sofui gallery
+  and independent consumer, reproducible Text Diff assets, and Debug/Release
+  bundle packaging. See the [final-source gate](evidence/ticket-22.md).
+- The corrected Release with synthetic packaging revision `b73c2a7` was actually
+  installed at `~/Applications/SofDevTool.app` and run on macOS 26.2 arm64 with
+  isolated synthetic profile data. Fresh Text Diff editors were empty, one
+  settled comparison entered History, and native WebView Cmd-C copied Unicode
+  into a GPUI editor. JSON History, Random String controls and Frappé persisted
+  through isolated relaunch. Earlier installed `d9523eb` evidence covers the
+  fifteen-Utility pass; the candidates are kept distinct in
+  [ticket 22 evidence](evidence/ticket-22.md).
+- Ticket 22 remains claimed. Physical global Launcher shortcut behavior,
+  literal Dock/other-Space interaction, some final native subcases and final
+  branch cleanliness remain open. macOS 14/15 runtime is unverified; no remote
+  publication or sofui package release is authorized.

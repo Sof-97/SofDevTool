@@ -4,12 +4,12 @@
 
 **Blocked by:** [02: Coordinate JSON and Base64 History with enforced recording recovery](02-history-coordination-recovery.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Migrate YAML/JSON, URL Encoding, Hashes, Timestamps, JWT Decoder, Case Conversion, Whitespace Conversion and Color Conversion to the shared coordinator.
-- [ ] Remove the migrated workspaces' duplicate coordination while keeping Utility-owned snapshot decoding, preview and restore concrete.
-- [ ] Exercise selection, pending restore, Clear Utility, Clear All and partial failure across visible and hidden sessions; preserve input, result and JWT's recording-off default.
-- [ ] Keep remaining legacy consumers working and the application gate green after this migration batch.
+- [x] Migrate YAML/JSON, URL Encoding, Hashes, Timestamps, JWT Decoder, Case Conversion, Whitespace Conversion and Color Conversion to the shared coordinator.
+- [x] Remove the migrated workspaces' duplicate coordination while keeping Utility-owned snapshot decoding, preview and restore concrete.
+- [x] Exercise selection, pending restore, Clear Utility, Clear All and partial failure across visible and hidden sessions; preserve input, result and JWT's recording-off default.
+- [x] Keep remaining legacy consumers working and the application gate green after this migration batch.
 
 ## Testing
 
@@ -35,3 +35,7 @@ library Clippy and formatting passed after Color adoption.
 [Evidence](../evidence/ticket-03.md) separates these checks from the shared
 full app gate still pending concurrent07 test completion. Final Astra/native
 acceptance remains pending and this ticket stays claimed.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-03.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

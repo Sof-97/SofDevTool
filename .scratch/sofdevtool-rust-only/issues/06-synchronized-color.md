@@ -4,12 +4,12 @@
 
 **Blocked by:** [01: Use sofui's owned component interfaces in JSON and the gallery](01-sofui-json-gallery.md).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Use the documented editor event semantics or deliberate scheduling; do not depend on silent assignment emitting an edit.
-- [ ] Repeated adjustments before and after settlement accumulate from the latest requested color; invalid text does not leave stale output copyable.
-- [ ] Expose reusable channel interaction through sofui and demonstrate it in the gallery, keeping sRGB parsing, formatting and validation in the Utility.
-- [ ] Exercise the actual control/event path, clamping, settlement and feedback-loop prevention; one settled operation creates at most one snapshot.
+- [x] Use the documented editor event semantics or deliberate scheduling; do not depend on silent assignment emitting an edit.
+- [x] Repeated adjustments before and after settlement accumulate from the latest requested color; invalid text does not leave stale output copyable.
+- [x] Expose reusable channel interaction through sofui and demonstrate it in the gallery, keeping sRGB parsing, formatting and validation in the Utility.
+- [x] Exercise the actual control/event path, clamping, settlement and feedback-loop prevention; one settled operation creates at most one snapshot.
 
 ## Testing
 
@@ -35,3 +35,7 @@ History passed the focused GPUI test. All nine sofui tests, app all-target
 compilation, scoped Clippy and formatting passed.
 [Evidence](../evidence/ticket-06.md). Native and final Astra acceptance remain
 pending; Color ownership transfers to03 after this integration.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-06.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

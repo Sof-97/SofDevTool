@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Include generated output and meaningful edited controls/schema in restore equivalence; an edited invalid Sample Data schema is not an empty workspace.
-- [ ] Test two different generated batches with identical settings: restore prompts, cancellation preserves current state and confirmation restores exact captured output.
-- [ ] Equivalent and empty sessions avoid unnecessary prompts; restoration never calls randomness or the clock and never records a new operation.
-- [ ] Ensure obsolete pending work cannot overwrite a restored session; retain existing generator limits and format semantics.
+- [x] Include generated output and meaningful edited controls/schema in restore equivalence; an edited invalid Sample Data schema is not an empty workspace.
+- [x] Test two different generated batches with identical settings: restore prompts, cancellation preserves current state and confirmation restores exact captured output.
+- [x] Equivalent and empty sessions avoid unnecessary prompts; restoration never calls randomness or the clock and never records a new operation.
+- [x] Ensure obsolete pending work cannot overwrite a restored session; retain existing generator limits and format semantics.
 
 ## Testing
 
@@ -32,3 +32,7 @@ Publication is documentation only. Begin implementation only under a subsequent 
 Candidate implemented by GPT-6 Luna and integrated after the coordinator's
 frozen 304-test default gate. See [evidence](../evidence/ticket-07.md). Native
 acceptance and the final comprehensive Astra review remain outstanding.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-07.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.

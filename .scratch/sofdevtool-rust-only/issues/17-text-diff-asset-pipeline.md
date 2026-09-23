@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** claimed
+**Status:** resolved
 
-- [ ] Preserve the JavaScript entry source, exact lockfile, generation recipe and upstream provenance before wrapper retirement.
-- [ ] Verify generated resources and actual dependency notices; remove misleading inventory claims while retaining required attribution.
-- [ ] Prove UTF-8/complex-emoji transport, idempotent readiness, stale callbacks, failure/recovery and local navigation/resource restrictions; verify string-based adaptations or move them into an equivalent owned source bridge.
-- [ ] Document the asset rebuild and show the runtime needs neither Node/npm nor network access; identify structural-only offline evidence accurately.
+- [x] Preserve the JavaScript entry source, exact lockfile, generation recipe and upstream provenance before wrapper retirement.
+- [x] Verify generated resources and actual dependency notices; remove misleading inventory claims while retaining required attribution.
+- [x] Prove UTF-8/complex-emoji transport, idempotent readiness, stale callbacks, failure/recovery and local navigation/resource restrictions; verify string-based adaptations or move them into an equivalent owned source bridge.
+- [x] Document the asset rebuild and show the runtime needs neither Node/npm nor network access; identify structural-only offline evidence accurately.
 
 ## Testing
 
@@ -35,3 +35,7 @@ passed. The coordinator requested and verified retained-source MIT attribution
 and inventory based on emitted bytes; independent `npm run verify` passed.
 See [evidence](../evidence/ticket-17.md). Native renderer acceptance and final
 Astra review remain separate.
+
+## Acceptance closeout — 2026-09-23
+
+The four clauses are supported by [ticket-specific evidence](../evidence/ticket-17.md), the [final independent source review](../evidence/final-review.md) and the corrected-source [full gate and installed observations](../evidence/ticket-22.md). Earlier implementation notes describe their then-current state; this closeout records the coordinator-approved integration decision. Ticket 22 retains separate final Release and local-delivery acceptance.
