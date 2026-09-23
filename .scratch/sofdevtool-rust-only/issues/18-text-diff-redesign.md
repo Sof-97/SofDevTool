@@ -4,7 +4,7 @@
 
 **Blocked by:** [04: Propagate History changes through generators, Regex and Text Diff](04-history-generator-comparison-workspaces.md); [12: Apply the approved design to navigation, Launcher and Settings](12-workbench-launcher-settings-redesign.md); [17: Make Text Diff assets independently maintainable and locally bundled](17-text-diff-asset-pipeline.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Adopt approved editors, controls, diagnostics and generic History presentation; preserve the application-owned replaceable renderer boundary.
 - [ ] Exercise Unicode and disclosed complex-emoji fallback, exact old/new text restore, readiness, stale result rejection and visible recovery.
