@@ -369,10 +369,10 @@ Completion requires all six corrections verified; all fifteen Utilities operatio
 ### Sources and tracker publication
 
 - [Domain glossary](../../CONTEXT.md).
-- [Original migration specification](../sofdevtool-rust-migration/spec.md), retained as the preceding contract until its applicable content is consolidated during implementation.
+- [Retained contract-vector audit](evidence/fixture-preservation.md) and [public core vectors](../../crates/core/tests/retained_contract_vectors.rs), which preserve distinct applicable expectations from the preceding implementation. Its superseded planning material is recoverable from Git history.
 - [Rust-only planning index](README.md) and [proposed ticket breakdown](ticket-proposal.md).
-- [Original migration index](../sofdevtool-rust-migration/ticket-review.md).
+- [Prior migration evidence](../../docs/evidence/previous-migration/README.md), retained as dated observations rather than current acceptance.
 - [Local issue-tracker convention](../../docs/agents/issue-tracker.md).
-- [Previously recorded release evidence](../../rust/docs/evidence/ticket-22.md), which describes the prior candidate and its limitations.
+- [Previously recorded release evidence](../../docs/evidence/ticket-22.md), which describes the prior candidate and its limitations.
 
 This document is the canonical complete specification for the separate Rust-only completion initiative. It retains its **ready-for-agent** triage status; the derived ticket breakdown requires owner approval before individual tickets are published. Moving the specification does not change its agreed product scope or authorize implementation, preview creation, verification of changed code, commits, installation or release.

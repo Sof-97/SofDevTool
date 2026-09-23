@@ -4,7 +4,7 @@ This directory owns the editable main JavaScript entry, exact npm lockfile and
 build process used by the Rust application's embedded Text Diff renderer. The
 optional Pierre edit bundle is not part of this application and is not built.
 
-With Node.js 18 or newer and npm available, run:
+With Node.js 20 or newer and npm available, run:
 
 ```sh
 npm ci

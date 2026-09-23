@@ -1,10 +1,12 @@
 # SofDevTool
 
-SofDevTool 0.2.0 is a local native macOS Developer Toolbox built with Rust and GPUI. The application owns Utilities, History, preferences, Clipboard policy and lifecycle; `sofui` 0.1.0 supplies reusable GPUI components. No account or service is required to use the installed application.
+SofDevTool 0.2.0 is a local native macOS Developer Toolbox built with Rust and GPUI. Its fifteen Utilities cover JSON, YAML/JSON, Base64, URL encoding, hashes, identifiers, timestamps, JWT inspection, regex, case and whitespace conversion, color, sample data, random strings, and Text Diff. No account or service is required to use the installed application.
+
+The root Cargo workspace is the sole maintained product. [`crates/app`](crates/app) owns the Workbench, Launcher, application lifecycle, Clipboard, preferences, and History policy; [`crates/core`](crates/core) owns Utility behavior and validation. [`sofui`](crates/ui/README.md) is an independently versioned 0.1.0 GPUI component library intended for a later separate release. It owns reusable controls and their interaction logic, while each consumer owns its domain behavior and starts GPUI itself.
 
 ## Development
 
-Use an Apple Silicon Mac with macOS 14 or newer, the pinned Rust toolchain in `rust-toolchain.toml`, Xcode Command Line Tools and Python 3. The full renderer asset check also needs Node.js 18 or newer and npm. Run commands from this repository root:
+Use an Apple Silicon Mac with macOS 14 or newer, the pinned Rust toolchain in `rust-toolchain.toml`, Xcode Command Line Tools and Python 3. The full renderer asset check also needs Node.js 20 or newer and npm. Run commands from this repository root:
 
 | Command | Action |
 | --- | --- |
@@ -23,4 +25,6 @@ Debug uses `SofDevTool Debug` / `com.gerardocalia.sofdevtool.debug`; Release use
 
 The application version comes from root `Cargo.toml`. `SOFDEVTOOL_BUILD_ID` can select a positive numeric bundle build identifier (default `1`). Each bundle records its exact Git revision, build channel and whether the working source differs from that revision; the application title also displays the same metadata. `CARGO_TARGET_DIR` is honored by Cargo and packaging. The bundle contains its icons and Text Diff resources locally, and running it requires neither Node nor network access.
 
-The older Swift/Xcode tree remains in the checkout until the separate retirement step. It is not used by these root commands. macOS 14 is a build baseline; actual native behavior on macOS 14/15 requires separate runtime evidence.
+[`CONTEXT.md`](CONTEXT.md) defines the domain language. The [current Rust-only specification](.scratch/sofdevtool-rust-only/spec.md) owns the behavioral and privacy contract, including exact Utility limits; [contract vectors](crates/core/tests/retained_contract_vectors.rs) and [JSON fixtures](crates/core/fixtures/cases) retain independent expectations. The [Text Diff source and provenance](crates/app/src/text_diff/assets-source/README.md), [app notices](platform/macos/APP_NOTICES.md), and [historical migration evidence](docs/evidence/previous-migration/README.md) remain available without a Swift build. Historical commands in older evidence describe the prior candidate, not this workspace.
+
+The previous Swift/Xcode sources and build tooling have been retired from the maintained tree. Git history retains that implementation; existing installed apps and personal data are untouched. macOS 14 is a build baseline; actual native behavior on macOS 14/15 requires separate runtime evidence. Automated tests, a temporary installation, or a preview on another macOS version do not establish those runtime claims.

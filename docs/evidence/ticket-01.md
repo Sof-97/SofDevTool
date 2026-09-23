@@ -145,7 +145,7 @@ individual undo operation; matching GPUI's multi-delete grouping is not claimed.
 The earlier worker session had rejected launch/screenshot calls. The owner
 explicitly authorized native verification in the resumed Codex task. Current
 observations and remaining limitations are recorded in
-[the native resume report](../../../.scratch/sofdevtool-rust-migration/evidence/2026-09-21-native-resume.md).
+[the native resume report](previous-migration/2026-09-21-native-resume.md).
 This supersedes the prior authorization blocker, not the pending IME criterion.
 
 Runnable artifacts (build/test host macOS 26.2, arm64):
@@ -183,7 +183,7 @@ Any scenario that cannot be exercised is recorded as a limitation, not as a pass
 passed on the Terra correction: formatting, Clippy with warnings denied, 35 tests
 (23 JSON, 5 session, 5 UI-helper, 2 identity), Debug and Release builds. The only
 notice was the existing transitive `block v0.1.6` future-incompatibility warning.
-Full log is preserved in `rust/artifacts/2026-09-21-terra-full-gate.log`.
+Full log is preserved in the [previous migration evidence](previous-migration/2026-09-21-terra-full-gate.log).
 
 Integration byte comparison matched all 46 source/config/fixture files against
 the tested candidate; only this evidence document differs. Running

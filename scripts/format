@@ -1,4 +1,0 @@
-#!/bin/zsh
-set -euo pipefail
-cd "${0:A:h}/.."
-xcrun swift format --configuration .swift-format --in-place --recursive SofDevTool SofDevToolTests SofDevToolUITests

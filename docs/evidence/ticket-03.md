@@ -17,7 +17,7 @@ Host: macOS 26.2 (25C56), Apple Silicon arm64; Rust 1.98.1. Debug bundle
 synthetic (Accessibility `System Events` plus HID-level `CGEvent` clicks).
 
 1. Workbench opens; sidebar, JSON workspace, History panel and footer render.
-   See `../.scratch/sofdevtool-rust-migration/evidence/assets/03-workbench-history.png`.
+   See `docs/evidence/previous-migration/assets/03-workbench-history.png`.
 2. `Open Utility Launcher` presents a centered nonactivating panel with a
    search field and the two registered Utilities.
 3. Typing `diff` filters the list to Text Diff; Enter activates the Workbench

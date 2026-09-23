@@ -32,7 +32,7 @@ isolated `SOFDEVTOOL_RUST_SUPPORT_ROOT`, synthetic Clipboard/Accessibility input
    and History shows `1/25` with the captured timestamp and an output preview.
    `json.history.v1.json` contains the versioned envelope with the exact
    Utility-owned snapshot.
-   See `../../.scratch/sofdevtool-rust-migration/evidence/assets/04-json-record.png`.
+   See `docs/evidence/previous-migration/assets/04-json-record.png`.
 2. Paste `{"x":1}`, then `{"y":9}`; each settled valid operation records once.
 3. Relaunch the bundle; all three entries reload exactly (`3/25`).
 4. Select the oldest entry and `Restore selected`; the confirmation banner

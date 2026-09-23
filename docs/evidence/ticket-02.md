@@ -44,7 +44,7 @@ The native failure loop caught a fragile Swift-style WebKit handler shim that
 lost callbacks after initial rendering. Direct Wry IPC fixed it; metadata-only
 tracing confirmed error revision 2 then ready revision 3. Temporary trace code
 is removed from the accepted source. Earlier failed candidates are recorded in
-`.scratch/sofdevtool-rust-migration/evidence/2026-09-22-webview-native.md`.
+`docs/evidence/previous-migration/2026-09-22-webview-native.md`.
 
 ## Verification boundaries
 
