@@ -45,3 +45,18 @@ import error was corrected before the final Color test run.
 The GPUI interaction test uses a synthetic window and controlled time. It
 does not claim native Workbench appearance or macOS 14/15 runtime validation;
 the coordinator owns that acceptance.
+
+## Coordinator native acceptance
+
+On macOS26.2 arm64, the frozen03+06+07 candidate was built as a Debug bundle
+and launched from `/private/tmp` with an isolated temporary support root.
+Entering `#102030`, then pressing Increase R twice, produced `#1a2030`,
+R=26/G=32/B=48 and matching RGB/HSL/swatches. Copy RGB pasted back as
+`rgb(26 32 48)`. An invalid current input removed all three Copy controls and
+left the four retained valid operations unchanged. Pointer steps settled
+individually in this native test; rapid pre-debounce accumulation is evidenced
+by the controlled-clock GPUI test above. The test app quit successfully.
+
+The combined default gate passed304 tests, formatting, Clippy and Debug
+builds; logs and temporary profile metadata are under
+`.artifacts/parallel-rust-only/wave3/`. This is macOS26.2 runtime evidence only.

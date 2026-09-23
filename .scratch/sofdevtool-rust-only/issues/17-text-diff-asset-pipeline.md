@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Preserve the JavaScript entry source, exact lockfile, generation recipe and upstream provenance before wrapper retirement.
 - [ ] Verify generated resources and actual dependency notices; remove misleading inventory claims while retaining required attribution.

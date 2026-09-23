@@ -124,3 +124,8 @@ not modify ticket statuses. The coordinator integrates and runs shared gates.
   stale artifacts when workers and frozen source trees compile concurrently.
 - 04 dispatched to the History Sol lane: Random String, Regex and Text Diff
   first; Identifier/Sample Data ownership follows the07 integration handoff.
+
+- 07 integrated `068460c`; Identifier/Sample Data handed to04.
+- 17 dispatched to Luna: owned editable Text Diff assets, exact dependency
+  rebuild, actual notices and renderer-boundary validation. The Swift wrapper
+  remains until the replacement pipeline is verified and21 retires it.

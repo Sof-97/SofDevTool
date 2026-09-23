@@ -38,5 +38,22 @@ strongly typed configuration and the captured generated output.
 
 ## Remaining checks
 
-Perform coordinator-owned native restore interaction checks and the final
-Astra review. macOS 14/15 runtime remains unverified.
+The final Astra review remains outstanding. macOS 14/15 runtime remains unverified.
+
+## Coordinator native acceptance
+
+The frozen03+06+07 Debug bundle ran on macOS26.2 arm64 from `/private/tmp`
+with a fresh isolated support root. Identifier Generator produced two UUID
+batches with identical controls. Restoring the first asked for confirmation;
+Cancel preserved the second UUID, verified through Copy All pasted into the
+inspection field. Confirm restored the exact first UUID and cleared the
+inspection input; Copy All verified its captured value. History remained at
+two entries.
+
+Sample Data generated two batches with identical fields/settings. Restoring
+the first prompted; Cancel preserved the second output, and Confirm restored
+the first captured fictional data with two History entries remaining.
+Restoring the equivalent first batch again did not prompt. Clearing a field
+name made the schema invalid; restore then prompted and Cancel preserved
+that edited invalid schema. No real app data was accessed. The test app quit
+successfully. Logs/profile metadata: `.artifacts/parallel-rust-only/wave3/`.
