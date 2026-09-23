@@ -114,11 +114,18 @@ impl RenderOnce for NumericStepper {
             .flex_row()
             .items_center()
             .gap_2()
-            .child(div().w_6().text_xs().child(label))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
+                    .text_xs()
+                    .child(label),
+            )
             .child(minus)
             .child(
                 div()
                     .w_10()
+                    .flex_shrink_0()
                     .text_xs()
                     .text_color(tokens.text_muted())
                     .child(value.map_or_else(|| "—".to_owned(), |value| value.to_string())),

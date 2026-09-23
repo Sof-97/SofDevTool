@@ -82,21 +82,21 @@ impl Gallery {
         let list_items = vec![
             SelectableRow {
                 id: "a".into(),
-                label: "2026-09-22T10:00:00Z".into(),
-                preview: "SHA-256 · ba7816bf8f01cfea…".into(),
+                label: "Record A".into(),
+                preview: "Café note edited".into(),
                 status: None,
                 selectable: true,
             },
             SelectableRow {
                 id: "b".into(),
-                label: "2026-09-22T09:59:00Z".into(),
-                preview: "Unavailable snapshot".into(),
+                label: "Record B".into(),
+                preview: "Item unavailable".into(),
                 status: Some("Unavailable".into()),
                 selectable: true,
             },
             SelectableRow {
                 id: "c".into(),
-                label: "2026-09-22T09:58:00Z".into(),
+                label: "Record C".into(),
                 preview: "Failed to load".into(),
                 status: Some("Failed".into()),
                 selectable: false,
