@@ -1,6 +1,6 @@
 # SofDevTool agent guide
 
-Read `CONTEXT.md` and `.scratch/sofdevtool-rust-only/spec.md` before changing product behavior. The specification owns exact Utility limits, History/privacy policy, native interactions and delivery criteria. Use the [current ticket index](.scratch/sofdevtool-rust-only/ticket-proposal.md) for scoped work and [evidence](.scratch/sofdevtool-rust-only/evidence/) for validation; dated reports under `docs/evidence/` describe the preceding migration candidate.
+Read `CONTEXT.md` before changing product behavior. Inspect the owning module and its tests for current Utility limits, History/privacy policy and native interaction contracts. Use the root `README.md` for maintained commands.
 
 ## Rust component ownership
 
@@ -27,4 +27,4 @@ Read `CONTEXT.md` and `.scratch/sofdevtool-rust-only/spec.md` before changing pr
 - Clipboard reads/writes are explicit. History contains completed valid Utility Operations only.
 - Never log, sync, index, or export History payloads.
 - Put domain tests with the owning Utility; use UI tests only for shell and interaction-heavy flows.
-- Before finishing, run the relevant root gate and update evidence honestly. A build, automated test or temporary install is not native runtime evidence on macOS 14/15.
+- Before finishing, run the relevant root gate and report validation honestly. A build, automated test or temporary install is not native runtime evidence on macOS 14/15.
