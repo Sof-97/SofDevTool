@@ -5,12 +5,12 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, size, Context, FocusHandle, IntoElement, KeyDownEvent, Render, Window, WindowBounds,
-    WindowKind, WindowOptions,
+    div, px, size, App, Context, FocusHandle, IntoElement, KeyDownEvent, Render, Window,
+    WindowBounds, WindowKind, WindowOptions,
 };
 use sofdevtool_ui::{mount, view_click, Button, HoldButton, ThemeTokens};
 
-use crate::history::HistoryRecorder;
+use crate::history::{HistoryRecorder, HistorySubscription};
 use crate::preferences::ShortcutPreferences;
 use crate::shortcut::{Shortcut, COMMAND, CONTROL, OPTION, SHIFT};
 use crate::workbench::Workbench;
@@ -36,6 +36,31 @@ impl HoldTarget {
             HoldTarget::ClearUtility(_) => Duration::from_secs(1),
             HoldTarget::ClearAll => Duration::from_secs(2),
         }
+    }
+}
+
+fn clear_history(history: &HistoryRecorder, target: &HoldTarget, cx: &mut App) -> String {
+    match target {
+        HoldTarget::ClearUtility(id) => match history.clear_utility(id, cx) {
+            Ok(()) => "Retained entries cleared.".into(),
+            Err(error) => format!("History could not be cleared: {error}"),
+        },
+        HoldTarget::ClearAll => match history.clear_all(cx) {
+            Ok(report) if report.failed_ids.is_empty() => "All Rust History cleared.".into(),
+            Ok(report) => format!(
+                "Cleared {} History file(s); {} could not be cleared.",
+                report.cleared_ids.len(),
+                report.failed_ids.len()
+            ),
+            Err(error) => format!("History could not be cleared: {error}"),
+        },
+    }
+}
+
+fn retry_history(history: &HistoryRecorder, utility_id: &str, cx: &mut App) -> String {
+    match history.retry_recording(utility_id, cx) {
+        Ok(_) => "History recording resumed without adding an entry.".into(),
+        Err(error) => format!("History recording is still paused: {error}"),
     }
 }
 
@@ -79,6 +104,7 @@ pub fn show(
 struct UtilityFocus {
     record: FocusHandle,
     clear: FocusHandle,
+    retry: FocusHandle,
 }
 
 pub struct SettingsView {
@@ -101,6 +127,7 @@ pub struct SettingsView {
     confirm_focus: FocusHandle,
     cancel_confirm_focus: FocusHandle,
     utility_focus: Vec<UtilityFocus>,
+    _history_subscription: HistorySubscription,
 }
 
 impl SettingsView {
@@ -118,8 +145,13 @@ impl SettingsView {
             .map(|_| UtilityFocus {
                 record: cx.focus_handle().tab_stop(true).tab_index(0),
                 clear: cx.focus_handle().tab_stop(true).tab_index(0),
+                retry: cx.focus_handle().tab_stop(true).tab_index(0),
             })
             .collect();
+        let weak = cx.weak_entity();
+        let history_subscription = history.subscribe_status(move |cx| {
+            weak.update(cx, |_, cx| cx.notify()).ok();
+        });
         Self {
             workbench,
             preferences,
@@ -140,6 +172,7 @@ impl SettingsView {
             confirm_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             cancel_confirm_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             utility_focus,
+            _history_subscription: history_subscription,
         }
     }
 
@@ -283,19 +316,12 @@ impl SettingsView {
     }
 
     fn perform(&mut self, target: HoldTarget, cx: &mut Context<Self>) {
-        let result = match &target {
-            HoldTarget::ClearUtility(id) => self.history.store().clear(id),
-            HoldTarget::ClearAll => self.history.store().clear_all(),
-        };
-        match result {
-            Ok(()) => {
-                self.notice = Some(match target {
-                    HoldTarget::ClearUtility(_) => "Retained entries cleared.".into(),
-                    HoldTarget::ClearAll => "All Rust History cleared.".into(),
-                })
-            }
-            Err(error) => self.notice = Some(format!("History could not be cleared: {error}")),
-        }
+        self.notice = Some(clear_history(&self.history, &target, cx));
+        cx.notify();
+    }
+
+    fn retry_recording(&mut self, utility_id: &str, cx: &mut Context<Self>) {
+        self.notice = Some(retry_history(&self.history, utility_id, cx));
         cx.notify();
     }
 
@@ -380,7 +406,18 @@ impl Render for SettingsView {
                         })),
                     )
                     .when(paused, |this| {
+                        let retry_id = row.id.clone();
                         this.child(div().text_xs().text_color(tokens.warning()).child("paused"))
+                            .child(
+                                Button::new("Retry")
+                                    .id(gpui::ElementId::Name(
+                                        format!("history-retry-{}", row.id).into(),
+                                    ))
+                                    .focus_handle(focus.retry.clone())
+                                    .on_click(view_click(cx, move |this, _window, cx| {
+                                        this.retry_recording(&retry_id, cx);
+                                    })),
+                            )
                     }),
             );
         }
@@ -684,6 +721,201 @@ fn display_name(key: &str, modifiers: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::{HistoryEntry, HistoryStore, HistoryViewState, SystemClock};
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct HistoryProbe {
+        history: Rc<HistoryRecorder>,
+        utility_id: &'static str,
+        view: HistoryViewState,
+        active_content: String,
+        visible: bool,
+        notifications: usize,
+        _subscription: HistorySubscription,
+    }
+
+    fn probe(
+        cx: &mut App,
+        history: Rc<HistoryRecorder>,
+        utility_id: &'static str,
+        visible: bool,
+    ) -> gpui::Entity<HistoryProbe> {
+        cx.new(|cx| {
+            let weak: gpui::WeakEntity<HistoryProbe> = cx.weak_entity();
+            let subscription = history.subscribe(utility_id, move |cx| {
+                weak.update(cx, |this, cx| {
+                    this.view.reconcile(&this.history, this.utility_id);
+                    this.notifications += 1;
+                    cx.notify();
+                })
+                .ok();
+            });
+            HistoryProbe {
+                view: HistoryViewState::load(&history, utility_id),
+                history,
+                utility_id,
+                active_content: format!("current {utility_id} input and result"),
+                visible,
+                notifications: 0,
+                _subscription: subscription,
+            }
+        })
+    }
+
+    fn test_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "sofdevtool-settings-history-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn test_entry(utility_id: &str, id: &str) -> HistoryEntry {
+        HistoryEntry {
+            id: id.into(),
+            captured_at: "2026-01-01T00:00:00Z".into(),
+            utility_id: utility_id.into(),
+            snapshot_version: 1,
+            payload: serde_json::json!({"synthetic": id}),
+        }
+    }
+
+    #[gpui::test]
+    fn settings_clear_reconciles_visible_and_hidden_history_entities(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let root = test_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        let json_entry = test_entry("json", "json-one");
+        let base64_entry = test_entry("base64", "base64-one");
+        history.store().record(json_entry.clone()).unwrap();
+        history.store().record(base64_entry.clone()).unwrap();
+        history
+            .store()
+            .record(test_entry("legacy-unknown", "unknown-one"))
+            .unwrap();
+
+        cx.update(|cx| {
+            let json = probe(cx, Rc::clone(&history), "json", true);
+            let base64 = probe(cx, Rc::clone(&history), "base64", false);
+            json.update(cx, |this, _| {
+                assert!(this.view.select("json-one"));
+                this.view.pending_restore = Some(json_entry.clone());
+            });
+            base64.update(cx, |this, _| {
+                assert!(this.view.select("base64-one"));
+                this.view.pending_restore = Some(base64_entry.clone());
+            });
+
+            assert_eq!(
+                clear_history(&history, &HoldTarget::ClearUtility("json".into()), cx),
+                "Retained entries cleared."
+            );
+            let json_state = json.read(cx);
+            assert_eq!(json_state.notifications, 1);
+            assert!(json_state.visible);
+            assert!(json_state.view.entries.is_empty());
+            assert!(json_state.view.selected.is_none());
+            assert!(json_state.view.pending_restore.is_none());
+            assert_eq!(json_state.active_content, "current json input and result");
+            assert_eq!(base64.read(cx).notifications, 0);
+            assert!(base64.read(cx).view.selected.is_some());
+
+            assert_eq!(
+                clear_history(&history, &HoldTarget::ClearAll, cx),
+                "All Rust History cleared."
+            );
+            let base64_state = base64.read(cx);
+            assert_eq!(base64_state.notifications, 1);
+            assert!(!base64_state.visible);
+            assert!(base64_state.view.entries.is_empty());
+            assert!(base64_state.view.selected.is_none());
+            assert!(base64_state.view.pending_restore.is_none());
+            assert_eq!(
+                base64_state.active_content,
+                "current base64 input and result"
+            );
+            assert!(history.store().stored_utility_ids().unwrap().is_empty());
+        });
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn settings_partial_clear_reports_failure_and_reconciles_actual_storage(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let root = test_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        history
+            .store()
+            .record(test_entry("json", "json-one"))
+            .unwrap();
+        fs::create_dir(root.join("legacy-unknown.history.v1.json")).unwrap();
+        cx.update(|cx| {
+            let json = probe(cx, Rc::clone(&history), "json", false);
+            assert_eq!(
+                clear_history(&history, &HoldTarget::ClearAll, cx),
+                "Cleared 1 History file(s); 1 could not be cleared."
+            );
+            assert_eq!(json.read(cx).notifications, 1);
+            assert!(json.read(cx).view.entries.is_empty());
+            assert_eq!(
+                history.store().stored_utility_ids().unwrap(),
+                vec!["legacy-unknown"]
+            );
+        });
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn settings_retry_reports_failure_then_resumes_without_duplicate_entry(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let root = test_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        history
+            .store()
+            .record(test_entry("json", "retained"))
+            .unwrap();
+        history.store().fail_next_writes(2);
+        assert!(history
+            .store()
+            .record(test_entry("json", "failed"))
+            .is_err());
+        assert!(history.store().is_paused("json"));
+
+        cx.update(|cx| {
+            let json = probe(cx, Rc::clone(&history), "json", false);
+            assert!(json.read(cx).view.error.is_some());
+            let failed_notice = retry_history(&history, "json", cx);
+            assert!(failed_notice.contains("still paused"));
+            assert!(history.store().is_paused("json"));
+            assert!(json.read(cx).view.error.is_some());
+
+            assert_eq!(
+                retry_history(&history, "json", cx),
+                "History recording resumed without adding an entry."
+            );
+            assert!(!history.store().is_paused("json"));
+            assert!(json.read(cx).view.error.is_none());
+            assert_eq!(json.read(cx).view.entries.len(), 1);
+            assert_eq!(history.load("json").unwrap()[0].id, "retained");
+        });
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn recorder_maps_a_real_chord_to_its_carbon_key_code() {

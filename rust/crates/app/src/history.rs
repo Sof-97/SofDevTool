@@ -11,8 +11,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::rc::{Rc, Weak};
 use std::sync::Mutex;
 
+use gpui::App;
 use serde::{Deserialize, Serialize};
 
 /// Newest entries retained per Utility.
@@ -43,6 +45,8 @@ pub enum HistoryError {
     Corrupt,
     /// The file could not be read or written.
     Unavailable,
+    /// A prior write failed; ordinary operations cannot resume recording.
+    Paused,
 }
 
 impl std::fmt::Display for HistoryError {
@@ -51,8 +55,17 @@ impl std::fmt::Display for HistoryError {
             Self::InvalidUtility => write!(formatter, "the Utility identity is not storable"),
             Self::Corrupt => write!(formatter, "the stored History file is not valid"),
             Self::Unavailable => write!(formatter, "the History file could not be read or written"),
+            Self::Paused => write!(formatter, "recording is paused until Retry succeeds"),
         }
     }
+}
+
+/// Outcome of a Clear All attempt. Every listed Utility was checked, even if
+/// another deletion failed; callers can reconcile views with actual storage.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClearReport {
+    pub cleared_ids: Vec<String>,
+    pub failed_ids: Vec<String>,
 }
 
 /// A single-owner History repository for one Rust Application Support root.
@@ -64,6 +77,9 @@ impl std::fmt::Display for HistoryError {
 pub struct HistoryStore {
     root: PathBuf,
     paused: Mutex<BTreeSet<String>>,
+    mutation: Mutex<()>,
+    #[cfg(test)]
+    fail_before_replace: Mutex<usize>,
 }
 
 impl HistoryStore {
@@ -71,6 +87,9 @@ impl HistoryStore {
         Self {
             root,
             paused: Mutex::new(BTreeSet::new()),
+            mutation: Mutex::new(()),
+            #[cfg(test)]
+            fail_before_replace: Mutex::new(0),
         }
     }
 
@@ -107,7 +126,14 @@ impl HistoryStore {
     /// Appends one settled operation, retaining the newest [`RETENTION`]
     /// entries. Returns the retained set on success.
     pub fn record(&self, entry: HistoryEntry) -> Result<Vec<HistoryEntry>, HistoryError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .expect("History mutation lock poisoned");
         let utility_id = entry.utility_id.clone();
+        if self.is_paused(&utility_id) {
+            return Err(HistoryError::Paused);
+        }
         let result = self.append(entry);
         if result.is_err() {
             self.pause(&utility_id);
@@ -132,8 +158,23 @@ impl HistoryStore {
     /// Removes all retained entries for `utility_id`. The current workspace is
     /// untouched; only the Rust History file is affected.
     pub fn clear(&self, utility_id: &str) -> Result<(), HistoryError> {
-        let path = self.path(utility_id)?;
-        match fs::remove_file(&path) {
+        let _mutation = self
+            .mutation
+            .lock()
+            .expect("History mutation lock poisoned");
+        if utility_id.is_empty()
+            || utility_id == "."
+            || utility_id == ".."
+            || utility_id.contains('/')
+        {
+            return Err(HistoryError::InvalidUtility);
+        }
+        let path = self.root.join(format!("{utility_id}{FILE_SUFFIX}"));
+        self.remove_path(utility_id, &path)
+    }
+
+    fn remove_path(&self, utility_id: &str, path: &Path) -> Result<(), HistoryError> {
+        match fs::remove_file(path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(_) => return Err(HistoryError::Unavailable),
@@ -146,43 +187,64 @@ impl HistoryStore {
     /// Utilities that are no longer registered. Nothing outside the root is
     /// ever touched.
     pub fn clear_all(&self) -> Result<(), HistoryError> {
-        let ids = self.stored_utility_ids()?;
-        for id in ids {
-            let path = self.root.join(format!("{id}{FILE_SUFFIX}"));
-            match fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(_) => return Err(HistoryError::Unavailable),
+        let report = self.clear_all_report()?;
+        if report.failed_ids.is_empty() {
+            Ok(())
+        } else {
+            Err(HistoryError::Unavailable)
+        }
+    }
+
+    pub fn clear_all_report(&self) -> Result<ClearReport, HistoryError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .expect("History mutation lock poisoned");
+        let mut report = ClearReport::default();
+        for (id, path) in self.stored_history_paths()? {
+            match self.remove_path(&id, &path) {
+                Ok(()) => report.cleared_ids.push(id),
+                Err(_) => report.failed_ids.push(id),
             }
         }
-        if let Ok(mut paused) = self.paused.lock() {
-            paused.clear();
-        }
-        Ok(())
+        self.paused
+            .lock()
+            .expect("History pause lock poisoned")
+            .retain(|id| report.failed_ids.contains(id));
+        Ok(report)
     }
 
     /// Every Utility id that has a stored History file, including unknown ones.
     pub fn stored_utility_ids(&self) -> Result<Vec<String>, HistoryError> {
+        Ok(self
+            .stored_history_paths()?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect())
+    }
+
+    /// Paths come only from directory entries beneath this store's root. Clear
+    /// All can therefore remove legacy/unknown filename IDs without relaxing
+    /// the strict IDs accepted for new reads and writes.
+    fn stored_history_paths(&self) -> Result<Vec<(String, PathBuf)>, HistoryError> {
         let directory = match fs::read_dir(&self.root) {
             Ok(directory) => directory,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(_) => return Err(HistoryError::Unavailable),
         };
-        let mut ids = Vec::new();
+        let mut paths = Vec::new();
         for entry in directory {
             let entry = entry.map_err(|_| HistoryError::Unavailable)?;
             let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
+            let name = name.to_string_lossy();
             if let Some(id) = name.strip_suffix(FILE_SUFFIX) {
                 if !id.is_empty() {
-                    ids.push(id.to_owned());
+                    paths.push((id.to_owned(), entry.path()));
                 }
             }
         }
-        ids.sort();
-        Ok(ids)
+        paths.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(paths)
     }
 
     /// True when a failed write paused recording for `utility_id`.
@@ -193,8 +255,22 @@ impl HistoryStore {
             .unwrap_or(false)
     }
 
-    /// Clears a pause after a successful retry. Relaunch also clears it.
-    pub fn resume(&self, utility_id: &str) {
+    /// Retries persistence of exactly the retained set. No new operation is
+    /// created. Corrupt files stay untouched and the pause remains in force.
+    pub fn retry(&self, utility_id: &str) -> Result<Vec<HistoryEntry>, HistoryError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .expect("History mutation lock poisoned");
+        let entries = self.load(utility_id)?;
+        if self.is_paused(utility_id) {
+            self.write(utility_id, &entries)?;
+            self.resume(utility_id);
+        }
+        Ok(entries)
+    }
+
+    fn resume(&self, utility_id: &str) {
         if let Ok(mut paused) = self.paused.lock() {
             paused.remove(utility_id);
         }
@@ -221,7 +297,19 @@ impl HistoryStore {
             ".{utility_id}{FILE_SUFFIX}.{}.tmp",
             std::process::id()
         ));
-        fs::write(&temporary, serialized).map_err(|_| HistoryError::Unavailable)?;
+        if fs::write(&temporary, serialized).is_err() {
+            let _ = fs::remove_file(&temporary);
+            return Err(HistoryError::Unavailable);
+        }
+        #[cfg(test)]
+        {
+            let mut failures = self.fail_before_replace.lock().expect("write fault lock");
+            if *failures > 0 {
+                *failures -= 1;
+                let _ = fs::remove_file(&temporary);
+                return Err(HistoryError::Unavailable);
+            }
+        }
         match fs::rename(&temporary, &path) {
             Ok(()) => Ok(()),
             Err(_) => {
@@ -229,6 +317,11 @@ impl HistoryStore {
                 Err(HistoryError::Unavailable)
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_writes(&self, count: usize) {
+        *self.fail_before_replace.lock().expect("write fault lock") = count;
     }
 
     fn path(&self, utility_id: &str) -> Result<PathBuf, HistoryError> {
@@ -340,6 +433,136 @@ fn civil_from_days(days_since_epoch: i64) -> (i64, u32, u32) {
 /// A callback that persists the recording policy after a change.
 pub type PolicyPersister = Box<dyn Fn(&HistoryPolicy)>;
 
+type ChangeCallback = Rc<dyn Fn(&mut App)>;
+
+enum SubscriberKind {
+    Utility(String),
+    Status,
+}
+
+#[derive(Default)]
+struct HistorySubscribers {
+    next_id: u64,
+    callbacks: BTreeMap<u64, (SubscriberKind, ChangeCallback)>,
+}
+
+/// Keeps one workspace's History invalidation callback registered. Dropping a
+/// workspace drops its subscription, including when it was hidden before close.
+pub struct HistorySubscription {
+    id: u64,
+    subscribers: Weak<RefCell<HistorySubscribers>>,
+}
+
+impl Drop for HistorySubscription {
+    fn drop(&mut self) {
+        if let Some(subscribers) = self.subscribers.upgrade() {
+            subscribers.borrow_mut().callbacks.remove(&self.id);
+        }
+    }
+}
+
+/// Cached presentation state for one Utility's History inspector. This state
+/// is independent of the Utility's live request/result and can be reconciled
+/// after Settings changes without touching the active workspace.
+#[derive(Default)]
+pub struct HistoryViewState {
+    pub entries: Vec<HistoryEntry>,
+    pub selected: Option<String>,
+    pub pending_restore: Option<HistoryEntry>,
+    pub error: Option<String>,
+}
+
+impl HistoryViewState {
+    pub fn load(recorder: &HistoryRecorder, utility_id: &str) -> Self {
+        let mut state = Self::default();
+        state.reconcile(recorder, utility_id);
+        state
+    }
+
+    /// Reloads actual storage after a clear, partial clear or retry. Selection
+    /// and pending restore survive only while their exact entries still exist.
+    pub fn reconcile(&mut self, recorder: &HistoryRecorder, utility_id: &str) {
+        match recorder.load(utility_id) {
+            Ok(entries) => {
+                self.entries = entries;
+                self.retain_valid_references();
+                self.error = recorder
+                    .store()
+                    .is_paused(utility_id)
+                    .then(|| HistoryError::Paused.to_string());
+            }
+            Err(error) => {
+                self.entries.clear();
+                self.selected = None;
+                self.pending_restore = None;
+                self.error = Some(error.to_string());
+            }
+        }
+    }
+
+    /// Applies the recording boundary's outcome without altering the active
+    /// Utility evaluation. A paused or failed write leaves cached retained
+    /// entries intact and exposes its warning.
+    pub fn apply_record(
+        &mut self,
+        recorder: &HistoryRecorder,
+        utility_id: &str,
+        result: Result<Vec<HistoryEntry>, HistoryError>,
+    ) {
+        match result {
+            Ok(entries) => {
+                self.entries = entries;
+                self.retain_valid_references();
+                self.error = recorder
+                    .store()
+                    .is_paused(utility_id)
+                    .then(|| HistoryError::Paused.to_string());
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
+    }
+
+    fn retain_valid_references(&mut self) {
+        if !self
+            .entries
+            .iter()
+            .any(|entry| self.selected.as_deref() == Some(entry.id.as_str()))
+        {
+            self.selected = None;
+        }
+        if !self
+            .entries
+            .iter()
+            .any(|entry| self.pending_restore.as_ref() == Some(entry))
+        {
+            self.pending_restore = None;
+        }
+    }
+
+    pub fn select(&mut self, id: &str) -> bool {
+        if self.entries.iter().any(|entry| entry.id == id) {
+            self.selected = Some(id.to_owned());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Checks the exact persisted entry before a restore, so a late click or
+    /// confirmation cannot restore an entry already deleted in Settings.
+    pub fn retained(
+        &self,
+        recorder: &HistoryRecorder,
+        utility_id: &str,
+        entry: &HistoryEntry,
+    ) -> bool {
+        recorder
+            .load(utility_id)
+            .ok()
+            .is_some_and(|entries| entries.contains(entry))
+    }
+}
+
 /// Application-owned recording facade over [`HistoryStore`].
 ///
 /// A Utility records through this type; it owns the entry identity and
@@ -351,6 +574,7 @@ pub struct HistoryRecorder {
     clock: Box<dyn HistoryClock>,
     policy: RefCell<HistoryPolicy>,
     persist: Option<PolicyPersister>,
+    subscribers: Rc<RefCell<HistorySubscribers>>,
 }
 
 /// Global and per-Utility recording preferences. Disabling recording never
@@ -404,6 +628,7 @@ impl HistoryRecorder {
             clock,
             policy: RefCell::new(policy),
             persist,
+            subscribers: Rc::new(RefCell::new(HistorySubscribers::default())),
         }
     }
 
@@ -436,6 +661,98 @@ impl HistoryRecorder {
         self.store.load(utility_id)
     }
 
+    /// Registers a live workspace for storage changes to its Utility. The
+    /// callback runs synchronously after Settings mutation, including failure
+    /// paths, so the view can reconcile its cached rows and restore selection.
+    pub fn subscribe(
+        &self,
+        utility_id: &str,
+        callback: impl Fn(&mut App) + 'static,
+    ) -> HistorySubscription {
+        let mut subscribers = self.subscribers.borrow_mut();
+        let id = subscribers.next_id;
+        subscribers.next_id += 1;
+        subscribers.callbacks.insert(
+            id,
+            (
+                SubscriberKind::Utility(utility_id.to_owned()),
+                Rc::new(callback),
+            ),
+        );
+        HistorySubscription {
+            id,
+            subscribers: Rc::downgrade(&self.subscribers),
+        }
+    }
+
+    /// Observes recording status changes initiated by workspaces. Settings
+    /// uses this to redraw its paused badges without waiting for window focus.
+    pub fn subscribe_status(&self, callback: impl Fn(&mut App) + 'static) -> HistorySubscription {
+        let mut subscribers = self.subscribers.borrow_mut();
+        let id = subscribers.next_id;
+        subscribers.next_id += 1;
+        subscribers
+            .callbacks
+            .insert(id, (SubscriberKind::Status, Rc::new(callback)));
+        HistorySubscription {
+            id,
+            subscribers: Rc::downgrade(&self.subscribers),
+        }
+    }
+
+    fn notify(&self, utility_id: Option<&str>, cx: &mut App) {
+        let callbacks: Vec<ChangeCallback> = self
+            .subscribers
+            .borrow()
+            .callbacks
+            .values()
+            .filter(|(kind, _)| match kind {
+                SubscriberKind::Utility(id) => utility_id.is_none_or(|changed| id == changed),
+                SubscriberKind::Status => false,
+            })
+            .map(|(_, callback)| Rc::clone(callback))
+            .collect();
+        for callback in callbacks {
+            callback(cx);
+        }
+    }
+
+    pub fn notify_status(&self, cx: &mut App) {
+        let callbacks: Vec<ChangeCallback> = self
+            .subscribers
+            .borrow()
+            .callbacks
+            .values()
+            .filter(|(kind, _)| matches!(kind, SubscriberKind::Status))
+            .map(|(_, callback)| Rc::clone(callback))
+            .collect();
+        for callback in callbacks {
+            callback(cx);
+        }
+    }
+
+    pub fn clear_utility(&self, utility_id: &str, cx: &mut App) -> Result<(), HistoryError> {
+        let result = self.store.clear(utility_id);
+        self.notify(Some(utility_id), cx);
+        result
+    }
+
+    pub fn clear_all(&self, cx: &mut App) -> Result<ClearReport, HistoryError> {
+        let report = self.store.clear_all_report();
+        self.notify(None, cx);
+        report
+    }
+
+    pub fn retry_recording(
+        &self,
+        utility_id: &str,
+        cx: &mut App,
+    ) -> Result<Vec<HistoryEntry>, HistoryError> {
+        let result = self.store.retry(utility_id);
+        self.notify(Some(utility_id), cx);
+        result
+    }
+
     fn persist(&self) {
         if let Some(persist) = &self.persist {
             persist(&self.policy.borrow());
@@ -453,6 +770,9 @@ impl HistoryRecorder {
         if !self.is_recording(utility_id) {
             return self.store.load(utility_id);
         }
+        if self.store.is_paused(utility_id) {
+            return Err(HistoryError::Paused);
+        }
         self.store.record(HistoryEntry {
             id: self.clock.next_id(),
             captured_at: self.clock.captured_at(),
@@ -466,6 +786,9 @@ impl HistoryRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sofdevtool_core::json::{Json, JsonMode, JsonRequest};
+    use sofdevtool_core::session::{Session, SubmitOutcome};
+    use sofdevtool_core::utility::Utility;
 
     fn temporary_root(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -561,8 +884,149 @@ mod tests {
         assert_eq!(failed, Err(HistoryError::Unavailable));
         assert!(store.is_paused("json"));
         assert_eq!(store.load("json").expect("load").len(), 1);
-        store.resume("json");
+        store
+            .retry("json")
+            .expect("retry writes unchanged retained set");
         assert!(!store.is_paused("json"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_write_blocks_ordinary_recording_until_successful_retry() {
+        let root = temporary_root("paused-retry");
+        let store = HistoryStore::new(root.clone());
+        let original = entry("json", "original", "2026-01-01T00:00:00Z", 1);
+        store.record(original.clone()).expect("initial record");
+        let path = root.join(format!("json{FILE_SUFFIX}"));
+        let before_failure = fs::read(&path).expect("last valid file");
+        store.fail_next_writes(2);
+
+        assert_eq!(
+            store.record(entry("json", "failed", "2026-01-01T00:00:01Z", 1)),
+            Err(HistoryError::Unavailable)
+        );
+        assert_eq!(fs::read(&path).unwrap(), before_failure);
+        assert_eq!(
+            store.record(entry("json", "ordinary", "2026-01-01T00:00:02Z", 1)),
+            Err(HistoryError::Paused)
+        );
+        assert_eq!(store.retry("json"), Err(HistoryError::Unavailable));
+        assert!(store.is_paused("json"));
+        assert_eq!(fs::read(&path).unwrap(), before_failure);
+
+        assert_eq!(store.retry("json"), Ok(vec![original.clone()]));
+        assert!(!store.is_paused("json"));
+        assert_eq!(store.load("json"), Ok(vec![original]));
+        assert_eq!(
+            store
+                .record(entry("json", "later", "2026-01-01T00:00:03Z", 1))
+                .expect("record after recovery")
+                .len(),
+            2
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupt_storage_stays_untouched_on_retry_and_relaunch() {
+        let root = temporary_root("corrupt-retry");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join(format!("json{FILE_SUFFIX}"));
+        fs::write(&path, b"malformed payload").unwrap();
+        let store = HistoryStore::new(root.clone());
+        assert_eq!(
+            store.record(entry("json", "a", "t", 1)),
+            Err(HistoryError::Corrupt)
+        );
+        assert_eq!(store.retry("json"), Err(HistoryError::Corrupt));
+        assert!(store.is_paused("json"));
+        assert_eq!(fs::read(&path).unwrap(), b"malformed payload");
+
+        let relaunched = HistoryStore::new(root.clone());
+        assert!(!relaunched.is_paused("json"));
+        assert_eq!(relaunched.load("json"), Err(HistoryError::Corrupt));
+        assert_eq!(
+            relaunched.record(entry("json", "b", "t", 1)),
+            Err(HistoryError::Corrupt)
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"malformed payload");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn partial_clear_reports_actual_files_and_preserves_failed_target() {
+        let root = temporary_root("partial-clear");
+        let store = HistoryStore::new(root.clone());
+        store.record(entry("json", "a", "t", 1)).unwrap();
+        store.record(entry("base64", "b", "t", 1)).unwrap();
+        // A directory with the History suffix simulates one deterministic
+        // removal failure while the other files are independently removable.
+        let failed = root.join(format!("unknown{FILE_SUFFIX}"));
+        fs::create_dir(&failed).unwrap();
+        let report = store.clear_all_report().expect("enumeration succeeded");
+        assert_eq!(report.cleared_ids, vec!["base64", "json"]);
+        assert_eq!(report.failed_ids, vec!["unknown"]);
+        assert!(store.load("json").unwrap().is_empty());
+        assert!(store.load("base64").unwrap().is_empty());
+        assert!(failed.is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shared_view_reconcile_invalidates_removed_selection_and_pending_restore() {
+        let root = temporary_root("view-reconcile");
+        let recorder = HistoryRecorder::new(HistoryStore::new(root.clone()), Box::new(FixedClock));
+        let retained = recorder
+            .store()
+            .record(entry("json", "one", "t", 99))
+            .unwrap()[0]
+            .clone();
+        recorder
+            .store()
+            .record(entry("base64", "two", "t", 1))
+            .unwrap();
+        let mut json = HistoryViewState::load(&recorder, "json");
+        let mut base64 = HistoryViewState::load(&recorder, "base64");
+        assert!(json.select("one"));
+        json.pending_restore = Some(retained.clone());
+        assert!(json.retained(&recorder, "json", &retained));
+        assert!(!json.select("missing"));
+
+        recorder.store().clear("json").unwrap();
+        json.reconcile(&recorder, "json");
+        base64.reconcile(&recorder, "base64");
+        assert!(json.entries.is_empty());
+        assert!(json.selected.is_none());
+        assert!(json.pending_restore.is_none());
+        assert!(!json.retained(&recorder, "json", &retained));
+        assert_eq!(base64.entries.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn retained_set_change_invalidates_an_evicted_restore_target() {
+        let root = temporary_root("view-retention");
+        let recorder = HistoryRecorder::new(HistoryStore::new(root.clone()), Box::new(FixedClock));
+        let old = entry("json", "old", "2026-01-01T00:00:00Z", 1);
+        recorder.store().record(old.clone()).unwrap();
+        let mut view = HistoryViewState::load(&recorder, "json");
+        assert!(view.select("old"));
+        view.pending_restore = Some(old);
+        for index in 0..RETENTION {
+            let retained = recorder
+                .store()
+                .record(entry(
+                    "json",
+                    &format!("new-{index:02}"),
+                    "2026-01-02T00:00:00Z",
+                    1,
+                ))
+                .unwrap();
+            view.apply_record(&recorder, "json", Ok(retained));
+        }
+        assert_eq!(view.entries.len(), RETENTION);
+        assert!(view.selected.is_none());
+        assert!(view.pending_restore.is_none());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -613,6 +1077,34 @@ mod tests {
     }
 
     #[test]
+    fn clear_all_removes_legacy_filenames_outside_current_utility_id_rules() {
+        let root = temporary_root("legacy-clear");
+        let store = HistoryStore::new(root.clone());
+        store.record(entry("json", "known", "t", 1)).unwrap();
+        let legacy = root.join(format!("LegacyUtility{FILE_SUFFIX}"));
+        fs::write(&legacy, b"opaque legacy bytes").unwrap();
+        assert_eq!(
+            store.load("LegacyUtility"),
+            Err(HistoryError::InvalidUtility)
+        );
+        assert_eq!(
+            store.stored_utility_ids().unwrap(),
+            vec!["LegacyUtility", "json"]
+        );
+        let report = store.clear_all_report().unwrap();
+        assert_eq!(report.cleared_ids, vec!["LegacyUtility", "json"]);
+        assert!(report.failed_ids.is_empty());
+        assert!(!legacy.exists());
+        assert!(store.stored_utility_ids().unwrap().is_empty());
+        fs::write(&legacy, b"opaque legacy bytes").unwrap();
+        store
+            .clear("LegacyUtility")
+            .expect("single unknown Utility clear");
+        assert!(!legacy.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn entries_for_another_utility_in_the_same_file_are_corrupt() {
         let root = temporary_root("mismatch");
         fs::create_dir_all(&root).unwrap();
@@ -658,6 +1150,84 @@ mod tests {
         assert_eq!(entries[0].id, "fixed");
         assert_eq!(entries[0].captured_at, "2026-01-01T00:00:00Z");
         assert_eq!(entries[0].snapshot_version, 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recorder_pause_keeps_live_result_and_does_not_duplicate_on_retry() {
+        let root = temporary_root("session-pause");
+        let recorder = HistoryRecorder::new(HistoryStore::new(root.clone()), Box::new(FixedClock));
+        let mut session = Session::<Json>::new();
+        let first = JsonRequest::new(r#"{"first":1}"#, JsonMode::Format);
+        let SubmitOutcome::Scheduled(first_revision) = session.submit(first) else {
+            panic!("first operation");
+        };
+        session.resolve(first_revision).unwrap();
+        let first_payload = serde_json::to_value(session.take_snapshot().unwrap()).unwrap();
+        recorder
+            .record(Json::ID, Json::SNAPSHOT_VERSION, first_payload)
+            .unwrap();
+
+        recorder.store().fail_next_writes(1);
+        let second = JsonRequest::new(r#"{"second":2}"#, JsonMode::Format);
+        let SubmitOutcome::Scheduled(second_revision) = session.submit(second) else {
+            panic!("second operation");
+        };
+        session.resolve(second_revision).unwrap();
+        let visible = session.evaluation().clone();
+        let second_payload = serde_json::to_value(session.take_snapshot().unwrap()).unwrap();
+        assert_eq!(
+            recorder.record(Json::ID, Json::SNAPSHOT_VERSION, second_payload),
+            Err(HistoryError::Unavailable)
+        );
+        assert_eq!(session.evaluation(), &visible);
+        assert!(recorder.store().is_paused(Json::ID));
+        assert_eq!(recorder.load(Json::ID).unwrap().len(), 1);
+
+        let third = JsonRequest::new(r#"{"third":3}"#, JsonMode::Format);
+        let SubmitOutcome::Scheduled(third_revision) = session.submit(third) else {
+            panic!("third operation");
+        };
+        session.resolve(third_revision).unwrap();
+        let third_payload = serde_json::to_value(session.take_snapshot().unwrap()).unwrap();
+        assert_eq!(
+            recorder.record(Json::ID, Json::SNAPSHOT_VERSION, third_payload),
+            Err(HistoryError::Paused)
+        );
+        assert_eq!(recorder.load(Json::ID).unwrap().len(), 1);
+        assert_eq!(recorder.store().retry(Json::ID).unwrap().len(), 1);
+        assert!(!recorder.store().is_paused(Json::ID));
+        assert_eq!(recorder.load(Json::ID).unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn global_and_utility_recording_preferences_remain_independent() {
+        let root = temporary_root("policy");
+        let mut policy = HistoryPolicy::default();
+        policy.defaults.insert("jwt".into(), false);
+        let recorder = HistoryRecorder::with_policy(
+            HistoryStore::new(root.clone()),
+            Box::new(FixedClock),
+            policy,
+            None,
+        );
+        assert!(!recorder.is_recording("jwt"));
+        recorder.record("jwt", 1, serde_json::Value::Null).unwrap();
+        assert!(recorder.load("jwt").unwrap().is_empty());
+
+        recorder.set_global_enabled(false);
+        recorder.set_utility_enabled("json", true);
+        assert!(!recorder.is_recording("json"));
+        recorder.record("json", 1, serde_json::Value::Null).unwrap();
+        assert!(recorder.load("json").unwrap().is_empty());
+        recorder.set_global_enabled(true);
+        assert!(recorder.is_recording("json"));
+        assert!(!recorder.is_recording("jwt"));
+        recorder.set_utility_enabled("jwt", true);
+        assert!(recorder.is_recording("jwt"));
+        recorder.record("jwt", 1, serde_json::Value::Null).unwrap();
+        assert_eq!(recorder.load("jwt").unwrap().len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
 }
