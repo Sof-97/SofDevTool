@@ -15,8 +15,9 @@ use gpui::{
 use sofui::{
     active_theme, apply_custom_theme, apply_theme, copy_feedback, diagnostic_banner, init, mount,
     panel, view_click, Button, ButtonVariant, ConfirmationBar, DiagnosticSeverity, HoldButton,
-    HoldController, LabeledField, NumericStepper, SelectableList, SelectableListFocus,
-    SelectableRow, TextEditor, TextField, ThemePalette, ThemeTokens, ThemeVariant,
+    HoldController, LabeledField, NumericStepper, SegmentedControl, SegmentedControlFocus,
+    SegmentedOption, SelectableList, SelectableListFocus, SelectableRow, TextEditor, TextField,
+    ThemePalette, ThemeTokens, ThemeVariant,
 };
 
 // A gallery-only custom palette with distinct focus and diagnostic colors.
@@ -47,6 +48,10 @@ struct Gallery {
     cancel_focus: FocusHandle,
     channel_focus: [FocusHandle; 2],
     channel_value: i32,
+    format_focus: SegmentedControlFocus,
+    selected_format: String,
+    option_focus: SegmentedControlFocus,
+    selected_option: String,
     copied: bool,
     list_selected: Option<String>,
     list_items: Vec<SelectableRow>,
@@ -111,6 +116,10 @@ impl Gallery {
             cancel_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             channel_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
             channel_value: 250,
+            format_focus: SegmentedControlFocus::new(),
+            selected_format: "format-a".to_owned(),
+            option_focus: SegmentedControlFocus::new(),
+            selected_option: "choice-1".to_owned(),
             copied: false,
             list_selected: Some("a".into()),
             list_items,
@@ -127,6 +136,48 @@ impl Render for Gallery {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = ThemeTokens::active();
         let selected = self.list_selected.clone();
+        let weak = cx.weak_entity();
+        let format = SegmentedControl::new(
+            "gallery.format",
+            "Format",
+            vec![
+                SegmentedOption::new("format-a", "Format A"),
+                SegmentedOption::new("format-b", "Format B"),
+                SegmentedOption::new("format-c", "Format C"),
+            ],
+            Some(self.selected_format.clone()),
+            self.format_focus.clone(),
+        )
+        .on_change(std::rc::Rc::new(move |id, _window, cx| {
+            weak.update(cx, |this, cx| {
+                this.selected_format = id.to_owned();
+                cx.notify();
+            })
+            .ok();
+        }));
+        let weak = cx.weak_entity();
+        let options = SegmentedControl::new(
+            "gallery.options",
+            "Options",
+            vec![
+                SegmentedOption::new("choice-1", "Choice 1"),
+                SegmentedOption::new("choice-2", "Choice 2"),
+                SegmentedOption::new("choice-3", "Choice 3"),
+                SegmentedOption::new("choice-4", "Choice 4"),
+                SegmentedOption::new("choice-5", "Choice 5"),
+                SegmentedOption::new("choice-6", "Choice 6"),
+                SegmentedOption::new("choice-7", "Choice 7"),
+            ],
+            Some(self.selected_option.clone()),
+            self.option_focus.clone(),
+        )
+        .on_change(std::rc::Rc::new(move |id, _window, cx| {
+            weak.update(cx, |this, cx| {
+                this.selected_option = id.to_owned();
+                cx.notify();
+            })
+            .ok();
+        }));
         let weak = cx.weak_entity();
         let list = SelectableList::new(
             "gallery.list",
@@ -310,6 +361,11 @@ impl Render for Gallery {
                     }
                 }),
             )
+            .child(panel(
+                "Segmented selection",
+                "format and other choices · Left/Right, Home/End",
+                div().flex().flex_col().gap_3().children([format, options]),
+            ))
             .child(
                 div().w_full().child(
                     LabeledField::new("Single-line field", self.field.render("gallery.field"))

@@ -35,6 +35,7 @@ pub fn init(cx: &mut gpui::App) {
     gpui_component::init(cx);
     components::register_button_key_bindings(cx);
     components::register_hold_button_key_bindings(cx);
+    components::register_segmented_control_key_bindings(cx);
     components::register_selectable_list_key_bindings(cx);
 }
 
