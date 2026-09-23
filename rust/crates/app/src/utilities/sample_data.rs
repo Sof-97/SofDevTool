@@ -383,8 +383,18 @@ impl SampleDataWorkspace {
             cx.notify();
             return;
         };
-        let nonempty = self.session.evaluation().is_valid_operation();
-        if nonempty && self.signature(cx) != snapshot.request.configuration() {
+        let current_configuration = self.signature(cx);
+        let baseline_configuration = SampleDataRequest::default().configuration();
+        let nonempty = self.session.evaluation().is_valid_operation()
+            || current_configuration != baseline_configuration;
+        if restore_decision(
+            nonempty,
+            &current_configuration,
+            &snapshot.request.configuration(),
+            &self.session.evaluation().output(),
+            &Some(snapshot.output.as_str()),
+        ) == RestoreDecision::Confirm
+        {
             self.pending_restore = Some(entry);
             cx.notify();
         } else {
@@ -893,9 +903,83 @@ fn number_text(value: f64) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestoreDecision {
+    Apply,
+    Confirm,
+}
+
+/// Require confirmation when a nonempty session has different settings or
+/// output. Comparing output catches generated batches whose schemas match.
+fn restore_decision<C: PartialEq, O: PartialEq>(
+    current_is_nonempty: bool,
+    current_configuration: &C,
+    restored_configuration: &C,
+    current_output: &O,
+    restored_output: &O,
+) -> RestoreDecision {
+    if current_is_nonempty
+        && (current_configuration != restored_configuration || current_output != restored_output)
+    {
+        RestoreDecision::Confirm
+    } else {
+        RestoreDecision::Apply
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use crate::history::{HistoryClock, HistoryEntry, HistoryStore};
+
+    struct TestClipboard;
+
+    impl Clipboard for TestClipboard {
+        fn read_text(&self, _cx: &mut App) -> Option<String> {
+            None
+        }
+
+        fn write_text(&self, _text: &str, _cx: &mut App) {}
+    }
+
+    struct CountingClock(Rc<Cell<usize>>);
+
+    impl HistoryClock for CountingClock {
+        fn captured_at(&self) -> String {
+            self.0.set(self.0.get() + 1);
+            "2026-01-01T00:00:00Z".to_owned()
+        }
+
+        fn next_id(&self) -> String {
+            self.0.set(self.0.get() + 1);
+            format!("entry-{}", self.0.get())
+        }
+    }
+
+    fn isolated_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "sofdevtool-sample-data-restore-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn history_entry(id: &str, snapshot: SampleDataSnapshot) -> HistoryEntry {
+        HistoryEntry {
+            id: id.to_owned(),
+            captured_at: "2026-01-01T00:00:00Z".to_owned(),
+            utility_id: SampleData::ID.to_owned(),
+            snapshot_version: SampleData::SNAPSHOT_VERSION,
+            payload: serde_json::to_value(snapshot).unwrap(),
+        }
+    }
 
     #[test]
     fn preview_line_summarizes_without_losing_the_start() {
@@ -912,5 +996,249 @@ mod tests {
         assert_eq!(number_text(1_893_456_000.0), "1893456000");
         assert_eq!(parse_number("0"), 0.0);
         assert!(parse_number("nope").is_nan());
+    }
+
+    #[test]
+    fn different_generated_batches_with_identical_schema_require_confirmation() {
+        let configuration = SampleDataRequest::default().configuration();
+        assert_eq!(
+            restore_decision(
+                true,
+                &configuration,
+                &configuration,
+                &Some("current batch"),
+                &Some("captured batch"),
+            ),
+            RestoreDecision::Confirm,
+        );
+    }
+
+    #[test]
+    fn edited_invalid_schema_is_nonempty_and_protected() {
+        use sofdevtool_core::utility::Utility;
+
+        let mut fields = SampleDataRequest::default().fields;
+        fields[0].name.clear();
+        let edited = SampleDataRequest {
+            fields,
+            ..SampleDataRequest::default()
+        };
+        let evaluation = SampleData::evaluate(&edited);
+        assert!(!evaluation.is_valid_operation());
+
+        let captured = SampleDataRequest::default().configuration();
+        let current = edited.configuration();
+        assert_eq!(
+            restore_decision(
+                current != SampleDataRequest::default().configuration(),
+                &current,
+                &captured,
+                &None::<&str>,
+                &Some("captured output"),
+            ),
+            RestoreDecision::Confirm,
+        );
+    }
+
+    #[test]
+    fn empty_and_equivalent_sample_data_sessions_apply_without_confirmation() {
+        let configuration = SampleDataRequest::default().configuration();
+        assert_eq!(
+            restore_decision(
+                false,
+                &configuration,
+                &configuration,
+                &None::<&str>,
+                &Some("captured output"),
+            ),
+            RestoreDecision::Apply,
+        );
+        assert_eq!(
+            restore_decision(
+                true,
+                &configuration,
+                &configuration,
+                &Some("same output"),
+                &Some("same output"),
+            ),
+            RestoreDecision::Apply,
+        );
+    }
+
+    #[gpui::test]
+    fn workspace_restore_confirmation_cancel_and_confirm_use_captured_output(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = isolated_root();
+        let clock_calls = Rc::new(Cell::new(0));
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(CountingClock(clock_calls.clone())),
+        ));
+        let snapshot = SampleDataSnapshot {
+            request: SampleDataRequest {
+                generation: 7,
+                ..SampleDataRequest::default()
+            },
+            rows: Vec::new(),
+            output: "exact captured sample output".to_owned(),
+        };
+        let entry = history_entry("captured", snapshot.clone());
+        history.store().record(entry.clone()).unwrap();
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            SampleDataWorkspace::new(window, cx, clipboard, history.clone())
+        });
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                let request = SampleDataRequest {
+                    generation: 8,
+                    ..SampleDataRequest::default()
+                };
+                let SubmitOutcome::Scheduled(revision) = view.session.submit(request.clone())
+                else {
+                    panic!("initial current batch must schedule");
+                };
+                assert!(view
+                    .session
+                    .publish(
+                        revision,
+                        SampleDataEvaluation::Valid {
+                            output: "current generated output".to_owned(),
+                            rows: Vec::new(),
+                        },
+                    )
+                    .is_some());
+                let current_evaluation = view.session.evaluation().clone();
+                let current_request = view.session.request().unwrap().clone();
+
+                view.request_restore(entry.clone(), window, cx);
+                assert_eq!(view.pending_restore, Some(entry.clone()));
+                view.cancel_restore(cx);
+                assert!(view.pending_restore.is_none());
+                assert_eq!(view.session.request(), Some(&current_request));
+                assert_eq!(view.session.evaluation(), &current_evaluation);
+
+                view.request_restore(entry.clone(), window, cx);
+                assert_eq!(view.pending_restore, Some(entry.clone()));
+                view.confirm_restore(window, cx);
+                assert!(view.pending_restore.is_none());
+                assert_eq!(
+                    view.session.evaluation().output(),
+                    Some(snapshot.output.as_str())
+                );
+                assert_eq!(
+                    view.request(cx).configuration(),
+                    snapshot.request.configuration()
+                );
+                assert_eq!(view.generation, 7);
+                assert!(view.session.take_snapshot().is_none());
+            });
+            assert_eq!(history.load(SampleData::ID).unwrap().len(), 1);
+            assert_eq!(clock_calls.get(), 0);
+        });
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn invalid_edited_sample_schema_requires_confirmation_and_survives_cancel(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = isolated_root();
+        let clock_calls = Rc::new(Cell::new(0));
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(CountingClock(clock_calls.clone())),
+        ));
+        let snapshot = SampleDataSnapshot {
+            request: SampleDataRequest::default(),
+            rows: Vec::new(),
+            output: "captured valid result".to_owned(),
+        };
+        let entry = history_entry("captured", snapshot.clone());
+        history.store().record(entry.clone()).unwrap();
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            SampleDataWorkspace::new(window, cx, clipboard, history.clone())
+        });
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.fields[0].name.assign_text("", window, cx);
+                let invalid_request = view.request(cx);
+                assert!(!SampleData::evaluate(&invalid_request).is_valid_operation());
+                view.request_restore(entry.clone(), window, cx);
+                assert_eq!(view.pending_restore, Some(entry.clone()));
+                view.cancel_restore(cx);
+                assert!(view.pending_restore.is_none());
+                assert_eq!(view.fields[0].name.text(cx), "");
+                assert!(!view.session.evaluation().is_valid_operation());
+
+                view.request_restore(entry.clone(), window, cx);
+                assert_eq!(view.pending_restore, Some(entry.clone()));
+                view.confirm_restore(window, cx);
+                assert!(view.pending_restore.is_none());
+                assert_eq!(view.fields[0].name.text(cx), "name");
+                assert_eq!(
+                    view.session.evaluation().output(),
+                    Some(snapshot.output.as_str())
+                );
+                assert_eq!(
+                    view.request(cx).configuration(),
+                    snapshot.request.configuration()
+                );
+                assert!(view.session.take_snapshot().is_none());
+            });
+            assert_eq!(history.load(SampleData::ID).unwrap().len(), 1);
+            assert_eq!(clock_calls.get(), 0);
+        });
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn empty_and_equivalent_sample_data_workspaces_restore_without_confirmation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = isolated_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(CountingClock(Rc::new(Cell::new(0)))),
+        ));
+        let snapshot = SampleDataSnapshot {
+            request: SampleDataRequest::default(),
+            rows: Vec::new(),
+            output: "captured sample output".to_owned(),
+        };
+        let entry = history_entry("captured", snapshot.clone());
+        history.store().record(entry.clone()).unwrap();
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            SampleDataWorkspace::new(window, cx, clipboard, history.clone())
+        });
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.request_restore(entry.clone(), window, cx);
+                assert!(
+                    view.pending_restore.is_none(),
+                    "empty sessions apply directly"
+                );
+                assert_eq!(
+                    view.session.evaluation().output(),
+                    Some(snapshot.output.as_str())
+                );
+                view.request_restore(entry.clone(), window, cx);
+                assert!(
+                    view.pending_restore.is_none(),
+                    "equivalent sessions apply directly"
+                );
+            });
+            assert_eq!(history.load(SampleData::ID).unwrap().len(), 1);
+        });
+        fs::remove_dir_all(root).unwrap();
     }
 }

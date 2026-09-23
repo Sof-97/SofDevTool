@@ -111,3 +111,16 @@ not modify ticket statuses. The coordinator integrates and runs shared gates.
   callbacks rather than only a pure decision helper.
 - Shared Cargo compilation is temporarily serialized while06 finalizes its
   component export and tests; root snapshot builds are complete.
+
+- 06 integrated `bdf1a3a`; Color ownership explicitly handed to03.
+- 09 dispatched to UI Sol: generic list/confirmation and component-owned hold
+  timing, JSON/Settings first consumers, public gallery/tests.
+- 07 Luna is strengthening tests at the actual workspace restore callbacks
+  before integration; its evidence was moved to the canonical initiative path.
+
+- 03 integrated `06846a1`; 07 frozen candidate passed the coordinator's combined
+  default gate: 304 tests, formatting, Clippy and Debug app/gallery builds.
+- Coordinator snapshot builds now use an independent Cargo target to avoid
+  stale artifacts when workers and frozen source trees compile concurrently.
+- 04 dispatched to the History Sol lane: Random String, Regex and Text Diff
+  first; Identifier/Sample Data ownership follows the07 integration handoff.

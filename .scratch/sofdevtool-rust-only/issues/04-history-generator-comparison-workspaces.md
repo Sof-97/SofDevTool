@@ -4,7 +4,7 @@
 
 **Blocked by:** [02: Coordinate JSON and Base64 History with enforced recording recovery](02-history-coordination-recovery.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Migrate Identifier Generator, Random String, Sample Data, Regex and Text Diff to the shared coordinator without erasing their Utility-owned snapshot types.
 - [ ] Deleted entries cannot remain selected, previewable or restorable; current generated results, comparison inputs and in-flight session revisions remain intact.

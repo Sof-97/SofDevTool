@@ -4,7 +4,7 @@
 
 **Blocked by:** [01: Use sofui's owned component interfaces in JSON and the gallery](01-sofui-json-gallery.md); [02: Coordinate JSON and Base64 History with enforced recording recovery](02-history-coordination-recovery.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] sofui owns reusable timing/progress, selection, focus and confirmation mechanics; application code supplies labels, quota, duration, destructive action and recording policy.
 - [ ] Preserve one-second Clear Utility and two-second Clear All holds, cancellation on release/exit/Escape, and ordinary confirmation for keyboard activation.

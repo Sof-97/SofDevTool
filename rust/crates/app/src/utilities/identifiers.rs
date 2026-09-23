@@ -351,10 +351,18 @@ impl IdentifiersWorkspace {
             cx.notify();
             return;
         };
+        let current_signature = self.signature(cx);
+        let baseline_signature = WorkspaceSignature::of(&IdentifiersRequest::default());
         let nonempty = self.session.evaluation().is_valid_operation()
-            || !self.inspect.text(cx).is_empty()
-            || !self.name.text(cx).is_empty();
-        if nonempty && self.signature(cx) != WorkspaceSignature::of(&snapshot.request) {
+            || current_signature != baseline_signature;
+        if restore_decision(
+            nonempty,
+            &current_signature,
+            &WorkspaceSignature::of(&snapshot.request),
+            self.session.evaluation().values(),
+            snapshot.values.as_slice(),
+        ) == RestoreDecision::Confirm
+        {
             self.pending_restore = Some(entry);
             cx.notify();
         } else {
@@ -937,6 +945,31 @@ struct WorkspaceSignature {
     input: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestoreDecision {
+    Apply,
+    Confirm,
+}
+
+/// A generated operation is different when either its controls or its
+/// captured output differ. This protects repeated batches with identical
+/// settings while allowing an exact restore to apply immediately.
+fn restore_decision<C: PartialEq, O: PartialEq + ?Sized>(
+    current_is_nonempty: bool,
+    current_configuration: &C,
+    restored_configuration: &C,
+    current_output: &O,
+    restored_output: &O,
+) -> RestoreDecision {
+    if current_is_nonempty
+        && (current_configuration != restored_configuration || current_output != restored_output)
+    {
+        RestoreDecision::Confirm
+    } else {
+        RestoreDecision::Apply
+    }
+}
+
 impl WorkspaceSignature {
     fn of(request: &IdentifiersRequest) -> Self {
         Self {
@@ -981,6 +1014,57 @@ fn preview_line(values: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use crate::history::{HistoryClock, HistoryEntry, HistoryStore};
+    use sofdevtool_core::utilities::identifiers::IdentifiersEvaluation;
+
+    struct TestClipboard;
+
+    impl Clipboard for TestClipboard {
+        fn read_text(&self, _cx: &mut App) -> Option<String> {
+            None
+        }
+
+        fn write_text(&self, _text: &str, _cx: &mut App) {}
+    }
+
+    struct CountingClock(Rc<Cell<usize>>);
+
+    impl HistoryClock for CountingClock {
+        fn captured_at(&self) -> String {
+            self.0.set(self.0.get() + 1);
+            "2026-01-01T00:00:00Z".to_owned()
+        }
+
+        fn next_id(&self) -> String {
+            self.0.set(self.0.get() + 1);
+            format!("entry-{}", self.0.get())
+        }
+    }
+
+    fn isolated_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "sofdevtool-identifiers-restore-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn history_entry(id: &str, snapshot: IdentifiersSnapshot) -> HistoryEntry {
+        HistoryEntry {
+            id: id.to_owned(),
+            captured_at: "2026-01-01T00:00:00Z".to_owned(),
+            utility_id: Identifiers::ID.to_owned(),
+            snapshot_version: Identifiers::SNAPSHOT_VERSION,
+            payload: serde_json::to_value(snapshot).unwrap(),
+        }
+    }
 
     #[test]
     fn preview_line_summarizes_a_batch_without_losing_the_first_value() {
@@ -1029,5 +1113,163 @@ mod tests {
             ..request.clone()
         });
         assert_ne!(WorkspaceSignature::of(&request), other_mode);
+    }
+
+    #[test]
+    fn different_generated_batches_with_identical_controls_require_confirmation() {
+        let request = IdentifiersRequest::default();
+        let signature = WorkspaceSignature::of(&request);
+        let decision = restore_decision(
+            true,
+            &signature,
+            &signature,
+            &["current-batch".to_owned()][..],
+            &["captured-batch".to_owned()][..],
+        );
+        assert_eq!(decision, RestoreDecision::Confirm);
+    }
+
+    #[test]
+    fn empty_and_equivalent_identifier_sessions_apply_without_confirmation() {
+        let request = IdentifiersRequest::default();
+        let signature = WorkspaceSignature::of(&request);
+        assert_eq!(
+            restore_decision(
+                false,
+                &signature,
+                &signature,
+                &[] as &[String],
+                &["saved".to_owned()][..]
+            ),
+            RestoreDecision::Apply,
+        );
+        assert_eq!(
+            restore_decision(
+                true,
+                &signature,
+                &signature,
+                &["same".to_owned()][..],
+                &["same".to_owned()][..]
+            ),
+            RestoreDecision::Apply,
+        );
+    }
+
+    #[gpui::test]
+    fn workspace_restore_confirmation_cancel_and_confirm_use_the_captured_batch(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = isolated_root();
+        let clock_calls = Rc::new(Cell::new(0));
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(CountingClock(clock_calls.clone())),
+        ));
+        let snapshot = IdentifiersSnapshot {
+            request: IdentifiersRequest {
+                generation: 7,
+                ..IdentifiersRequest::default()
+            },
+            values: vec![
+                "captured-identifier-a".to_owned(),
+                "captured-identifier-b".to_owned(),
+            ],
+        };
+        let entry = history_entry("captured", snapshot.clone());
+        history.store().record(entry.clone()).unwrap();
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            IdentifiersWorkspace::new(window, cx, clipboard, history.clone())
+        });
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                let request = IdentifiersRequest {
+                    generation: 8,
+                    ..IdentifiersRequest::default()
+                };
+                let SubmitOutcome::Scheduled(revision) = view.session.submit(request.clone())
+                else {
+                    panic!("initial current batch must schedule");
+                };
+                assert!(view
+                    .session
+                    .publish(
+                        revision,
+                        IdentifiersEvaluation::Valid {
+                            values: vec!["current-identifier".to_owned()],
+                        },
+                    )
+                    .is_some());
+                let current_evaluation = view.session.evaluation().clone();
+                let current_request = view.session.request().unwrap().clone();
+                let initial_generation = view.generation;
+
+                view.request_restore(entry.clone(), window, cx);
+                assert_eq!(view.pending_restore, Some(entry.clone()));
+                view.cancel_restore(cx);
+                assert!(view.pending_restore.is_none());
+                assert_eq!(view.session.request(), Some(&current_request));
+                assert_eq!(view.session.evaluation(), &current_evaluation);
+
+                view.request_restore(entry.clone(), window, cx);
+                assert_eq!(view.pending_restore, Some(entry.clone()));
+                view.confirm_restore(window, cx);
+                assert!(view.pending_restore.is_none());
+                assert_eq!(view.session.evaluation().values(), snapshot.values);
+                assert_eq!(
+                    view.signature(cx),
+                    WorkspaceSignature::of(&snapshot.request)
+                );
+                assert_eq!(view.generation, initial_generation.max(7));
+                assert!(view.session.take_snapshot().is_none());
+            });
+            assert_eq!(history.load(Identifiers::ID).unwrap().len(), 1);
+            assert_eq!(clock_calls.get(), 0);
+        });
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn empty_and_equivalent_identifier_workspaces_restore_without_confirmation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = isolated_root();
+        let clock_calls = Rc::new(Cell::new(0));
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(CountingClock(clock_calls.clone())),
+        ));
+        let snapshot = IdentifiersSnapshot {
+            request: IdentifiersRequest::default(),
+            values: vec!["captured-identifier".to_owned()],
+        };
+        let entry = history_entry("captured", snapshot.clone());
+        history.store().record(entry.clone()).unwrap();
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            IdentifiersWorkspace::new(window, cx, clipboard, history.clone())
+        });
+
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.request_restore(entry.clone(), window, cx);
+                assert!(
+                    view.pending_restore.is_none(),
+                    "empty sessions apply directly"
+                );
+                assert_eq!(view.session.evaluation().values(), snapshot.values);
+                view.request_restore(entry.clone(), window, cx);
+                assert!(
+                    view.pending_restore.is_none(),
+                    "equivalent sessions apply directly"
+                );
+            });
+            assert_eq!(history.load(Identifiers::ID).unwrap().len(), 1);
+            assert_eq!(clock_calls.get(), 0);
+        });
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -1,6 +1,6 @@
 # Ticket 03 implementation evidence
 
-Status: eight-workspace source candidate frozen; shared full app gate awaits the coordinator's stable window after concurrent ticket 07 edits. No native launch or VCS write was performed by this worker.
+Status: eight-workspace source integrated in `06846a1`; coordinator combined gate passed. No native launch or VCS write was performed by this worker.
 
 ## Changed behavior
 
@@ -25,3 +25,11 @@ Commands run offline from `rust/` with `CARGO_TARGET_DIR=/private/tmp/sofdevtool
 An actual YAML/JSON workspace GPUI test uses an open visible workspace and an open unmounted workspace with one synthetic temporary History root. It passes selected and pending restore invalidation, immediate Clear Utility, partial Clear All when an unknown History path cannot be deleted, preservation of both sessions' input/result, a late confirm/selection, and direct snapshot restore without another record. A second passing actual-workspace test covers deterministic failed write, a further valid evaluation while paused without a History write, successful retry without a duplicate entry, and corrupt file isolation without changing current content.
 
 Core Utility snapshot round-trip tests remain the Utility-owned restore contract checks. This worker has not claimed native pointer, keyboard, visual or macOS 14/15 runtime evidence.
+
+## Coordinator integration gate
+
+Frozen `06846a1` plus ticket07 passed the full offline default gate in
+`/private/tmp/sofdevtool-wave3-5twn1s5j/rust`: formatting, all-target Clippy with
+warnings denied, 304 tests and Debug app/gallery builds. This supersedes the
+concurrent-edit compile blockers above. Native acceptance and final Astra
+review remain separate. Log: `.artifacts/parallel-rust-only/wave3/verify.log`.
