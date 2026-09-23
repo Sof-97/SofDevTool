@@ -4,7 +4,7 @@
 
 **Blocked by:** [19: Finish sofui extraction readiness and remove compatibility scaffolding](19-sofui-independent-consumer.md); [21: Retire Swift and make maintained documentation describe the sole Rust app](21-swift-retirement-documentation.md).
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Run the complete appropriate regression/component/asset/build gates and fifteen-Utility acceptance on the final integrated candidate, retaining accurate revision/host/toolchain evidence.
 - [ ] Actually install to the default home Applications location and launch outside the checkout with isolated data; verify identity/version/revision/channel, resources, a recorded operation and persistence across relaunch.

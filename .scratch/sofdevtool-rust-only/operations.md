@@ -165,3 +165,7 @@ not modify ticket statuses. The coordinator integrates and runs shared gates.
 
 - Wave8 commits: `110a94d` generators15, `1209cdd` conversions14, `b82cbee` Text Diff18, `e3cb13b` native window menu correction. Shared gate compiled all app tests; 101/102 passed initially, and the remaining Hashes interaction passed after correcting test event sequencing. A new full combined gate remains required.
 - Ticket16 is dispatched to the Regex Sol lane. Ticket19 independent-consumer preparation runs in the UI Sol lane; compatibility removal waits for the final consumers in16. Root owns native and final installed Release acceptance.
+
+- Ticket16 integrated at `24ef557`, including a regression found by the redesigned Color restore interaction: immediate History record results now match persisted floating-point payloads exactly. Focused History/Regex/Color checks and app Clippy passed.
+- Native lifecycle diagnosis confirmed nested GPUI window updates were rejecting custom menu actions; deferred dispatch succeeded for Settings Cmd-W and Workbench fullscreen entry/exit. Temporary tracing is being removed before final acceptance. Native Edit > Copy in Text Diff succeeded; synthesized Cmd-C/global shortcut require separate evidence.
+- Final15-Utility native runbook is prepared as an ignored execution aid. Ticket22 acceptance preparation has begun; installed Release and final Astra review are still pending.
