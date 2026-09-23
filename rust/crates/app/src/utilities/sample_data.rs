@@ -20,7 +20,7 @@ use sofdevtool_ui::{
 };
 
 use crate::clipboard::Clipboard;
-use crate::history::{HistoryEntry, HistoryRecorder};
+use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
 use crate::workbench::Workbench;
 
 type SampleDataSession = Session<SampleData>;
@@ -157,11 +157,9 @@ pub struct SampleDataWorkspace {
     history: Rc<HistoryRecorder>,
     copied: bool,
     suppress_changes: bool,
-    history_entries: Vec<HistoryEntry>,
-    history_selected: Option<String>,
+    history_view: HistoryViewState,
     history_visible: bool,
-    history_error: Option<String>,
-    pending_restore: Option<HistoryEntry>,
+    _history_subscription: HistorySubscription,
     focus: ButtonFocus,
 }
 
@@ -179,10 +177,11 @@ impl SampleDataWorkspace {
             .map(|definition| FieldState::new(window, cx, definition))
             .collect();
         let result = TextEditor::new(window, cx);
-        let (history_entries, history_error) = match history.load(SampleData::ID) {
-            Ok(entries) => (entries, None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
-        };
+        let history_view = HistoryViewState::load(&history, SampleData::ID);
+        let weak = cx.weak_entity();
+        let history_subscription = history.subscribe(SampleData::ID, move |cx| {
+            weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
+        });
         Self {
             fields,
             row_count: default.row_count,
@@ -195,11 +194,9 @@ impl SampleDataWorkspace {
             history,
             copied: false,
             suppress_changes: false,
-            history_entries,
-            history_selected: None,
+            history_view,
             history_visible: true,
-            history_error,
-            pending_restore: None,
+            _history_subscription: history_subscription,
             focus: ButtonFocus {
                 json: cx.focus_handle().tab_stop(true).tab_index(0),
                 csv: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -263,19 +260,18 @@ impl SampleDataWorkspace {
             return;
         };
         let payload = serde_json::to_value(&snapshot).expect("a Sample Data snapshot serializes");
-        match self
+        let result = self
             .history
-            .record(SampleData::ID, SampleData::SNAPSHOT_VERSION, payload)
-        {
-            Ok(entries) => {
-                self.history_entries = entries;
-                self.history_error = None;
-            }
-            Err(error) => {
-                self.history_error = Some(error.to_string());
-                cx.notify();
-            }
-        }
+            .record(SampleData::ID, SampleData::SNAPSHOT_VERSION, payload);
+        self.history_view
+            .apply_record(&self.history, SampleData::ID, result);
+        self.history.notify_status(cx);
+        cx.notify();
+    }
+
+    fn reconcile_history(&mut self, cx: &mut Context<Self>) {
+        self.history_view.reconcile(&self.history, SampleData::ID);
+        cx.notify();
     }
 
     fn sync_display(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -378,7 +374,7 @@ impl SampleDataWorkspace {
         cx: &mut Context<Self>,
     ) {
         let Some(snapshot) = decode_snapshot(&entry) else {
-            self.history_error =
+            self.history_view.error =
                 Some("This History entry uses a snapshot version this build cannot read.".into());
             cx.notify();
             return;
@@ -395,7 +391,7 @@ impl SampleDataWorkspace {
             &Some(snapshot.output.as_str()),
         ) == RestoreDecision::Confirm
         {
-            self.pending_restore = Some(entry);
+            self.history_view.pending_restore = Some(entry);
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -424,7 +420,7 @@ impl SampleDataWorkspace {
                 .map_or(0, |request| request.generation),
         );
         self.suppress_changes = false;
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         self.copied = false;
         self.display_epoch = u64::MAX;
         self.sync_display(window, cx);
@@ -432,34 +428,50 @@ impl SampleDataWorkspace {
     }
 
     fn confirm_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry) = self.pending_restore.clone() {
-            if let Some(snapshot) = decode_snapshot(&entry) {
-                self.apply_restore(snapshot, window, cx);
+        if let Some(entry) = self.history_view.pending_restore.clone() {
+            if self
+                .history_view
+                .retained(&self.history, SampleData::ID, &entry)
+            {
+                if let Some(snapshot) = decode_snapshot(&entry) {
+                    self.apply_restore(snapshot, window, cx);
+                }
+            } else {
+                self.reconcile_history(cx);
             }
         }
     }
 
     fn cancel_restore(&mut self, cx: &mut Context<Self>) {
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         cx.notify();
     }
 
     fn restore_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(selected) = self.history_selected.clone() else {
+        let Some(selected) = self.history_view.selected.clone() else {
             return;
         };
         if let Some(entry) = self
-            .history_entries
+            .history_view
+            .entries
             .iter()
             .find(|entry| entry.id == selected)
             .cloned()
         {
-            self.request_restore(entry, window, cx);
+            if self
+                .history_view
+                .retained(&self.history, SampleData::ID, &entry)
+            {
+                self.request_restore(entry, window, cx);
+            } else {
+                self.reconcile_history(cx);
+            }
         }
     }
 
     fn history_items(&self) -> Vec<HistoryItem> {
-        self.history_entries
+        self.history_view
+            .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
@@ -629,10 +641,15 @@ impl SampleDataWorkspace {
     }
 
     fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.history_selected.clone();
+        let selected = self.history_view.selected.clone();
         let restore_enabled = selected
             .as_ref()
-            .and_then(|id| self.history_entries.iter().find(|entry| &entry.id == id))
+            .and_then(|id| {
+                self.history_view
+                    .entries
+                    .iter()
+                    .find(|entry| &entry.id == id)
+            })
             .map(|entry| decode_snapshot(entry).is_some())
             .unwrap_or(false);
         let actions = div().flex().flex_row().gap_2().child(
@@ -651,8 +668,9 @@ impl SampleDataWorkspace {
         )
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
-                this.history_selected = Some(id.to_owned());
-                cx.notify();
+                if this.history_view.select(id) {
+                    cx.notify();
+                }
             })
             .ok();
         }))
@@ -836,13 +854,13 @@ impl Render for SampleDataWorkspace {
             ))
             .child(toolbar);
 
-        if self.pending_restore.is_some() {
+        if self.history_view.pending_restore.is_some() {
             column = column.child(self.render_restore_confirmation(cx));
         }
-        if let Some(error) = self.history_error.clone() {
+        if let Some(error) = self.history_view.error.clone() {
             column = column.child(diagnostic_banner(
                 DiagnosticSeverity::Warning,
-                &format!("History is paused for Sample Data: {error}"),
+                &format!("Sample Data History: {error}"),
                 None,
             ));
         }
@@ -1115,16 +1133,16 @@ mod tests {
                 let current_request = view.session.request().unwrap().clone();
 
                 view.request_restore(entry.clone(), window, cx);
-                assert_eq!(view.pending_restore, Some(entry.clone()));
+                assert_eq!(view.history_view.pending_restore, Some(entry.clone()));
                 view.cancel_restore(cx);
-                assert!(view.pending_restore.is_none());
+                assert!(view.history_view.pending_restore.is_none());
                 assert_eq!(view.session.request(), Some(&current_request));
                 assert_eq!(view.session.evaluation(), &current_evaluation);
 
                 view.request_restore(entry.clone(), window, cx);
-                assert_eq!(view.pending_restore, Some(entry.clone()));
+                assert_eq!(view.history_view.pending_restore, Some(entry.clone()));
                 view.confirm_restore(window, cx);
-                assert!(view.pending_restore.is_none());
+                assert!(view.history_view.pending_restore.is_none());
                 assert_eq!(
                     view.session.evaluation().output(),
                     Some(snapshot.output.as_str())
@@ -1137,6 +1155,29 @@ mod tests {
                 assert!(view.session.take_snapshot().is_none());
             });
             assert_eq!(history.load(SampleData::ID).unwrap().len(), 1);
+            workspace.update(cx, |view, _| {
+                assert!(view.history_view.select(&entry.id));
+                view.history_view.pending_restore = Some(entry.clone());
+            });
+            history.clear_utility(SampleData::ID, cx).unwrap();
+            let view = workspace.read(cx);
+            assert!(view.history_view.entries.is_empty());
+            assert!(view.history_view.selected.is_none());
+            assert!(view.history_view.pending_restore.is_none());
+            assert_eq!(
+                view.session.evaluation().output(),
+                Some(snapshot.output.as_str())
+            );
+            assert_eq!(view.result.text(cx), snapshot.output);
+            workspace.update(cx, |view, cx| {
+                view.history_view.pending_restore = Some(entry.clone());
+                view.confirm_restore(window, cx);
+                assert!(view.history_view.pending_restore.is_none());
+                assert_eq!(
+                    view.session.evaluation().output(),
+                    Some(snapshot.output.as_str())
+                );
+            });
             assert_eq!(clock_calls.get(), 0);
         });
         fs::remove_dir_all(root).unwrap();
@@ -1171,16 +1212,16 @@ mod tests {
                 let invalid_request = view.request(cx);
                 assert!(!SampleData::evaluate(&invalid_request).is_valid_operation());
                 view.request_restore(entry.clone(), window, cx);
-                assert_eq!(view.pending_restore, Some(entry.clone()));
+                assert_eq!(view.history_view.pending_restore, Some(entry.clone()));
                 view.cancel_restore(cx);
-                assert!(view.pending_restore.is_none());
+                assert!(view.history_view.pending_restore.is_none());
                 assert_eq!(view.fields[0].name.text(cx), "");
                 assert!(!view.session.evaluation().is_valid_operation());
 
                 view.request_restore(entry.clone(), window, cx);
-                assert_eq!(view.pending_restore, Some(entry.clone()));
+                assert_eq!(view.history_view.pending_restore, Some(entry.clone()));
                 view.confirm_restore(window, cx);
-                assert!(view.pending_restore.is_none());
+                assert!(view.history_view.pending_restore.is_none());
                 assert_eq!(view.fields[0].name.text(cx), "name");
                 assert_eq!(
                     view.session.evaluation().output(),
@@ -1224,7 +1265,7 @@ mod tests {
             workspace.update(cx, |view, cx| {
                 view.request_restore(entry.clone(), window, cx);
                 assert!(
-                    view.pending_restore.is_none(),
+                    view.history_view.pending_restore.is_none(),
                     "empty sessions apply directly"
                 );
                 assert_eq!(
@@ -1233,7 +1274,7 @@ mod tests {
                 );
                 view.request_restore(entry.clone(), window, cx);
                 assert!(
-                    view.pending_restore.is_none(),
+                    view.history_view.pending_restore.is_none(),
                     "equivalent sessions apply directly"
                 );
             });

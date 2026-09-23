@@ -24,7 +24,7 @@ use sofdevtool_ui::{
 };
 
 use crate::clipboard::Clipboard;
-use crate::history::{HistoryEntry, HistoryRecorder};
+use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
 use renderer::{RendererStatus, TextDiffRenderer, WebDiffSurface};
 
 pub const TEXT_DIFF_UTILITY_ID: &str = "text-diff";
@@ -86,11 +86,9 @@ pub struct TextDiffWorkspace {
     renderer_status: RendererStatus,
     renderer_status_changed: Rc<Cell<bool>>,
     copied: Option<usize>,
-    history_entries: Vec<HistoryEntry>,
-    history_selected: Option<String>,
+    history_view: HistoryViewState,
     history_visible: bool,
-    history_error: Option<String>,
-    pending_restore: Option<HistoryEntry>,
+    _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
 }
@@ -124,10 +122,11 @@ impl TextDiffWorkspace {
                 this.render_snapshot(window, cx)
             }),
         ];
-        let (history_entries, history_error) = match history.load(TextDiff::ID) {
-            Ok(entries) => (entries, None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
-        };
+        let history_view = HistoryViewState::load(&history, TextDiff::ID);
+        let weak = cx.weak_entity();
+        let history_subscription = history.subscribe(TextDiff::ID, move |cx| {
+            weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
+        });
         let workspace = Self {
             old,
             new,
@@ -143,11 +142,9 @@ impl TextDiffWorkspace {
             renderer_status,
             renderer_status_changed,
             copied: None,
-            history_entries,
-            history_selected: None,
+            history_view,
             history_visible: true,
-            history_error,
-            pending_restore: None,
+            _history_subscription: history_subscription,
             focus: ButtonFocus {
                 split: cx.focus_handle().tab_stop(true).tab_index(0),
                 unified: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -223,19 +220,18 @@ impl TextDiffWorkspace {
         };
         self.recorded_revision = self.revision;
         let payload = serde_json::to_value(&snapshot).expect("a Text Diff snapshot serializes");
-        match self
+        let result = self
             .history
-            .record(TextDiff::ID, TextDiff::SNAPSHOT_VERSION, payload)
-        {
-            Ok(entries) => {
-                self.history_entries = entries;
-                self.history_error = None;
-            }
-            Err(error) => {
-                self.history_error = Some(error.to_string());
-                cx.notify();
-            }
-        }
+            .record(TextDiff::ID, TextDiff::SNAPSHOT_VERSION, payload);
+        self.history_view
+            .apply_record(&self.history, TextDiff::ID, result);
+        self.history.notify_status(cx);
+        cx.notify();
+    }
+
+    fn reconcile_history(&mut self, cx: &mut Context<Self>) {
+        self.history_view.reconcile(&self.history, TextDiff::ID);
+        cx.notify();
     }
 
     /// IPC handlers run outside GPUI's entity update path. They set this
@@ -288,7 +284,7 @@ impl TextDiffWorkspace {
         cx: &mut Context<Self>,
     ) {
         let Some(snapshot) = decode_snapshot(&entry) else {
-            self.history_error =
+            self.history_view.error =
                 Some("This History entry uses a snapshot version this build cannot read.".into());
             cx.notify();
             return;
@@ -297,7 +293,7 @@ impl TextDiffWorkspace {
         let current_new = self.new.text(cx);
         let same = current_old == snapshot.old && current_new == snapshot.new;
         if (!current_old.is_empty() || !current_new.is_empty()) && !same {
-            self.pending_restore = Some(entry);
+            self.history_view.pending_restore = Some(entry);
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -315,43 +311,61 @@ impl TextDiffWorkspace {
         self.new.set_text(snapshot.new.clone(), window, cx);
         self.mode = DisplayMode::from_core(snapshot.mode);
         self.suppress_render = false;
+        // Mark the next render as already captured before it can report
+        // Ready synchronously. A later IPC readiness callback sees the same
+        // revision and cannot record this restore either.
+        self.recorded_revision = self.revision + 1;
         self.render_snapshot(window, cx);
-        // Restoring never records a new operation.
-        self.recorded_revision = self.revision;
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         self.copied = None;
         cx.notify();
     }
 
     fn confirm_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry) = self.pending_restore.clone() {
-            if let Some(snapshot) = decode_snapshot(&entry) {
-                self.apply_restore(snapshot, window, cx);
+        if let Some(entry) = self.history_view.pending_restore.clone() {
+            if self
+                .history_view
+                .retained(&self.history, TextDiff::ID, &entry)
+            {
+                if let Some(snapshot) = decode_snapshot(&entry) {
+                    self.apply_restore(snapshot, window, cx);
+                }
+            } else {
+                self.reconcile_history(cx);
             }
         }
     }
 
     fn cancel_restore(&mut self, cx: &mut Context<Self>) {
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         cx.notify();
     }
 
     fn restore_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(selected) = self.history_selected.clone() else {
+        let Some(selected) = self.history_view.selected.clone() else {
             return;
         };
         if let Some(entry) = self
-            .history_entries
+            .history_view
+            .entries
             .iter()
             .find(|entry| entry.id == selected)
             .cloned()
         {
-            self.request_restore(entry, window, cx);
+            if self
+                .history_view
+                .retained(&self.history, TextDiff::ID, &entry)
+            {
+                self.request_restore(entry, window, cx);
+            } else {
+                self.reconcile_history(cx);
+            }
         }
     }
 
     fn history_items(&self) -> Vec<HistoryItem> {
-        self.history_entries
+        self.history_view
+            .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
@@ -369,10 +383,15 @@ impl TextDiffWorkspace {
     }
 
     fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.history_selected.clone();
+        let selected = self.history_view.selected.clone();
         let restore_enabled = selected
             .as_ref()
-            .and_then(|id| self.history_entries.iter().find(|entry| &entry.id == id))
+            .and_then(|id| {
+                self.history_view
+                    .entries
+                    .iter()
+                    .find(|entry| &entry.id == id)
+            })
             .map(|entry| decode_snapshot(entry).is_some())
             .unwrap_or(false);
         let actions = div().flex().flex_row().gap_2().child(
@@ -391,8 +410,9 @@ impl TextDiffWorkspace {
         )
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
-                this.history_selected = Some(id.to_owned());
-                cx.notify();
+                if this.history_view.select(id) {
+                    cx.notify();
+                }
             })
             .ok();
         }))
@@ -572,7 +592,7 @@ impl Render for TextDiffWorkspace {
                     .min_h_0()
                     .child(WebDiffSurface::new(self.renderer.clone())),
             );
-        if self.pending_restore.is_some() {
+        if self.history_view.pending_restore.is_some() {
             main = main.child(self.render_restore_confirmation(cx));
         }
         main = match &self.renderer_status {
@@ -593,10 +613,10 @@ impl Render for TextDiffWorkspace {
         if let Some(message) = &self.diagnostic {
             main = main.child(diagnostic_banner(DiagnosticSeverity::Error, message, None));
         }
-        if let Some(error) = self.history_error.clone() {
+        if let Some(error) = self.history_view.error.clone() {
             main = main.child(diagnostic_banner(
                 DiagnosticSeverity::Warning,
-                &format!("History is paused for Text Diff: {error}"),
+                &format!("Text Diff History: {error}"),
                 None,
             ));
         }

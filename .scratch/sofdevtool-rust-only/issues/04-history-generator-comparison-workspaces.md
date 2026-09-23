@@ -26,3 +26,10 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Implementation handoff
+
+GPT-6 Sol completed all five consumers and actual-workspace regressions;
+85 app tests, owned formatting and strict all-target Clippy passed. See
+[evidence](../evidence/ticket-04.md). Final native Text Diff acceptance and
+the comprehensive Astra review remain outstanding.

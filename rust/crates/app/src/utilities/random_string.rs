@@ -21,7 +21,7 @@ use sofdevtool_ui::{
 };
 
 use crate::clipboard::Clipboard;
-use crate::history::{HistoryEntry, HistoryRecorder};
+use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
 use crate::preferences::{RandomStringControlsPreferences, RandomStringControlsStartup};
 use crate::workbench::Workbench;
 
@@ -210,11 +210,9 @@ pub struct RandomStringWorkspace {
     nonce: u64,
     session: RandomStringSession,
     copied: Option<String>,
-    history_entries: Vec<HistoryEntry>,
-    history_selected: Option<String>,
+    history_view: HistoryViewState,
     history_visible: bool,
-    history_error: Option<String>,
-    pending_restore: Option<HistoryEntry>,
+    _history_subscription: HistorySubscription,
     item_focus: Vec<FocusHandle>,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
@@ -227,10 +225,20 @@ impl RandomStringWorkspace {
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
-        let custom = TextField::new(window, cx);
         let controls = RandomStringControlsSession::open(
             RandomStringControlsPreferences::application_support().ok(),
         );
+        Self::new_with_controls(window, cx, clipboard, history, controls)
+    }
+
+    fn new_with_controls(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        clipboard: Rc<dyn Clipboard>,
+        history: Rc<HistoryRecorder>,
+        controls: RandomStringControlsSession,
+    ) -> Self {
+        let custom = TextField::new(window, cx);
         // Silent assignment: loading the saved controls never emits a user
         // edit, so it cannot trigger a save, a generation or a History
         // operation. The workspace opens neutral until Generate.
@@ -239,10 +247,11 @@ impl RandomStringWorkspace {
         let subscriptions = vec![custom.on_change_in(window, cx, |this, _window, cx| {
             this.custom_alphabet_changed(cx);
         })];
-        let (history_entries, history_error) = match history.load(RandomString::ID) {
-            Ok(entries) => (entries, None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
-        };
+        let history_view = HistoryViewState::load(&history, RandomString::ID);
+        let weak = cx.weak_entity();
+        let history_subscription = history.subscribe(RandomString::ID, move |cx| {
+            weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
+        });
         Self {
             custom,
             clipboard,
@@ -258,11 +267,9 @@ impl RandomStringWorkspace {
             nonce: 0,
             session: RandomStringSession::new(),
             copied: None,
-            history_entries,
-            history_selected: None,
+            history_view,
             history_visible: true,
-            history_error,
-            pending_restore: None,
+            _history_subscription: history_subscription,
             item_focus: Vec::new(),
             focus: ButtonFocus {
                 length_down: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -327,19 +334,18 @@ impl RandomStringWorkspace {
             return;
         };
         let payload = serde_json::to_value(&snapshot).expect("a Random String snapshot serializes");
-        match self
+        let result = self
             .history
-            .record(RandomString::ID, RandomString::SNAPSHOT_VERSION, payload)
-        {
-            Ok(entries) => {
-                self.history_entries = entries;
-                self.history_error = None;
-            }
-            Err(error) => {
-                self.history_error = Some(error.to_string());
-                cx.notify();
-            }
-        }
+            .record(RandomString::ID, RandomString::SNAPSHOT_VERSION, payload);
+        self.history_view
+            .apply_record(&self.history, RandomString::ID, result);
+        self.history.notify_status(cx);
+        cx.notify();
+    }
+
+    fn reconcile_history(&mut self, cx: &mut Context<Self>) {
+        self.history_view.reconcile(&self.history, RandomString::ID);
+        cx.notify();
     }
 
     /// The controls as currently shown, read from the workspace state.
@@ -421,7 +427,7 @@ impl RandomStringWorkspace {
     fn clear_results(&mut self, cx: &mut Context<Self>) {
         self.session.clear();
         self.copied = None;
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         cx.notify();
     }
 
@@ -432,7 +438,7 @@ impl RandomStringWorkspace {
         cx: &mut Context<Self>,
     ) {
         let Some(snapshot) = decode_snapshot(&entry) else {
-            self.history_error =
+            self.history_view.error =
                 Some("This History entry uses a snapshot version this build cannot read.".into());
             cx.notify();
             return;
@@ -440,7 +446,7 @@ impl RandomStringWorkspace {
         let current = self.session.evaluation().values();
         let differs = !current.is_empty() && current != snapshot.values.as_slice();
         if differs {
-            self.pending_restore = Some(entry);
+            self.history_view.pending_restore = Some(entry);
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -470,40 +476,56 @@ impl RandomStringWorkspace {
         // is not a History operation and does not generate output.
         self.persist_controls(cx);
         self.session.restore(snapshot);
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         self.copied = None;
         cx.notify();
     }
 
     fn confirm_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry) = self.pending_restore.clone() {
-            if let Some(snapshot) = decode_snapshot(&entry) {
-                self.apply_restore(snapshot, window, cx);
+        if let Some(entry) = self.history_view.pending_restore.clone() {
+            if self
+                .history_view
+                .retained(&self.history, RandomString::ID, &entry)
+            {
+                if let Some(snapshot) = decode_snapshot(&entry) {
+                    self.apply_restore(snapshot, window, cx);
+                }
+            } else {
+                self.reconcile_history(cx);
             }
         }
     }
 
     fn cancel_restore(&mut self, cx: &mut Context<Self>) {
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         cx.notify();
     }
 
     fn restore_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(selected) = self.history_selected.clone() else {
+        let Some(selected) = self.history_view.selected.clone() else {
             return;
         };
         if let Some(entry) = self
-            .history_entries
+            .history_view
+            .entries
             .iter()
             .find(|entry| entry.id == selected)
             .cloned()
         {
-            self.request_restore(entry, window, cx);
+            if self
+                .history_view
+                .retained(&self.history, RandomString::ID, &entry)
+            {
+                self.request_restore(entry, window, cx);
+            } else {
+                self.reconcile_history(cx);
+            }
         }
     }
 
     fn history_items(&self) -> Vec<HistoryItem> {
-        self.history_entries
+        self.history_view
+            .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
@@ -612,10 +634,15 @@ impl RandomStringWorkspace {
     }
 
     fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.history_selected.clone();
+        let selected = self.history_view.selected.clone();
         let restore_enabled = selected
             .as_ref()
-            .and_then(|id| self.history_entries.iter().find(|entry| &entry.id == id))
+            .and_then(|id| {
+                self.history_view
+                    .entries
+                    .iter()
+                    .find(|entry| &entry.id == id)
+            })
             .map(|entry| decode_snapshot(entry).is_some())
             .unwrap_or(false);
         let actions = div().flex().flex_row().gap_2().child(
@@ -634,8 +661,9 @@ impl RandomStringWorkspace {
         )
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
-                this.history_selected = Some(id.to_owned());
-                cx.notify();
+                if this.history_view.select(id) {
+                    cx.notify();
+                }
             })
             .ok();
         }))
@@ -943,13 +971,13 @@ impl Render for RandomStringWorkspace {
             )
             .child(actions);
 
-        if self.pending_restore.is_some() {
+        if self.history_view.pending_restore.is_some() {
             column = column.child(self.render_restore_confirmation(cx));
         }
-        if let Some(error) = self.history_error.clone() {
+        if let Some(error) = self.history_view.error.clone() {
             column = column.child(diagnostic_banner(
                 DiagnosticSeverity::Warning,
-                &format!("History is paused for Random String: {error}"),
+                &format!("Random String History: {error}"),
                 None,
             ));
         }
@@ -1022,6 +1050,16 @@ mod tests {
 
     use super::*;
     use crate::history::{HistoryPolicy, HistoryRecorder, HistoryStore, SystemClock};
+
+    struct TestClipboard;
+
+    impl Clipboard for TestClipboard {
+        fn read_text(&self, _cx: &mut App) -> Option<String> {
+            None
+        }
+
+        fn write_text(&self, _text: &str, _cx: &mut App) {}
+    }
 
     /// The store's file name, mirrored from `preferences.rs` for fixture
     /// setup; the store owns the authoritative constant.
@@ -1345,5 +1383,79 @@ mod tests {
         fs::remove_dir_all(root_a).expect("remove test directory");
         // root_b was never written: opening a session creates nothing.
         let _ = fs::remove_dir_all(root_b);
+    }
+
+    #[gpui::test]
+    fn workspace_clear_preserves_generated_batch_and_restore_does_not_record(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = temporary_root("history-workspace");
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.join("History")),
+            Box::new(SystemClock::new()),
+        ));
+        let controls = reopen(&root);
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            RandomStringWorkspace::new_with_controls(
+                window,
+                cx,
+                clipboard,
+                history.clone(),
+                controls,
+            )
+        });
+        let generated = cx.update(|_, cx| {
+            workspace.update(cx, |view, cx| {
+                view.generate(cx);
+                view.session.evaluation().values().to_vec()
+            })
+        });
+        assert_eq!(generated.len(), 1);
+        let retained = history.load(RandomString::ID).unwrap();
+        assert_eq!(retained.len(), 1);
+        let entry = retained[0].clone();
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                let mut other = decode_snapshot(&entry).unwrap();
+                other.values = vec!["visible-current-value".into()];
+                view.session.restore(other);
+                view.request_restore(entry.clone(), window, cx);
+                assert_eq!(view.history_view.pending_restore, Some(entry.clone()));
+                view.confirm_restore(window, cx);
+                assert_eq!(view.session.evaluation().values(), generated);
+                assert!(view.history_view.pending_restore.is_none());
+                assert_eq!(history.load(RandomString::ID).unwrap().len(), 1);
+
+                let mut current = decode_snapshot(&entry).unwrap();
+                current.values = vec!["still-visible-after-clear".into()];
+                view.session.restore(current);
+                assert!(view.history_view.select(&entry.id));
+                view.history_view.pending_restore = Some(entry.clone());
+            });
+            history.clear_utility(RandomString::ID, cx).unwrap();
+            let view = workspace.read(cx);
+            assert_eq!(
+                view.session.evaluation().values(),
+                &["still-visible-after-clear".to_owned()]
+            );
+            assert!(view.history_view.entries.is_empty());
+            assert!(view.history_view.selected.is_none());
+            assert!(view.history_view.pending_restore.is_none());
+
+            workspace.update(cx, |view, cx| {
+                view.history_view.pending_restore = Some(entry.clone());
+                view.confirm_restore(window, cx);
+                assert_eq!(
+                    view.session.evaluation().values(),
+                    &["still-visible-after-clear".to_owned()]
+                );
+                view.generate(cx);
+                assert_eq!(view.session.evaluation().values().len(), 1);
+            });
+            assert_eq!(history.load(RandomString::ID).unwrap().len(), 1);
+        });
+        fs::remove_dir_all(root).unwrap();
     }
 }
