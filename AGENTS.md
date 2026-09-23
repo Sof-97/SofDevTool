@@ -28,3 +28,17 @@ Read `CONTEXT.md` before changing product behavior. Inspect the owning module an
 - Never log, sync, index, or export History payloads.
 - Put domain tests with the owning Utility; use UI tests only for shell and interaction-heavy flows.
 - Before finishing, run the relevant root gate and report validation honestly. A build, automated test or temporary install is not native runtime evidence on macOS 14/15.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in local Markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage roles as local status strings. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use the single-context layout with root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
