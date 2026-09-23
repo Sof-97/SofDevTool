@@ -19,7 +19,7 @@ use sofdevtool_ui::{
 };
 
 use crate::clipboard::Clipboard;
-use crate::history::{HistoryEntry, HistoryRecorder};
+use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
 use crate::workbench::Workbench;
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
@@ -63,11 +63,9 @@ pub struct UrlEncodingWorkspace {
     display_epoch: u64,
     copied: bool,
     suppress_changes: bool,
-    history_entries: Vec<HistoryEntry>,
-    history_selected: Option<String>,
+    history_view: HistoryViewState,
     history_visible: bool,
-    history_error: Option<String>,
-    pending_restore: Option<HistoryEntry>,
+    _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
 }
@@ -84,10 +82,11 @@ impl UrlEncodingWorkspace {
         let subscriptions = vec![input.on_change_in(window, cx, |this, window, cx| {
             this.schedule(window, cx);
         })];
-        let (history_entries, history_error) = match history.load(UrlEncoding::ID) {
-            Ok(entries) => (entries, None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
-        };
+        let history_view = HistoryViewState::load(&history, UrlEncoding::ID);
+        let weak = cx.weak_entity();
+        let history_subscription = history.subscribe(UrlEncoding::ID, move |cx| {
+            weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
+        });
         Self {
             input,
             result,
@@ -99,11 +98,9 @@ impl UrlEncodingWorkspace {
             display_epoch: u64::MAX,
             copied: false,
             suppress_changes: false,
-            history_entries,
-            history_selected: None,
+            history_view,
             history_visible: true,
-            history_error,
-            pending_restore: None,
+            _history_subscription: history_subscription,
             focus: ButtonFocus {
                 encode: cx.focus_handle().tab_stop(true).tab_index(0),
                 decode: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -158,19 +155,18 @@ impl UrlEncodingWorkspace {
             return;
         };
         let payload = serde_json::to_value(&snapshot).expect("a URL Encoding snapshot serializes");
-        match self
+        let result = self
             .history
-            .record(UrlEncoding::ID, UrlEncoding::SNAPSHOT_VERSION, payload)
-        {
-            Ok(entries) => {
-                self.history_entries = entries;
-                self.history_error = None;
-            }
-            Err(error) => {
-                self.history_error = Some(error.to_string());
-                cx.notify();
-            }
-        }
+            .record(UrlEncoding::ID, UrlEncoding::SNAPSHOT_VERSION, payload);
+        self.history_view
+            .apply_record(&self.history, UrlEncoding::ID, result);
+        self.history.notify_status(cx);
+        cx.notify();
+    }
+
+    fn reconcile_history(&mut self, cx: &mut Context<Self>) {
+        self.history_view.reconcile(&self.history, UrlEncoding::ID);
+        cx.notify();
     }
 
     fn sync_display(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -248,14 +244,14 @@ impl UrlEncodingWorkspace {
         cx: &mut Context<Self>,
     ) {
         let Some(snapshot) = decode_snapshot(&entry) else {
-            self.history_error =
+            self.history_view.error =
                 Some("This History entry uses a snapshot version this build cannot read.".into());
             cx.notify();
             return;
         };
         let current = self.input.text(cx);
         if !current.is_empty() && current != snapshot.request.input {
-            self.pending_restore = Some(entry);
+            self.history_view.pending_restore = Some(entry);
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -276,41 +272,57 @@ impl UrlEncodingWorkspace {
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         self.copied = false;
         self.sync_display(window, cx);
         cx.notify();
     }
 
     fn confirm_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry) = self.pending_restore.clone() {
-            if let Some(snapshot) = decode_snapshot(&entry) {
-                self.apply_restore(snapshot, window, cx);
+        if let Some(entry) = self.history_view.pending_restore.clone() {
+            if self
+                .history_view
+                .retained(&self.history, UrlEncoding::ID, &entry)
+            {
+                if let Some(snapshot) = decode_snapshot(&entry) {
+                    self.apply_restore(snapshot, window, cx);
+                }
+            } else {
+                self.reconcile_history(cx);
             }
         }
     }
 
     fn cancel_restore(&mut self, cx: &mut Context<Self>) {
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         cx.notify();
     }
 
     fn restore_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(selected) = self.history_selected.clone() else {
+        let Some(selected) = self.history_view.selected.clone() else {
             return;
         };
         if let Some(entry) = self
-            .history_entries
+            .history_view
+            .entries
             .iter()
             .find(|entry| entry.id == selected)
             .cloned()
         {
-            self.request_restore(entry, window, cx);
+            if self
+                .history_view
+                .retained(&self.history, UrlEncoding::ID, &entry)
+            {
+                self.request_restore(entry, window, cx);
+            } else {
+                self.reconcile_history(cx);
+            }
         }
     }
 
     fn history_items(&self) -> Vec<HistoryItem> {
-        self.history_entries
+        self.history_view
+            .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
@@ -383,10 +395,15 @@ impl UrlEncodingWorkspace {
     }
 
     fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.history_selected.clone();
+        let selected = self.history_view.selected.clone();
         let restore_enabled = selected
             .as_ref()
-            .and_then(|id| self.history_entries.iter().find(|entry| &entry.id == id))
+            .and_then(|id| {
+                self.history_view
+                    .entries
+                    .iter()
+                    .find(|entry| &entry.id == id)
+            })
             .map(|entry| decode_snapshot(entry).is_some())
             .unwrap_or(false);
         let actions = div().flex().flex_row().gap_2().child(
@@ -405,8 +422,9 @@ impl UrlEncodingWorkspace {
         )
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
-                this.history_selected = Some(id.to_owned());
-                cx.notify();
+                if this.history_view.select(id) {
+                    cx.notify();
+                }
             })
             .ok();
         }))
@@ -565,13 +583,13 @@ impl Render for UrlEncodingWorkspace {
                          encoding or URL-safe Base64.",
             ));
 
-        if self.pending_restore.is_some() {
+        if self.history_view.pending_restore.is_some() {
             column = column.child(self.render_restore_confirmation(cx));
         }
-        if let Some(error) = self.history_error.clone() {
+        if let Some(error) = self.history_view.error.clone() {
             column = column.child(diagnostic_banner(
                 DiagnosticSeverity::Warning,
-                &format!("History is paused for URL Encoding: {error}"),
+                &format!("URL Encoding History: {error}"),
                 None,
             ));
         }

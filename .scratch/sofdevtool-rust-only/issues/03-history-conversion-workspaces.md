@@ -26,3 +26,12 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Implementation handoff
+
+All eight conversion/inspection workspaces use the shared History coordinator.
+Two real YAML workspace regressions passed; library compilation, strict
+library Clippy and formatting passed after Color adoption.
+[Evidence](../evidence/ticket-03.md) separates these checks from the shared
+full app gate still pending concurrent07 test completion. Final Astra/native
+acceptance remains pending and this ticket stays claimed.

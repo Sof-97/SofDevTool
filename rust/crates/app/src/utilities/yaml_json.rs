@@ -22,7 +22,7 @@ use sofdevtool_ui::{
 };
 
 use crate::clipboard::Clipboard;
-use crate::history::{HistoryEntry, HistoryRecorder};
+use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
 use crate::workbench::Workbench;
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
@@ -65,11 +65,9 @@ pub struct YamlJsonWorkspace {
     display_epoch: u64,
     copied: bool,
     suppress_changes: bool,
-    history_entries: Vec<HistoryEntry>,
-    history_selected: Option<String>,
+    history_view: HistoryViewState,
     history_visible: bool,
-    history_error: Option<String>,
-    pending_restore: Option<HistoryEntry>,
+    _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
 }
@@ -86,10 +84,11 @@ impl YamlJsonWorkspace {
         let subscriptions = vec![input.on_change_in(window, cx, |this, window, cx| {
             this.schedule(window, cx);
         })];
-        let (history_entries, history_error) = match history.load(YamlJson::ID) {
-            Ok(entries) => (entries, None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
-        };
+        let history_view = HistoryViewState::load(&history, YamlJson::ID);
+        let weak = cx.weak_entity();
+        let history_subscription = history.subscribe(YamlJson::ID, move |cx| {
+            weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
+        });
         Self {
             input,
             result,
@@ -100,11 +99,9 @@ impl YamlJsonWorkspace {
             display_epoch: u64::MAX,
             copied: false,
             suppress_changes: false,
-            history_entries,
-            history_selected: None,
+            history_view,
             history_visible: true,
-            history_error,
-            pending_restore: None,
+            _history_subscription: history_subscription,
             focus: ButtonFocus {
                 yaml_to_json: cx.focus_handle().tab_stop(true).tab_index(0),
                 json_to_yaml: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -156,19 +153,18 @@ impl YamlJsonWorkspace {
             return;
         };
         let payload = serde_json::to_value(&snapshot).expect("a YAML/JSON snapshot serializes");
-        match self
+        let result = self
             .history
-            .record(YamlJson::ID, YamlJson::SNAPSHOT_VERSION, payload)
-        {
-            Ok(entries) => {
-                self.history_entries = entries;
-                self.history_error = None;
-            }
-            Err(error) => {
-                self.history_error = Some(error.to_string());
-                cx.notify();
-            }
-        }
+            .record(YamlJson::ID, YamlJson::SNAPSHOT_VERSION, payload);
+        self.history_view
+            .apply_record(&self.history, YamlJson::ID, result);
+        self.history.notify_status(cx);
+        cx.notify();
+    }
+
+    fn reconcile_history(&mut self, cx: &mut Context<Self>) {
+        self.history_view.reconcile(&self.history, YamlJson::ID);
+        cx.notify();
     }
 
     fn sync_display(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -243,14 +239,14 @@ impl YamlJsonWorkspace {
         cx: &mut Context<Self>,
     ) {
         let Some(snapshot) = decode_snapshot(&entry) else {
-            self.history_error =
+            self.history_view.error =
                 Some("This History entry uses a snapshot version this build cannot read.".into());
             cx.notify();
             return;
         };
         let current = self.input.text(cx);
         if !current.is_empty() && current != snapshot.request.input {
-            self.pending_restore = Some(entry);
+            self.history_view.pending_restore = Some(entry);
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -270,41 +266,57 @@ impl YamlJsonWorkspace {
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         self.copied = false;
         self.sync_display(window, cx);
         cx.notify();
     }
 
     fn confirm_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry) = self.pending_restore.clone() {
-            if let Some(snapshot) = decode_snapshot(&entry) {
-                self.apply_restore(snapshot, window, cx);
+        if let Some(entry) = self.history_view.pending_restore.clone() {
+            if self
+                .history_view
+                .retained(&self.history, YamlJson::ID, &entry)
+            {
+                if let Some(snapshot) = decode_snapshot(&entry) {
+                    self.apply_restore(snapshot, window, cx);
+                }
+            } else {
+                self.reconcile_history(cx);
             }
         }
     }
 
     fn cancel_restore(&mut self, cx: &mut Context<Self>) {
-        self.pending_restore = None;
+        self.history_view.pending_restore = None;
         cx.notify();
     }
 
     fn restore_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(selected) = self.history_selected.clone() else {
+        let Some(selected) = self.history_view.selected.clone() else {
             return;
         };
         if let Some(entry) = self
-            .history_entries
+            .history_view
+            .entries
             .iter()
             .find(|entry| entry.id == selected)
             .cloned()
         {
-            self.request_restore(entry, window, cx);
+            if self
+                .history_view
+                .retained(&self.history, YamlJson::ID, &entry)
+            {
+                self.request_restore(entry, window, cx);
+            } else {
+                self.reconcile_history(cx);
+            }
         }
     }
 
     fn history_items(&self) -> Vec<HistoryItem> {
-        self.history_entries
+        self.history_view
+            .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
@@ -357,10 +369,15 @@ impl YamlJsonWorkspace {
     }
 
     fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.history_selected.clone();
+        let selected = self.history_view.selected.clone();
         let restore_enabled = selected
             .as_ref()
-            .and_then(|id| self.history_entries.iter().find(|entry| &entry.id == id))
+            .and_then(|id| {
+                self.history_view
+                    .entries
+                    .iter()
+                    .find(|entry| &entry.id == id)
+            })
             .map(|entry| decode_snapshot(entry).is_some())
             .unwrap_or(false);
         let actions = div().flex().flex_row().gap_2().child(
@@ -379,8 +396,9 @@ impl YamlJsonWorkspace {
         )
         .on_select(Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
-                this.history_selected = Some(id.to_owned());
-                cx.notify();
+                if this.history_view.select(id) {
+                    cx.notify();
+                }
             })
             .ok();
         }))
@@ -555,13 +573,13 @@ impl Render for YamlJsonWorkspace {
                     .child(LIMITATION_NOTICE),
             );
 
-        if self.pending_restore.is_some() {
+        if self.history_view.pending_restore.is_some() {
             column = column.child(self.render_restore_confirmation(cx));
         }
-        if let Some(error) = self.history_error.clone() {
+        if let Some(error) = self.history_view.error.clone() {
             column = column.child(diagnostic_banner(
                 DiagnosticSeverity::Warning,
-                &format!("History is paused for YAML/JSON: {error}"),
+                &format!("YAML/JSON History: {error}"),
                 None,
             ));
         }
@@ -613,5 +631,213 @@ fn preview_line(output: &str) -> String {
         "Empty result".to_owned()
     } else {
         preview
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use crate::history::{HistoryStore, SystemClock};
+
+    struct TestClipboard;
+
+    impl Clipboard for TestClipboard {
+        fn read_text(&self, _cx: &mut App) -> Option<String> {
+            None
+        }
+
+        fn write_text(&self, _text: &str, _cx: &mut App) {}
+    }
+
+    fn test_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "sofdevtool-yaml-history-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn recorder(root: &Path) -> Rc<HistoryRecorder> {
+        Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.to_path_buf()),
+            Box::new(SystemClock::new()),
+        ))
+    }
+
+    fn snapshot(input: &str, output: &str) -> YamlJsonSnapshot {
+        YamlJsonSnapshot {
+            request: YamlJsonRequest::new(input, YamlJsonDirection::YamlToJson),
+            output: output.into(),
+        }
+    }
+
+    fn entry(id: &str, snapshot: YamlJsonSnapshot) -> HistoryEntry {
+        HistoryEntry {
+            id: id.into(),
+            captured_at: "2026-01-01T00:00:00Z".into(),
+            utility_id: YamlJson::ID.into(),
+            snapshot_version: YamlJson::SNAPSHOT_VERSION,
+            payload: serde_json::to_value(snapshot).unwrap(),
+        }
+    }
+
+    #[gpui::test]
+    fn clear_reaches_visible_and_hidden_workspaces_without_changing_sessions(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = test_root();
+        let history = recorder(&root);
+        let retained = entry("retained", snapshot("old: value", "{\"old\":\"value\"}"));
+        history.store().record(retained.clone()).unwrap();
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let (visible, cx) = cx.add_window_view(|window, cx| {
+            YamlJsonWorkspace::new(window, cx, clipboard.clone(), history.clone())
+        });
+        let hidden = cx.update(|window, cx| {
+            cx.new(|cx| YamlJsonWorkspace::new(window, cx, clipboard, history.clone()))
+        });
+        let current = snapshot("current: value", "{\"current\":\"value\"}");
+        cx.update(|window, cx| {
+            for workspace in [&visible, &hidden] {
+                workspace.update(cx, |view, cx| {
+                    view.input
+                        .assign_text(current.request.input.clone(), window, cx);
+                    view.session.restore(current.clone());
+                    view.sync_display(window, cx);
+                    assert!(view.history_view.select(&retained.id));
+                    view.history_view.pending_restore = Some(retained.clone());
+                });
+            }
+            visible.update(cx, |view, cx| {
+                view.request_restore(retained.clone(), window, cx);
+                assert_eq!(view.history_view.pending_restore, Some(retained.clone()));
+                view.confirm_restore(window, cx);
+                assert_eq!(view.input.text(cx), "old: value");
+                assert_eq!(view.result.text(cx), "{\"old\":\"value\"}");
+                assert!(view.history_view.pending_restore.is_none());
+                view.input
+                    .assign_text(current.request.input.clone(), window, cx);
+                view.session.restore(current.clone());
+                view.sync_display(window, cx);
+                view.history_view.pending_restore = Some(retained.clone());
+            });
+            assert_eq!(history.load(YamlJson::ID).unwrap().len(), 1);
+            history.clear_utility(YamlJson::ID, cx).unwrap();
+            for workspace in [&visible, &hidden] {
+                let view = workspace.read(cx);
+                assert!(view.history_view.entries.is_empty());
+                assert!(view.history_view.selected.is_none());
+                assert!(view.history_view.pending_restore.is_none());
+                assert_eq!(view.input.text(cx), current.request.input);
+                assert_eq!(
+                    view.session.evaluation().output(),
+                    Some(current.output.as_str())
+                );
+                assert_eq!(view.result.text(cx), current.output);
+            }
+            // A late confirmation or row click still checks persisted retention.
+            visible.update(cx, |view, cx| {
+                view.history_view.pending_restore = Some(retained.clone());
+                view.confirm_restore(window, cx);
+                view.history_view.entries.push(retained.clone());
+                view.history_view.selected = Some(retained.id.clone());
+                view.restore_selected(window, cx);
+                assert_eq!(view.input.text(cx), current.request.input);
+                assert!(view.history_view.selected.is_none());
+                assert!(view.history_view.pending_restore.is_none());
+            });
+
+            // A failed deletion for an unknown file does not keep a cleared
+            // Utility's stale rows alive in either open workspace.
+            let later = entry("later", snapshot("later: value", "{\"later\":\"value\"}"));
+            history.store().record(later.clone()).unwrap();
+            fs::create_dir(root.join("legacy-unknown.history.v1.json")).unwrap();
+            for workspace in [&visible, &hidden] {
+                workspace.update(cx, |view, cx| {
+                    view.reconcile_history(cx);
+                    assert!(view.history_view.select(&later.id));
+                    view.history_view.pending_restore = Some(later.clone());
+                });
+            }
+            let report = history.clear_all(cx).unwrap();
+            assert_eq!(report.cleared_ids, vec![YamlJson::ID]);
+            assert_eq!(report.failed_ids, vec!["legacy-unknown"]);
+            for workspace in [&visible, &hidden] {
+                let view = workspace.read(cx);
+                assert!(view.history_view.entries.is_empty());
+                assert!(view.history_view.selected.is_none());
+                assert!(view.history_view.pending_restore.is_none());
+                assert_eq!(view.input.text(cx), current.request.input);
+                assert_eq!(view.result.text(cx), current.output);
+            }
+        });
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn failed_recording_and_corruption_warn_without_overwriting_or_changing_output(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = test_root();
+        let history = recorder(&root);
+        let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
+        let (workspace, cx) = cx.add_window_view(|window, cx| {
+            YamlJsonWorkspace::new(window, cx, clipboard, history.clone())
+        });
+        history.store().fail_next_writes(1);
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                let request = YamlJsonRequest::new("good: value", YamlJsonDirection::YamlToJson);
+                view.input.assign_text(request.input.clone(), window, cx);
+                let SubmitOutcome::Scheduled(revision) = view.session.submit(request) else {
+                    panic!("new request must schedule");
+                };
+                view.session.resolve(revision).unwrap();
+                view.sync_display(window, cx);
+                let output = view.result.text(cx);
+                view.record_settled(cx);
+                assert_eq!(view.result.text(cx), output);
+                assert!(view.history_view.error.is_some());
+                assert!(view.history_view.entries.is_empty());
+                let next = YamlJsonRequest::new("next: value", YamlJsonDirection::YamlToJson);
+                view.input.assign_text(next.input.clone(), window, cx);
+                let SubmitOutcome::Scheduled(revision) = view.session.submit(next) else {
+                    panic!("new request must schedule");
+                };
+                view.session.resolve(revision).unwrap();
+                view.sync_display(window, cx);
+                view.record_settled(cx);
+                assert!(view.history_view.error.is_some());
+                assert!(!view.result.text(cx).is_empty());
+            });
+            assert!(history.store().is_paused(YamlJson::ID));
+            assert!(history.load(YamlJson::ID).unwrap().is_empty());
+            history.retry_recording(YamlJson::ID, cx).unwrap();
+            let view = workspace.read(cx);
+            assert!(view.history_view.error.is_none());
+            assert!(view.history_view.entries.is_empty());
+            assert_eq!(view.input.text(cx), "next: value");
+            assert!(!view.result.text(cx).is_empty());
+        });
+        let path = root.join(format!("{}.history.v1.json", YamlJson::ID));
+        fs::write(&path, b"not JSON").unwrap();
+        cx.update(|_, cx| {
+            history.retry_recording(YamlJson::ID, cx).unwrap_err();
+            let view = workspace.read(cx);
+            assert!(view.history_view.error.is_some());
+            assert!(view.history_view.entries.is_empty());
+            assert_eq!(view.input.text(cx), "next: value");
+            assert!(!view.result.text(cx).is_empty());
+        });
+        assert_eq!(fs::read(path).unwrap(), b"not JSON");
+        fs::remove_dir_all(root).unwrap();
     }
 }
