@@ -26,3 +26,10 @@ Test observable behavior at this existing seam using the parent specification's 
 **Breakdown approval:** Owner approved the 22-ticket breakdown on 2026-09-22; see the [approved index](../ticket-proposal.md).
 
 Publication is documentation only. Begin implementation only under a subsequent execution instruction and after this ticket's blockers are accepted. The native preview's visual approval is a separate requirement in ticket 11.
+
+## Implementation handoff
+
+GPT-6 Sol completed the generic public controls and JSON/Settings integration.
+The coordinator's frozen310-test default gate passed. See
+[evidence](../evidence/ticket-09.md). Final native acceptance and Astra review
+remain separate.

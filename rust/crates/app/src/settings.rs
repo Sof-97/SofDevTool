@@ -1,5 +1,6 @@
 //! Separate Settings surface for Launcher shortcut and History management.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -8,7 +9,9 @@ use gpui::{
     div, px, size, App, Context, FocusHandle, IntoElement, KeyDownEvent, Render, Window,
     WindowBounds, WindowKind, WindowOptions,
 };
-use sofdevtool_ui::{mount, view_click, Button, HoldButton, ThemeTokens};
+use sofdevtool_ui::{
+    mount, view_click, Button, ConfirmationBar, HoldButton, HoldController, ThemeTokens,
+};
 
 use crate::history::{HistoryRecorder, HistorySubscription};
 use crate::preferences::ShortcutPreferences;
@@ -90,7 +93,7 @@ pub fn show(
             SettingsView::new(
                 window,
                 cx,
-                workbench,
+                Some(workbench),
                 preferences,
                 history,
                 utilities,
@@ -108,7 +111,7 @@ struct UtilityFocus {
 }
 
 pub struct SettingsView {
-    workbench: gpui::WeakEntity<Workbench>,
+    workbench: Option<gpui::WeakEntity<Workbench>>,
     preferences: ShortcutPreferences,
     history: Rc<HistoryRecorder>,
     utilities: Vec<UtilityRow>,
@@ -116,9 +119,10 @@ pub struct SettingsView {
     capturing: bool,
     diagnostic: Option<String>,
     notice: Option<String>,
-    hold: Option<HoldTarget>,
-    hold_generation: u64,
-    hold_progress: f32,
+    utility_holds: Vec<HoldController>,
+    unknown_holds: BTreeMap<String, HoldController>,
+    unknown_focus: BTreeMap<String, FocusHandle>,
+    clear_all_hold: HoldController,
     pending_confirm: Option<HoldTarget>,
     capture_focus: FocusHandle,
     capture_button_focus: FocusHandle,
@@ -134,13 +138,13 @@ impl SettingsView {
     fn new(
         _window: &mut Window,
         cx: &mut Context<Self>,
-        workbench: gpui::WeakEntity<Workbench>,
+        workbench: Option<gpui::WeakEntity<Workbench>>,
         preferences: ShortcutPreferences,
         history: Rc<HistoryRecorder>,
         utilities: Vec<UtilityRow>,
         active_shortcut: Shortcut,
     ) -> Self {
-        let utility_focus = utilities
+        let utility_focus: Vec<UtilityFocus> = utilities
             .iter()
             .map(|_| UtilityFocus {
                 record: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -161,9 +165,12 @@ impl SettingsView {
             capturing: false,
             diagnostic: None,
             notice: None,
-            hold: None,
-            hold_generation: 0,
-            hold_progress: 0.0,
+            utility_holds: (0..utility_focus.len())
+                .map(|_| HoldController::new())
+                .collect(),
+            unknown_holds: BTreeMap::new(),
+            unknown_focus: BTreeMap::new(),
+            clear_all_hold: HoldController::new(),
             pending_confirm: None,
             capture_focus: cx.focus_handle().tab_stop(true).tab_index(0),
             capture_button_focus: cx.focus_handle().tab_stop(true).tab_index(1),
@@ -214,8 +221,14 @@ impl SettingsView {
             cx.notify();
             return;
         }
-        let Some(current) = self
-            .workbench
+        let Some(workbench) = self.workbench.as_ref() else {
+            self.capturing = false;
+            self.diagnostic =
+                Some("The Workbench is no longer available; the shortcut was not changed.".into());
+            cx.notify();
+            return;
+        };
+        let Some(current) = workbench
             .update(cx, |workbench, cx| {
                 workbench.configure_shortcut(candidate.clone(), cx);
                 workbench.current_shortcut()
@@ -253,50 +266,30 @@ impl SettingsView {
         cx.notify();
     }
 
-    fn begin_hold(&mut self, target: HoldTarget, cx: &mut Context<Self>) {
-        self.hold_generation += 1;
-        let generation = self.hold_generation;
-        self.hold = Some(target.clone());
-        self.hold_progress = 0.0;
-        self.notice = None;
-        cx.notify();
-        let duration = target.duration();
-        let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
-            const STEPS: u32 = 20;
-            for step in 1..=STEPS {
-                executor.timer(duration / STEPS).await;
-                let alive = this
-                    .update(cx, |this, cx| {
-                        if this.hold_generation != generation {
-                            return false;
-                        }
-                        this.hold_progress = step as f32 / STEPS as f32;
-                        cx.notify();
-                        true
-                    })
-                    .unwrap_or(false);
-                if !alive {
-                    return;
-                }
-            }
-            this.update(cx, |this, cx| {
-                if this.hold_generation == generation {
-                    this.hold = None;
-                    this.hold_progress = 0.0;
-                    this.perform(target, cx);
-                }
+    fn clear_button(
+        &self,
+        id: String,
+        label: &'static str,
+        target: HoldTarget,
+        controller: HoldController,
+        focus: Option<FocusHandle>,
+        cx: &mut Context<Self>,
+    ) -> HoldButton {
+        let weak = cx.weak_entity();
+        let complete_target = target.clone();
+        let mut button = HoldButton::new(gpui::ElementId::Name(id.into()), label, controller)
+            .duration(target.duration())
+            .on_complete(move |cx| {
+                weak.update(cx, |this, cx| this.perform(complete_target.clone(), cx))
+                    .ok();
             })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn cancel_hold(&mut self, cx: &mut Context<Self>) {
-        self.hold_generation += 1;
-        self.hold = None;
-        self.hold_progress = 0.0;
-        cx.notify();
+            .on_keyboard(view_click(cx, move |this, _window, cx| {
+                this.request_confirm(target.clone(), cx);
+            }));
+        if let Some(focus) = focus {
+            button = button.focus_handle(focus);
+        }
+        button
     }
 
     fn request_confirm(&mut self, target: HoldTarget, cx: &mut Context<Self>) {
@@ -389,22 +382,14 @@ impl Render for SettingsView {
                             },
                         )),
                     )
-                    .child(
-                        HoldButton::new(
-                            gpui::ElementId::Name(format!("history-clear-{}", row.id).into()),
-                            "Clear",
-                        )
-                        .focus_handle(focus.clear.clone())
-                        .on_press(view_click(cx, {
-                            let target = HoldTarget::ClearUtility(row.id.clone());
-                            move |this, _window, cx| this.begin_hold(target.clone(), cx)
-                        }))
-                        .on_release(view_click(cx, |this, _window, cx| this.cancel_hold(cx)))
-                        .on_keyboard(view_click(cx, {
-                            let target = HoldTarget::ClearUtility(row.id.clone());
-                            move |this, _window, cx| this.request_confirm(target.clone(), cx)
-                        })),
-                    )
+                    .child(self.clear_button(
+                        format!("history-clear-{}", row.id),
+                        "Clear",
+                        HoldTarget::ClearUtility(row.id.clone()),
+                        self.utility_holds[index].clone(),
+                        Some(focus.clear.clone()),
+                        cx,
+                    ))
                     .when(paused, |this| {
                         let retry_id = row.id.clone();
                         this.child(div().text_xs().text_color(tokens.warning()).child("paused"))
@@ -429,6 +414,12 @@ impl Render for SettingsView {
             .collect();
         let mut unknown_list = div().flex().flex_col().gap_2().w_full();
         for id in &unknown {
+            let controller = self.unknown_holds.entry(id.clone()).or_default().clone();
+            let focus = self
+                .unknown_focus
+                .entry(id.clone())
+                .or_insert_with(|| cx.focus_handle().tab_stop(true).tab_index(0))
+                .clone();
             unknown_list = unknown_list.child(
                 div()
                     .flex()
@@ -442,21 +433,14 @@ impl Render for SettingsView {
                             .text_color(tokens.text_muted())
                             .child(format!("Unknown Utility file: {id}")),
                     )
-                    .child(
-                        HoldButton::new(
-                            gpui::ElementId::Name(format!("history-clear-unknown-{id}").into()),
-                            "Clear",
-                        )
-                        .on_press(view_click(cx, {
-                            let target = HoldTarget::ClearUtility(id.clone());
-                            move |this, _window, cx| this.begin_hold(target.clone(), cx)
-                        }))
-                        .on_release(view_click(cx, |this, _window, cx| this.cancel_hold(cx)))
-                        .on_keyboard(view_click(cx, {
-                            let target = HoldTarget::ClearUtility(id.clone());
-                            move |this, _window, cx| this.request_confirm(target.clone(), cx)
-                        })),
-                    ),
+                    .child(self.clear_button(
+                        format!("history-clear-unknown-{id}"),
+                        "Clear",
+                        HoldTarget::ClearUtility(id.clone()),
+                        controller,
+                        Some(focus),
+                        cx,
+                    )),
             );
         }
 
@@ -540,20 +524,16 @@ impl Render for SettingsView {
                         })),
                     )
                     .child(
-                        HoldButton::new("history-clear-all", "Clear All (hold 2s)")
-                            .progress(if self.hold == Some(HoldTarget::ClearAll) {
-                                self.hold_progress
-                            } else {
-                                0.0
-                            })
-                            .focus_handle(self.clear_all_focus.clone())
-                            .on_press(view_click(cx, |this, _window, cx| {
-                                this.begin_hold(HoldTarget::ClearAll, cx)
-                            }))
-                            .on_release(view_click(cx, |this, _window, cx| this.cancel_hold(cx)))
-                            .on_keyboard(view_click(cx, |this, _window, cx| {
-                                this.request_confirm(HoldTarget::ClearAll, cx)
-                            })),
+                        div().debug_selector(|| "settings-clear-all".into()).child(
+                            self.clear_button(
+                                "history-clear-all".to_owned(),
+                                "Clear All (hold 2s)",
+                                HoldTarget::ClearAll,
+                                self.clear_all_hold.clone(),
+                                Some(self.clear_all_focus.clone()),
+                                cx,
+                            ),
+                        ),
                     ),
             )
             .child(
@@ -569,41 +549,18 @@ impl Render for SettingsView {
                     HoldTarget::ClearAll => "Clear all Rust History?",
                 };
                 this.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .w_full()
-                        .px_3()
-                        .py_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(tokens.warning())
-                        .bg(tokens.surface_raised())
-                        .child(div().text_xs().child(label))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .gap_2()
-                                .child(
-                                    Button::new("Confirm clear")
-                                        .variant(sofdevtool_ui::ButtonVariant::Primary)
-                                        .focus_handle(self.confirm_focus.clone())
-                                        .on_click(view_click(cx, |this, _window, cx| {
-                                            this.confirm(cx)
-                                        })),
-                                )
-                                .child(
-                                    Button::new("Cancel")
-                                        .focus_handle(self.cancel_confirm_focus.clone())
-                                        .on_click(view_click(cx, |this, _window, cx| {
-                                            this.cancel_confirm(cx)
-                                        })),
-                                ),
-                        ),
+                    ConfirmationBar::new(
+                        "settings.history.clear",
+                        label,
+                        "Confirm clear",
+                        "Cancel",
+                    )
+                    .focus_handles(
+                        self.confirm_focus.clone(),
+                        self.cancel_confirm_focus.clone(),
+                    )
+                    .on_confirm(view_click(cx, |this, _window, cx| this.confirm(cx)))
+                    .on_cancel(view_click(cx, |this, _window, cx| this.cancel_confirm(cx))),
                 )
             })
             .when_some(self.notice.as_ref(), |this, notice| {
@@ -722,8 +679,12 @@ fn display_name(key: &str, modifiers: u32) -> String {
 mod tests {
     use super::*;
     use crate::history::{HistoryEntry, HistoryStore, HistoryViewState, SystemClock};
+    use gpui::{Entity, Modifiers, MouseButton, VisualTestContext};
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_ROOT: AtomicU64 = AtomicU64::new(0);
 
     struct HistoryProbe {
         history: Rc<HistoryRecorder>,
@@ -765,12 +726,13 @@ mod tests {
 
     fn test_root() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "sofdevtool-settings-history-{}-{}",
+            "sofdevtool-settings-history-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed)
         ))
     }
 
@@ -782,6 +744,112 @@ mod tests {
             snapshot_version: 1,
             payload: serde_json::json!({"synthetic": id}),
         }
+    }
+
+    struct TestRoot(Entity<SettingsView>);
+
+    impl Render for TestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.0.clone())
+        }
+    }
+
+    #[gpui::test]
+    fn settings_keyboard_confirmation_and_two_second_hold_clear_isolated_history(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = test_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        history
+            .store()
+            .record(test_entry("json", "json-one"))
+            .unwrap();
+        history
+            .store()
+            .record(test_entry("legacy-unknown", "unknown-one"))
+            .unwrap();
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| {
+                SettingsView::new(
+                    window,
+                    cx,
+                    None,
+                    ShortcutPreferences::new(root.clone()),
+                    Rc::clone(&history),
+                    vec![UtilityRow {
+                        id: "json".into(),
+                        name: "JSON".into(),
+                        default_enabled: true,
+                    }],
+                    Shortcut::new(49, CONTROL | OPTION, "⌃⌥Space"),
+                )
+            });
+            captured = Some(view.clone());
+            TestRoot(view)
+        });
+        let settings = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = settings.read(cx).utility_focus[0].clear.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(history.load("json").unwrap().len(), 1);
+        assert!(settings.read_with(&cx, |view, _| view.pending_confirm.is_some()));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = settings.read(cx).cancel_confirm_focus.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(settings.read_with(&cx, |view, _| view.pending_confirm.is_none()));
+        assert_eq!(history.load("json").unwrap().len(), 1);
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = settings.read(cx).utility_focus[0].clear.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = settings.read(cx).confirm_focus.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(history.load("json").unwrap().is_empty());
+        assert_eq!(history.load("legacy-unknown").unwrap().len(), 1);
+        assert_eq!(
+            settings.read_with(&cx, |view, _| view.notice.clone()),
+            Some("Retained entries cleared.".into())
+        );
+
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let hit = cx.debug_bounds("settings-clear-all").unwrap().center();
+        cx.simulate_mouse_move(hit, None, Modifiers::none());
+        cx.simulate_mouse_down(hit, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        for _ in 0..19 {
+            cx.executor().advance_clock(Duration::from_millis(100));
+            cx.run_until_parked();
+        }
+        assert_eq!(history.load("legacy-unknown").unwrap().len(), 1);
+        assert!(settings.read_with(&cx, |view, _| view.clear_all_hold.is_active()));
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        assert!(history.store().stored_utility_ids().unwrap().is_empty());
+        assert_eq!(
+            settings.read_with(&cx, |view, _| view.notice.clone()),
+            Some("All Rust History cleared.".into())
+        );
+        cx.simulate_mouse_up(hit, MouseButton::Left, Modifiers::none());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[gpui::test]

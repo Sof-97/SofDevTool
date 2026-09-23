@@ -39,6 +39,23 @@ the owning view with `NumericStepper::stepped`, then notify the view. The
 component has no color or parsing policy; Color Conversion uses it for sRGB
 channels. The gallery shows keyboard activation and boundary clamping.
 
+`SelectableList::new(id, title, rows, selected, empty_message, focus)` accepts
+plain `SelectableRow`s. Supply the count or quota wording with `summary` and
+retain the required `SelectableListFocus` in the owning view across redraws.
+Click, Enter and Space select a row with a stable ID and retained
+focus. Rows can show a caller-defined status or be disabled. The consumer owns
+the selected ID and any response to selection. The older `HistoryPanel` shape
+temporarily delegates to this generic list for workspaces awaiting migration.
+
+Retain one `HoldController` per destructive action and pass it to
+`HoldButton::new(id, label, controller)` with the caller's `duration`. The
+library runs the timer, paints progress and
+cancels on early pointer release, pointer exit or Escape. A completed pointer
+hold invokes `on_complete` once. Enter or Space invokes `on_keyboard` instead;
+the consumer can show `ConfirmationBar` with its own message, labels, focus
+handles and confirm/cancel actions. The app decides what is destructive and
+performs persistence; sofui only manages the interaction.
+
 `assign_text` silently initializes or restores text: it emits no change event
 and clears undo history. `edit_text` performs a user-style whole-text edit:
 it emits a change event and is undoable. `on_change_in` observes editing
@@ -49,11 +66,11 @@ remain for workspaces still being migrated.
 From `rust/`, run `cargo run -p sofui --example gallery` to open the gallery.
 The gallery imports only sofui and GPUI, and demonstrates repeated labels,
 focus, disabled actions, real Copy feedback, Unicode editors, diagnostics,
-selection, confirmation, both presets and a high-contrast custom palette.
-It also demonstrates the reusable numeric control.
-`cargo test -p sofui` covers
-public component interactions; `cargo check -p sofui --all-targets` includes
-the gallery. Native launch observations require a separate acceptance run.
+selected, unavailable, disabled and failed list rows, an empty list, hold
+cancellation, confirmation, both presets, a high-contrast custom palette and
+the numeric control. `cargo test -p sofui` covers public component interactions;
+`cargo check -p sofui --all-targets` includes the gallery. Native launch
+observations require a separate acceptance run.
 
 The application currently imports this package under the compatibility alias
 `sofdevtool-ui`. Remaining workspaces and shell views will migrate to the

@@ -17,8 +17,8 @@ use sofdevtool_core::session::SubmitOutcome;
 use sofdevtool_core::utility::Utility;
 use sofdevtool_ui::{
     copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    DiagnosticSeverity, HistoryItem, HistoryPanel, LabeledField, TextEditor, TextField,
-    ThemeTokens,
+    ConfirmationBar, DiagnosticSeverity, LabeledField, SelectableList, SelectableListFocus,
+    SelectableRow, TextEditor, TextField, ThemeTokens,
 };
 
 use crate::clipboard::Clipboard;
@@ -56,6 +56,7 @@ pub struct JsonWorkspace {
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_visible: bool,
+    history_focus: SelectableListFocus,
     _history_subscription: HistorySubscription,
     focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
@@ -102,6 +103,7 @@ impl JsonWorkspace {
             suppress_changes: false,
             history_view,
             history_visible: true,
+            history_focus: SelectableListFocus::new(),
             _history_subscription: history_subscription,
             focus: ButtonFocus {
                 format: cx.focus_handle().tab_stop(true).tab_index(0),
@@ -323,20 +325,23 @@ impl JsonWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<HistoryItem> {
+    fn history_items(&self) -> Vec<SelectableRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                HistoryItem {
+                SelectableRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
                         .as_ref()
                         .map(|snapshot| preview_line(&snapshot.output))
                         .unwrap_or_else(|| "Unavailable snapshot".to_owned()),
-                    available: snapshot.is_some(),
+                    status: snapshot
+                        .is_none()
+                        .then(|| "Unavailable snapshot".to_owned()),
+                    selectable: true,
                 }
             })
             .collect()
@@ -399,11 +404,17 @@ impl JsonWorkspace {
                 })),
         );
 
-        let panel = HistoryPanel::new(
-            self.history_items(),
+        let items = self.history_items();
+        let count = items.len();
+        let panel = SelectableList::new(
+            "json.history",
+            "History",
+            items,
             selected,
             "No retained operations yet.",
+            self.history_focus.clone(),
         )
+        .summary(format!("{count}/25"))
         .on_select(Rc::new({
             let weak = cx.weak_entity();
             move |id, _window, cx| {
@@ -425,46 +436,22 @@ impl JsonWorkspace {
     }
 
     fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .w_full()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(tokens.warning())
-            .bg(tokens.surface_raised())
-            .child(
-                div().text_xs().text_color(tokens.text()).child(
-                    "Restoring this History entry replaces the current non-empty JSON session.",
-                ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .child(
-                        Button::with_id("json.history.confirm-restore", "Restore")
-                            .variant(ButtonVariant::Primary)
-                            .focus_handle(self.focus.history_confirm.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                this.confirm_restore(window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::with_id("json.history.cancel-restore", "Cancel")
-                            .focus_handle(self.focus.history_cancel.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.cancel_restore(cx);
-                            })),
-                    ),
-            )
+        ConfirmationBar::new(
+            "json.history.restore",
+            "Restoring this History entry replaces the current non-empty JSON session.",
+            "Restore",
+            "Cancel",
+        )
+        .focus_handles(
+            self.focus.history_confirm.clone(),
+            self.focus.history_cancel.clone(),
+        )
+        .on_confirm(view_click(cx, |this, window, cx| {
+            this.confirm_restore(window, cx);
+        }))
+        .on_cancel(view_click(cx, |this, _window, cx| {
+            this.cancel_restore(cx);
+        }))
     }
 }
 
@@ -661,5 +648,148 @@ fn preview_line(output: &str) -> String {
         "Empty result".to_owned()
     } else {
         preview
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use gpui::{Entity, VisualTestContext};
+
+    use crate::history::{HistoryStore, SystemClock};
+
+    struct TestClipboard;
+
+    impl Clipboard for TestClipboard {
+        fn read_text(&self, _cx: &mut App) -> Option<String> {
+            None
+        }
+
+        fn write_text(&self, _text: &str, _cx: &mut App) {}
+    }
+
+    struct TestRoot(Entity<JsonWorkspace>);
+
+    impl Render for TestRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().child(self.0.clone())
+        }
+    }
+
+    fn isolated_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "sofdevtool-json-list-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[gpui::test]
+    fn selectable_history_and_confirmation_reconcile_after_settings_deletion(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(sofdevtool_ui::init);
+        let root = isolated_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| {
+                JsonWorkspace::new(window, cx, Rc::new(TestClipboard), Rc::clone(&history))
+            });
+            captured = Some(view.clone());
+            TestRoot(view)
+        });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        for text in [r#"{"first":1}"#, r#"{"second":2}"#] {
+            cx.update(|window, cx| {
+                workspace.update(cx, |view, cx| view.input.edit_text(text, window, cx));
+                window.draw(cx).clear(cx);
+            });
+            cx.executor().advance_clock(DEBOUNCE);
+            cx.run_until_parked();
+        }
+        let entries = history.load(Json::ID).unwrap();
+        assert_eq!(entries.len(), 2);
+        let first_id = entries[1].id.clone();
+        let second_id = entries[0].id.clone();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let list = workspace.read(cx).history_focus.clone();
+            window.focus(&list.handle(&first_id, cx), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.history_view.selected.clone()),
+            Some(first_id.clone())
+        );
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.history_restore.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_some()));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.history_cancel.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_none()));
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.input.text(cx)),
+            r#"{"second":2}"#
+        );
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.history_restore.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.history_confirm.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.input.text(cx)),
+            r#"{"first":1}"#
+        );
+        assert_eq!(history.load(Json::ID).unwrap().len(), 2);
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let list = workspace.read(cx).history_focus.clone();
+            window.focus(&list.handle(&second_id, cx), cx);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).focus.history_restore.clone();
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_some()));
+        cx.update(|_window, cx| history.clear_utility(Json::ID, cx).unwrap());
+        assert!(workspace.read_with(&cx, |view, _| view.history_view.entries.is_empty()));
+        assert!(workspace.read_with(&cx, |view, _| view.history_view.selected.is_none()));
+        assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_none()));
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.input.text(cx)),
+            r#"{"first":1}"#
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

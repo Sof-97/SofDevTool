@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
@@ -8,56 +10,144 @@ use gpui::{
 
 use crate::theme::ThemeTokens;
 
-gpui::actions!(sofui_hold_button, [ActivateHoldButton]);
+gpui::actions!(sofui_hold_button, [ActivateHoldButton, CancelHoldButton]);
 
-/// A pointer/keyboard handler owned by a [`HoldButton`].
-type HoldHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
+type KeyboardHandler = Rc<dyn Fn(&mut Window, &mut App)>;
+type CompletionHandler = Rc<dyn Fn(&mut App)>;
 
-/// Key context for a [`HoldButton`]; Enter activates the keyboard confirmation.
+/// Key context for a [`HoldButton`]. Enter or Space requests confirmation;
+/// Escape cancels an active pointer hold.
 pub const HOLD_BUTTON_KEY_CONTEXT: &str = "SofuiHoldButton";
 
 pub(crate) fn register_key_bindings(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new(
-        "enter",
-        ActivateHoldButton,
-        Some(HOLD_BUTTON_KEY_CONTEXT),
-    )]);
+    cx.bind_keys([
+        KeyBinding::new("enter", ActivateHoldButton, Some(HOLD_BUTTON_KEY_CONTEXT)),
+        KeyBinding::new("space", ActivateHoldButton, Some(HOLD_BUTTON_KEY_CONTEXT)),
+        KeyBinding::new("escape", CancelHoldButton, Some(HOLD_BUTTON_KEY_CONTEXT)),
+    ]);
 }
 
-/// A destructive action that requires a deliberate pointer hold.
-///
-/// The host view owns the hold timer: this element only reports pointer
-/// down/up/exit and keyboard activation. Keyboard activation is delivered
-/// through a separate callback so the host can show a normal confirmation
-/// instead of a timed hold. `progress` (0..=1) draws the hold indicator.
+#[derive(Default)]
+struct HoldState {
+    generation: u64,
+    active: bool,
+    progress: f32,
+}
+
+/// Retained timing state for one destructive control. Clone it into redraws;
+/// the consuming application never schedules or cancels a timer.
+#[derive(Clone, Default)]
+pub struct HoldController(Rc<RefCell<HoldState>>);
+
+impl HoldController {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn progress(&self) -> f32 {
+        self.0.borrow().progress
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.0.borrow().active
+    }
+
+    fn begin(&self, duration: Duration, complete: CompletionHandler, cx: &mut App) {
+        let generation = {
+            let mut state = self.0.borrow_mut();
+            state.generation += 1;
+            state.active = true;
+            state.progress = 0.0;
+            state.generation
+        };
+        cx.refresh_windows();
+        let state = self.clone();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |cx| {
+            const STEPS: u32 = 20;
+            for step in 1..=STEPS {
+                executor.timer(duration / STEPS).await;
+                let active = {
+                    let mut current = state.0.borrow_mut();
+                    if !current.active || current.generation != generation {
+                        false
+                    } else {
+                        current.progress = step as f32 / STEPS as f32;
+                        true
+                    }
+                };
+                if !active {
+                    return;
+                }
+                cx.refresh();
+            }
+            let completed = {
+                let mut current = state.0.borrow_mut();
+                if !current.active || current.generation != generation {
+                    false
+                } else {
+                    current.active = false;
+                    current.progress = 0.0;
+                    current.generation += 1;
+                    true
+                }
+            };
+            if completed {
+                cx.update(|cx| complete(cx));
+                cx.refresh();
+            }
+        })
+        .detach();
+    }
+
+    fn cancel(&self, cx: &mut App) {
+        let mut state = self.0.borrow_mut();
+        if state.active {
+            state.generation += 1;
+            state.active = false;
+            state.progress = 0.0;
+            drop(state);
+            cx.refresh_windows();
+        }
+    }
+}
+
+/// Pointer hold with library-owned timing, progress and cancellation.
+/// Keyboard or assistive activation invokes `on_keyboard` to request an
+/// ordinary confirmation; it never invokes the destructive completion.
 #[derive(IntoElement)]
 pub struct HoldButton {
     label: SharedString,
     element_id: ElementId,
-    progress: f32,
+    duration: Duration,
+    controller: HoldController,
     disabled: bool,
     focus: Option<FocusHandle>,
-    on_press: Option<HoldHandler>,
-    on_release: Option<HoldHandler>,
-    on_keyboard: Option<HoldHandler>,
+    on_complete: Option<CompletionHandler>,
+    on_keyboard: Option<KeyboardHandler>,
 }
 
 impl HoldButton {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+    pub fn new(
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        controller: HoldController,
+    ) -> Self {
         Self {
             label: label.into(),
             element_id: id.into(),
-            progress: 0.0,
+            duration: Duration::from_secs(1),
+            controller,
             disabled: false,
             focus: None,
-            on_press: None,
-            on_release: None,
+            on_complete: None,
             on_keyboard: None,
         }
     }
 
-    pub fn progress(mut self, progress: f32) -> Self {
-        self.progress = progress.clamp(0.0, 1.0);
+    pub fn duration(mut self, duration: Duration) -> Self {
+        assert!(!duration.is_zero(), "a hold needs a positive duration");
+        self.duration = duration;
         self
     }
 
@@ -71,19 +161,11 @@ impl HoldButton {
         self
     }
 
-    /// Pointer pressed: the host starts its hold timer.
-    pub fn on_press(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
-        self.on_press = Some(Rc::new(handler));
+    pub fn on_complete(mut self, handler: impl Fn(&mut App) + 'static) -> Self {
+        self.on_complete = Some(Rc::new(handler));
         self
     }
 
-    /// Pointer released or left: the host cancels its hold timer.
-    pub fn on_release(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
-        self.on_release = Some(Rc::new(handler));
-        self
-    }
-
-    /// Keyboard activation: the host shows a confirmation.
     pub fn on_keyboard(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_keyboard = Some(Rc::new(handler));
         self
@@ -96,24 +178,16 @@ impl RenderOnce for HoldButton {
         let HoldButton {
             label,
             element_id,
-            progress,
+            duration,
+            controller,
             disabled,
             focus,
-            on_press,
-            on_release,
+            on_complete,
             on_keyboard,
         } = self;
-
         let focused = focus
             .as_ref()
-            .map(|handle| window.focused(cx).as_ref() == Some(handle))
-            .unwrap_or(false);
-        let border = if focused {
-            tokens.accent()
-        } else {
-            tokens.danger()
-        };
-
+            .is_some_and(|handle| window.focused(cx).as_ref() == Some(handle));
         let mut element = div()
             .id(element_id)
             .role(gpui::Role::Button)
@@ -127,58 +201,70 @@ impl RenderOnce for HoldButton {
             .py_1()
             .rounded_md()
             .border_1()
-            .border_color(border)
+            .border_color(if focused {
+                tokens.accent()
+            } else {
+                tokens.danger()
+            })
             .bg(tokens.surface_raised())
             .text_color(tokens.danger())
             .child(
-                // The fill shows how much of the required hold has elapsed.
                 div()
                     .absolute()
                     .left_0()
                     .top_0()
                     .bottom_0()
-                    .w(gpui::relative(progress))
+                    .w(gpui::relative(controller.progress()))
                     .bg(tokens.danger())
                     .opacity(0.25),
             )
             .child(div().relative().child(label));
-
         if disabled {
+            controller.cancel(cx);
             return element.opacity(0.45).cursor_default();
         }
-
         element = element.cursor_pointer();
-        if let Some(press) = on_press.clone() {
+        if let Some(complete) = on_complete {
+            let pressed = controller.clone();
+            let released = controller.clone();
+            let exited = controller.clone();
             let focus_for_press = focus.clone();
-            element = element.on_mouse_down(MouseButton::Left, move |_event, window, cx| {
-                if let Some(handle) = &focus_for_press {
-                    window.focus(handle, cx);
-                }
-                press(window, cx);
-            });
+            element = element
+                .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                    if let Some(handle) = &focus_for_press {
+                        window.focus(handle, cx);
+                    }
+                    pressed.begin(duration, complete.clone(), cx);
+                })
+                .on_mouse_up(MouseButton::Left, move |_event, _window, cx| {
+                    released.cancel(cx);
+                })
+                .on_hover(move |hovered, _window, cx| {
+                    if !hovered {
+                        exited.cancel(cx);
+                    }
+                });
         }
-        if let Some(release) = on_release.clone() {
-            let release_up = release.clone();
-            element = element.on_mouse_up(MouseButton::Left, move |_event, window, cx| {
-                release_up(window, cx);
-            });
-            // Leaving the button cancels the hold, matching "pointer exit".
-            element = element.on_hover(move |hovered, window, cx| {
-                if !hovered {
-                    release(window, cx);
-                }
-            });
+        if let Some(handler) = on_keyboard.clone() {
+            // GPUI's default accessibility Click synthesizes a short pointer
+            // press. Handle it explicitly so assistive activation requests the
+            // same ordinary confirmation as Enter or Space.
+            element =
+                element.on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+                    handler(window, cx);
+                });
         }
         if let Some(handle) = focus {
-            let keyboard = on_keyboard;
+            let escape = controller;
             element = element
                 .track_focus(&handle)
                 .key_context(HOLD_BUTTON_KEY_CONTEXT)
                 .on_action(move |_: &ActivateHoldButton, window, cx| {
-                    if let Some(handler) = &keyboard {
+                    if let Some(handler) = &on_keyboard {
                         handler(window, cx);
                     }
-                });
+                })
+                .on_action(move |_: &CancelHoldButton, _window, cx| escape.cancel(cx));
         }
         element
     }

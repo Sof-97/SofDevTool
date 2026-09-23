@@ -1,7 +1,7 @@
 //! Executable gallery for the owner-maintained component library.
 //!
 //! It demonstrates the actual exported components in their normal, focused,
-//! disabled, invalid and empty states, plus the History list, destructive hold
+//! disabled, invalid and empty states, plus a generic selectable list, hold
 //! action, confirmation and theme switch used by the application. It builds
 //! without the SofDevTool application crate.
 
@@ -13,10 +13,10 @@ use gpui::{
     WindowOptions,
 };
 use sofui::{
-    active_theme, apply_custom_theme, apply_theme, copy_feedback, diagnostic_banner, empty_state,
-    init, mount, panel, view_click, Button, ButtonVariant, DiagnosticSeverity, HistoryItem,
-    HistoryPanel, HoldButton, LabeledField, NumericStepper, TextEditor, TextField, ThemePalette,
-    ThemeTokens, ThemeVariant,
+    active_theme, apply_custom_theme, apply_theme, copy_feedback, diagnostic_banner, init, mount,
+    panel, view_click, Button, ButtonVariant, ConfirmationBar, DiagnosticSeverity, HoldButton,
+    HoldController, LabeledField, NumericStepper, SelectableList, SelectableListFocus,
+    SelectableRow, TextEditor, TextField, ThemePalette, ThemeTokens, ThemeVariant,
 };
 
 // A gallery-only custom palette with distinct focus and diagnostic colors.
@@ -48,11 +48,10 @@ struct Gallery {
     channel_focus: [FocusHandle; 2],
     channel_value: i32,
     copied: bool,
-    history_selected: Option<String>,
-    history_items: Vec<HistoryItem>,
-    holding: bool,
-    hold_generation: u64,
-    hold_progress: f32,
+    list_selected: Option<String>,
+    list_items: Vec<SelectableRow>,
+    list_focus: SelectableListFocus,
+    hold: HoldController,
     confirm_visible: bool,
     confirmed: bool,
     _subscriptions: Vec<Subscription>,
@@ -75,18 +74,27 @@ impl Gallery {
                 cx.notify();
             }),
         ];
-        let history_items = vec![
-            HistoryItem {
+        let list_items = vec![
+            SelectableRow {
                 id: "a".into(),
                 label: "2026-09-22T10:00:00Z".into(),
                 preview: "SHA-256 · ba7816bf8f01cfea…".into(),
-                available: true,
+                status: None,
+                selectable: true,
             },
-            HistoryItem {
+            SelectableRow {
                 id: "b".into(),
                 label: "2026-09-22T09:59:00Z".into(),
                 preview: "Unavailable snapshot".into(),
-                available: false,
+                status: Some("Unavailable".into()),
+                selectable: true,
+            },
+            SelectableRow {
+                id: "c".into(),
+                label: "2026-09-22T09:58:00Z".into(),
+                preview: "Failed to load".into(),
+                status: Some("Failed".into()),
+                selectable: false,
             },
         ];
         Self {
@@ -104,76 +112,34 @@ impl Gallery {
             channel_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
             channel_value: 250,
             copied: false,
-            history_selected: Some("a".into()),
-            history_items,
-            holding: false,
-            hold_generation: 0,
-            hold_progress: 0.0,
+            list_selected: Some("a".into()),
+            list_items,
+            list_focus: SelectableListFocus::new(),
+            hold: HoldController::new(),
             confirm_visible: false,
             confirmed: false,
             _subscriptions: subscriptions,
         }
-    }
-
-    fn begin_hold(&mut self, cx: &mut Context<Self>) {
-        self.hold_generation += 1;
-        let generation = self.hold_generation;
-        self.holding = true;
-        self.hold_progress = 0.0;
-        cx.notify();
-        let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
-            const STEPS: u32 = 20;
-            for step in 1..=STEPS {
-                executor.timer(Duration::from_secs(1) / STEPS).await;
-                let alive = this
-                    .update(cx, |this, cx| {
-                        if this.hold_generation != generation {
-                            return false;
-                        }
-                        this.hold_progress = step as f32 / STEPS as f32;
-                        cx.notify();
-                        true
-                    })
-                    .unwrap_or(false);
-                if !alive {
-                    return;
-                }
-            }
-            this.update(cx, |this, cx| {
-                if this.hold_generation == generation {
-                    this.holding = false;
-                    this.hold_progress = 0.0;
-                    this.confirmed = true;
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn cancel_hold(&mut self, cx: &mut Context<Self>) {
-        self.hold_generation += 1;
-        self.holding = false;
-        self.hold_progress = 0.0;
-        cx.notify();
     }
 }
 
 impl Render for Gallery {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = ThemeTokens::active();
-        let selected = self.history_selected.clone();
+        let selected = self.list_selected.clone();
         let weak = cx.weak_entity();
-        let history_panel = HistoryPanel::new(
-            self.history_items.clone(),
+        let list = SelectableList::new(
+            "gallery.list",
+            "Sample records",
+            self.list_items.clone(),
             selected,
-            "No retained operations yet.",
+            "No sample records.",
+            self.list_focus.clone(),
         )
+        .summary("3 items")
         .on_select(std::rc::Rc::new(move |id, _window, cx| {
             weak.update(cx, |this, cx| {
-                this.history_selected = Some(id.to_owned());
+                this.list_selected = Some(id.to_owned());
                 cx.notify();
             })
             .ok();
@@ -270,11 +236,19 @@ impl Render for Gallery {
                         })),
                     )
                     .child(
-                        HoldButton::new("gallery-clear", "Clear (hold 1s)")
-                            .progress(self.hold_progress)
+                        HoldButton::new("gallery-clear", "Clear (hold 1s)", self.hold.clone())
+                            .duration(Duration::from_secs(1))
                             .focus_handle(self.hold_focus.clone())
-                            .on_press(view_click(cx, |this, _window, cx| this.begin_hold(cx)))
-                            .on_release(view_click(cx, |this, _window, cx| this.cancel_hold(cx)))
+                            .on_complete({
+                                let weak = cx.weak_entity();
+                                move |cx| {
+                                    weak.update(cx, |this, cx| {
+                                        this.confirmed = true;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }
+                            })
                             .on_keyboard(view_click(cx, |this, _window, cx| {
                                 this.confirm_visible = true;
                                 cx.notify();
@@ -291,43 +265,22 @@ impl Render for Gallery {
             )
             .when(self.confirm_visible, |this| {
                 this.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .w_full()
-                        .px_3()
-                        .py_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(tokens.warning())
-                        .bg(tokens.surface_raised())
-                        .child(div().text_xs().child("Confirm destructive action?"))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .gap_2()
-                                .child(
-                                    Button::primary_with_id("gallery.confirm", "Confirm")
-                                        .focus_handle(self.confirm_focus.clone())
-                                        .on_click(view_click(cx, |this, _window, cx| {
-                                            this.confirmed = true;
-                                            this.confirm_visible = false;
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    Button::with_id("gallery.cancel", "Cancel")
-                                        .focus_handle(self.cancel_focus.clone())
-                                        .on_click(view_click(cx, |this, _window, cx| {
-                                            this.confirm_visible = false;
-                                            cx.notify();
-                                        })),
-                                ),
-                        ),
+                    ConfirmationBar::new(
+                        "gallery.confirmation",
+                        "Confirm destructive action?",
+                        "Confirm",
+                        "Cancel",
+                    )
+                    .focus_handles(self.confirm_focus.clone(), self.cancel_focus.clone())
+                    .on_confirm(view_click(cx, |this, _window, cx| {
+                        this.confirmed = true;
+                        this.confirm_visible = false;
+                        cx.notify();
+                    }))
+                    .on_cancel(view_click(cx, |this, _window, cx| {
+                        this.confirm_visible = false;
+                        cx.notify();
+                    })),
                 )
             })
             .child(
@@ -405,14 +358,21 @@ impl Render for Gallery {
                     .h_48()
                     .flex_shrink_0()
                     .child(div().flex_1().min_h_0().child(panel(
-                        "History list",
+                        "Selectable list",
                         "select + unavailable",
-                        history_panel,
+                        list,
                     )))
                     .child(div().flex_1().min_h_0().child(panel(
                         "Empty state",
                         "neutral",
-                        empty_state("Nothing to show yet"),
+                        SelectableList::new(
+                            "gallery.empty-list",
+                            "Empty records",
+                            vec![],
+                            None,
+                            "Nothing to show yet",
+                            SelectableListFocus::new(),
+                        ),
                     ))),
             )
     }
