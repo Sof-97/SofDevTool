@@ -6,6 +6,8 @@ Read `CONTEXT.md` before changing product behavior. Inspect the owning module an
 
 The application consumes [GPUI Kit](https://docs.rs/crate/gpui-kit/0.6.6) directly: controls, appearance and text editing come from the kit, initialized and mounted by the consumer. `crates/app` owns Utility execution, domain validation, persistence, History policy and lifecycle; `crates/core` owns the Utility domain engines. Keep app-specific Utility compositions and the specialised Text Diff renderer as explicit boundaries, not as a replacement component library. There is no `sofui` crate, gallery or independent component release.
 
+The owner-approved editing exception is `crate::ui::multiline_editor`: retain its narrow Backspace/Delete adapter for extended graphemes, including partial selections. Rendering, selection, IME, undo/redo and scrolling remain kit-owned. Before replacing this adapter, verify equivalent upstream behavior; see `.scratch/gpui-kit-migration/issues/10-native-acceptance-record.md`, item 1.
+
 ## Source map
 
 - `crates/app`: lifecycle, Workbench, Launcher, Settings, Registry, History coordination, Clipboard, native adapters and Utility workspaces.

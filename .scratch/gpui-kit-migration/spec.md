@@ -67,6 +67,15 @@ Offer System, Light and Dark appearance using official Catppuccin Latte and Catp
 - Deliver the migration atomically. Tickets are work packages in one coordinated integration effort, not independently shipped or accepted intermediate product states. Do not add compatibility wrappers, a feature-flagged old UI, or an expand-contract rollout. Source edits are necessarily sequential; only the complete integrated result is promised to build and pass the final gate.
 - Notify the owner of any demonstrated upstream regression or missing capability that prevents the agreed behavior. Describe the affected workflow and evidence; do not silently keep custom controls, reduce scope or claim completion. An unresolved incompatibility remains a completion blocker while unaffected planning/work can continue.
 
+### Owner-approved editing exception (2026-09-26)
+
+Retain the existing `crate::ui::multiline_editor` Backspace/Delete adapter for
+extended graphemes and partial selections. This narrowly amends the kit-only
+editing requirement; all other editing ownership remains with the kit. The
+decision and evidence are recorded in [acceptance record item 1](issues/10-native-acceptance-record.md#upstream-findings-and-owner-decisions).
+Replace it only after equivalent upstream behavior is verified. This exception
+does not establish native acceptance or acceptance of the entire migration.
+
 ## Testing Decisions
 
 These testing seams and the ticket breakdown were approved by the owner.

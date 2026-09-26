@@ -1,12 +1,14 @@
 //! App-owned presentation compositions over GPUI Kit controls.
 //!
 //! This module is **not** a component library. It contains no reusable
-//! interaction logic: every interactive control here is a GPUI Kit control, and
+//! controls: every interactive control here is a GPUI Kit control, and
 //! every visual token is read from the kit's active [`ActiveTheme`]. The
-//! functions only compose kit primitives and layout for the Developer Toolbox's
+//! functions compose kit primitives and layout for the Developer Toolbox's
 //! own surfaces, which is the "compose supported kit controls within the owning
 //! application view" boundary the migration allows. No palette, focus or
 //! pointer behavior is reimplemented here.
+//! The owner-approved exception is `multiline_editor`'s narrow extended-grapheme
+//! deletion adapter; the kit retains the rest of text editing.
 //!
 //! The specialised Text Diff renderer is the only other retained exception and
 //! lives in [`crate::text_diff`].
@@ -498,6 +500,8 @@ pub fn confirm_dialog(
 /// this app-owned composition keeps that externally observable behavior by
 /// intercepting the two actions around the kit control. It adds no new control:
 /// rendering, selection, IME, undo/redo and scrolling all remain the kit's.
+/// The owner approved this narrow exception on 2026-09-26; see migration
+/// acceptance record item 1 before replacing it with upstream behavior.
 pub fn multiline_editor(
     state: &Entity<gpui_kit::component::input::TextareaState>,
     readonly: bool,

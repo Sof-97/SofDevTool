@@ -56,9 +56,22 @@ on macOS 26.2 does not establish macOS 14/15 behavior.
    intercepts the two kit actions around the kit `Textarea`; it is covered by
    the tests above and documented in `crates/app/src/ui.rs`. The kit control
    still owns rendering, selection, IME, undo/redo and scrolling.
-   **Owner decision requested:** accept this narrow app-owned composition, or
-   file the deletion behavior upstream and treat it as a completion blocker per
-   the specification. This is reported, not silently kept.
+   **Owner decision — approved 2026-09-26:** “Ok allora niente dobbiamo
+   tenerci la nostra soluzione”. Retain the existing narrow adapter, including
+   expansion of partial selections to whole graphemes. Standards P2 ownership
+   conflict is resolved by this explicit exception; native acceptance and the
+   overall migration remain open. Revisit removal only with verified equivalent
+   upstream behavior.
+
+   The experiment on `f07917cad3d5a71f5788ae62eeb19c95d868bde9` removed the
+   adapter without changing the Base64 interaction assertion. Backspace on
+   `cafe\u{301}` produced `cafe`, while the retained requirement expects `caf`.
+   `make verify` failed on that assertion (107 app tests passed, one failed).
+   Logs: `/tmp/sofdevtool-kit-deletion-probe.log` and
+   `/tmp/sofdevtool-kit-deletion-verify.log` (temporary). The experimental Debug
+   bundle was opened with isolated data; this is not coordinator-observed native
+   acceptance. [Upstream research](../upstream-unicode-research.md) found no
+   ready-to-adopt fix in release 0.6.6 or the inspected main revision.
 2. **Modal dialogs require a host-rendered layer.** `gpui_kit::component::Root::render`
    does not mount `render_dialog_layer`; a view that opens dialogs must include
    `Root::render_dialog_layer(window, cx)` in its own tree. The Workbench and
@@ -68,6 +81,20 @@ on macOS 26.2 does not establish macOS 14/15 behavior.
    built during `Workbench::render`, where `Window::use_keyed_state` is legal;
    it must not be called outside layout/prepaint/paint. Only the Workbench
    catalog arrow navigation uses it.
+
+## Comments
+
+### 2026-09-26 — Standards P2 resolution validation
+
+Restored the existing adapter and its five unit tests after the kit-only
+experiment; its implementation is unchanged from `f07917c`. Updated AGENTS,
+specification, map and source comments to reflect the owner's approval above.
+`make verify` passed on the restored working tree: 335 Rust tests (113 app),
+formatting, Clippy, five packaging/install tests and Debug build. Log:
+`/tmp/sofdevtool-grapheme-restored-verify.log` (temporary).
+No new coordinator-observed native acceptance was performed, and this does not
+close ticket 10 or accept the whole migration. The Debug bundle was also rebuilt
+with the restored adapter; package log: `/tmp/sofdevtool-grapheme-restored-package.log`.
 
 ## Compatibility
 

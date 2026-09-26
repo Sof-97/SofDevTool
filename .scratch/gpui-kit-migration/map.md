@@ -35,6 +35,7 @@ Primary: existing application interactions from input/generation through results
 - Use official Catppuccin Latte/Frappe through the kit with System/Light/Dark preferences.
 - Remove sofui; retain app compositions and the specialized theme-aware Text Diff renderer.
 - Report upstream incompatibilities rather than introducing silent exceptions.
+- Owner approved retaining the narrow grapheme deletion adapter on 2026-09-26; see [acceptance record item 1](issues/10-native-acceptance-record.md#upstream-findings-and-owner-decisions).
 
 ## Current frontier
 
@@ -42,4 +43,6 @@ Primary: existing application interactions from input/generation through results
 `make verify-full` on macOS 26.2 arm64 (see the
 [native acceptance record](issues/10-native-acceptance-record.md)). 10 remains
 open: native acceptance on macOS 14/15 has **not** been performed, and the
-whole-grapheme deletion finding is awaiting an owner decision.
+whole-grapheme deletion finding was resolved by the owner's explicit approval
+of the narrow adapter on 2026-09-26 (acceptance record item 1). Native acceptance
+remains open.
