@@ -1,0 +1,9 @@
+{
+  "name": "query-missing-path",
+  "mode": "query",
+  "input": "{\"a\":1}",
+  "query": "a.b",
+  "expected_error": {
+    "message_contains": "Query path not found"
+  }
+}

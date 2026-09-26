@@ -12,3 +12,7 @@ xcuserdata/
 DerivedData/
 .build/
 .swiftpm/
+/target/
+/artifacts/
+/crates/app/src/text_diff/assets-source/node_modules/
+__pycache__/

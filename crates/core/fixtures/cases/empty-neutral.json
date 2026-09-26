@@ -1,0 +1,6 @@
+{
+  "name": "empty-neutral",
+  "mode": "format",
+  "input": "   \n\t ",
+  "expected_output": ""
+}

@@ -1,0 +1,16 @@
+[package]
+name = "sofui-independent-consumer"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+
+[dependencies]
+sofui = { path = "../.." }
+gpui = { package = "gpui-pre", version = "=0.3.6" }
+gpui-platform = { package = "gpui-pre-platform", version = "=0.3.6", features = ["font-kit", "runtime_shaders"] }
+
+[profile.dev]
+opt-level = 1

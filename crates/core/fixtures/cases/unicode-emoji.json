@@ -1,0 +1,7 @@
+{
+  "name": "unicode-emoji",
+  "mode": "format",
+  "indentation": 2,
+  "input": "{\"text\":\"caffè 👩‍👩‍👧‍👦 🏳️‍🌈 𝄞\"}",
+  "expected_output": "{\n  \"text\": \"caffè 👩‍👩‍👧‍👦 🏳️‍🌈 𝄞\"\n}"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "query-pointer-swift-compat",
+  "mode": "query",
+  "input": "{\"z\":1,\"a\":[true,{\"name\":\"Sof\"}]}",
+  "query": "/a/1/name",
+  "expected_output": "Sof"
+}

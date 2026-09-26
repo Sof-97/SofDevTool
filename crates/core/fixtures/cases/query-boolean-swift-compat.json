@@ -1,0 +1,7 @@
+{
+  "name": "query-boolean-swift-compat",
+  "mode": "query",
+  "input": "{\"z\":1,\"a\":[true,{\"name\":\"Sof\"}]}",
+  "query": "a[0]",
+  "expected_output": "1"
+}

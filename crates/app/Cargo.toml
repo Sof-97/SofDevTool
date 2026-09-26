@@ -1,0 +1,33 @@
+[package]
+name = "sofdevtool-app"
+description = "The Rust Developer Toolbox application."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "sofdevtool_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sofdevtool"
+path = "src/main.rs"
+
+[dependencies]
+gpui.workspace = true
+gpui-platform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+wry.workspace = true
+raw-window-handle.workspace = true
+sofdevtool-core = { path = "../core" }
+sofui = { path = "../ui" }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc.workspace = true
+objc2-app-kit = { version = "=0.2.2", features = ["NSApplication", "NSEvent"] }
+objc2-foundation = "=0.2.2"

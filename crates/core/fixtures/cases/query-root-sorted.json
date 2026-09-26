@@ -1,0 +1,9 @@
+{
+  "name": "query-root-sorted",
+  "mode": "query",
+  "indentation": 4,
+  "sort_keys": false,
+  "input": "{\"b\":1,\"a\":2}",
+  "query": "",
+  "expected_output": "{\n  \"a\": 2,\n  \"b\": 1\n}"
+}

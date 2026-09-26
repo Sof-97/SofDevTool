@@ -1,0 +1,7 @@
+{
+  "name": "format-nested",
+  "mode": "format",
+  "indentation": 2,
+  "input": "{\"b\":1,\"a\":[1,2,{\"c\":3}]}",
+  "expected_output": "{\n  \"b\": 1,\n  \"a\": [\n    1,\n    2,\n    {\n      \"c\": 3\n    }\n  ]\n}"
+}

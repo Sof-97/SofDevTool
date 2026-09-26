@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# The Rust Developer Toolbox gate.
+#
+# Default gate: formatting check, clippy (warnings denied), all tests, and a
+# Debug build of every binary and example.
+# --full additionally performs a Release build of the same targets.
+#
+# The script runs each command directly with `set -e`, so the first failure
+# stops the gate with its own exit status; nothing hides a non-zero result.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+full=0
+for arg in "$@"; do
+  case "$arg" in
+    --full) full=1 ;;
+    *)
+      echo "unknown option: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+echo "== rustfmt (check) =="
+cargo fmt --all --check
+
+echo "== clippy (warnings denied) =="
+cargo clippy --workspace --all-targets -- -D warnings
+
+echo "== tests =="
+SOFDEVTOOL_EXPECT_UNKNOWN_METADATA=1 cargo test --workspace
+
+echo "== macOS packaging and temporary install tests =="
+python3 -m unittest discover -s scripts/rust -p 'test_*.py'
+
+echo "== debug build (bins + examples) =="
+cargo build --workspace --bins --examples
+
+if [ "$full" -eq 1 ]; then
+  echo "== release build (bins + examples) =="
+  cargo build --release --workspace --bins --examples
+
+  echo "== sofui extraction boundary =="
+  bash scripts/rust/verify-sofui-isolation.sh
+fi
+
+echo "gate passed"

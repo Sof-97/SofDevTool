@@ -1,0 +1,30 @@
+[package]
+name = "sofdevtool-core"
+description = "GPUI-independent Utility contracts and domain engines for the Rust Developer Toolbox."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+unicode-segmentation.workspace = true
+digest.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+md-5.workspace = true
+hex.workspace = true
+rand.workspace = true
+uuid.workspace = true
+regex.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+saphyr.workspace = true
+# The event-level parser from the same maintained project as `saphyr`. The
+# high-level `saphyr::Yaml` data model silently collapses duplicate mapping
+# keys and discards tags, which this Utility must reject rather than accept.
+saphyr-parser = "=0.0.3"
+
+[dev-dependencies]
+serde_json.workspace = true
