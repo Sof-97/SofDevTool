@@ -2,10 +2,14 @@
 
 use gpui::prelude::*;
 use gpui::{
-    div, point, px, size, AnyWindowHandle, App, Context, DisplayId, IntoElement, Render,
-    ScrollHandle, Window, WindowBounds, WindowKind, WindowOptions,
+    div, point, px, size, AnyWindowHandle, App, Context, DisplayId, Entity, Focusable, IntoElement,
+    Render, ScrollHandle, Subscription, Window, WindowBounds, WindowKind, WindowOptions,
 };
-use sofui::{mount, view_click, Button, TextField, ThemeTokens};
+use gpui_kit::component::{
+    button::{Button, ButtonVariants as _},
+    input::{Input, InputEvent, InputState},
+    ActiveTheme as _, Root,
+};
 
 use crate::registry::{OpenUtility, UtilityId, UtilityRegistry};
 use crate::workbench::Workbench;
@@ -59,7 +63,7 @@ pub fn show(
         });
         let view = cx.new(|cx| LauncherView::new(window, cx, registry, main_window, workbench));
         let focus_view = view.clone();
-        let root = mount(view, window, cx);
+        let root = cx.new(|cx| Root::new(view, window, cx));
         crate::native_window::configure_launcher_panel(window);
         crate::native_window::show_nonactivating(window);
         // The component Root installs the input registry when it is mounted.
@@ -86,14 +90,14 @@ fn active_display(cx: &App) -> Option<DisplayId> {
 
 pub struct LauncherView {
     registry: UtilityRegistry,
-    search: TextField,
+    search: Entity<InputState>,
     selected: Option<UtilityId>,
     main_window: AnyWindowHandle,
     workbench: gpui::WeakEntity<Workbench>,
     was_active: bool,
     scroll: ScrollHandle,
-    _search_subscription: gpui::Subscription,
-    _activation_subscription: gpui::Subscription,
+    _search_subscription: Subscription,
+    _activation_subscription: Subscription,
 }
 
 impl LauncherView {
@@ -104,13 +108,19 @@ impl LauncherView {
         main_window: AnyWindowHandle,
         workbench: gpui::WeakEntity<Workbench>,
     ) -> Self {
-        let search = TextField::new(window, cx);
+        let search = cx.new(|cx| InputState::new(window, cx));
         let selected = registry.search("").first().copied();
-        let search_subscription = search.on_change_in(window, cx, |this, _window, cx| {
-            this.selected = this.results(cx).first().copied();
-            this.scroll.scroll_to_item(0);
-            cx.notify();
-        });
+        let search_subscription = cx.subscribe_in(
+            &search,
+            window,
+            |this, _entity, event: &InputEvent, _window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.selected = this.results(cx).first().copied();
+                    this.scroll.scroll_to_item(0);
+                    cx.notify();
+                }
+            },
+        );
         // A nonactivating panel receives keys while it is the key window. Losing
         // key status (a click in another window or application) dismisses it,
         // which is the click-away behavior. The callback fires once immediately
@@ -138,11 +148,11 @@ impl LauncherView {
     }
 
     fn results(&self, cx: &App) -> Vec<UtilityId> {
-        self.registry.search(&self.search.text(cx))
+        self.registry.search(&self.search.read(cx).value())
     }
 
     fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.search.focus(window, cx);
+        self.search.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     fn open(&mut self, id: UtilityId, window: &mut Window, cx: &mut Context<Self>) {
@@ -201,7 +211,7 @@ impl LauncherView {
 
 impl Render for LauncherView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
+        let theme = cx.theme().clone();
         let results = self.results(cx);
         let result_count = results.len();
         let mut list = div()
@@ -227,35 +237,26 @@ impl Render for LauncherView {
                     .w_full()
                     .px_1()
                     .py_1()
-                    .rounded_md()
+                    .rounded(theme.radius)
                     .bg(if selected {
-                        tokens.surface_raised()
+                        theme.secondary
                     } else {
-                        tokens.surface()
+                        theme.popover
                     })
                     .child(
                         div().flex_1().min_w_0().child(
-                            Button::with_id(
-                                format!("launcher.utility.{}", id.slug()),
-                                definition.name,
-                            )
-                            .variant(if selected {
-                                sofui::ButtonVariant::Primary
-                            } else {
-                                sofui::ButtonVariant::Secondary
-                            })
-                            .on_click(view_click(
-                                cx,
-                                move |this, window, cx| {
+                            Button::new(format!("launcher.utility.{}", id.slug()))
+                                .label(definition.name)
+                                .when(selected, |button| button.primary())
+                                .on_click(cx.listener(move |this, _event, window, cx| {
                                     this.open(id, window, cx);
-                                },
-                            )),
+                                })),
                         ),
                     )
                     .child(
                         div()
                             .text_xs()
-                            .text_color(tokens.text_muted())
+                            .text_color(theme.muted_foreground)
                             .child(definition.category),
                     ),
             );
@@ -268,7 +269,7 @@ impl Render for LauncherView {
                     .items_center()
                     .justify_center()
                     .text_sm()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child("No Utilities match. Edit the search to try again."),
             );
         }
@@ -283,8 +284,8 @@ impl Render for LauncherView {
             .on_action(cx.listener(Self::open_selection))
             .p_4()
             .gap_3()
-            .bg(tokens.background())
-            .text_color(tokens.text())
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .text_size(px(13.))
             .child(
                 div()
@@ -300,7 +301,7 @@ impl Render for LauncherView {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(tokens.text_muted())
+                            .text_color(theme.muted_foreground)
                             .child(format!("{result_count} results")),
                     ),
             )
@@ -312,20 +313,24 @@ impl Render for LauncherView {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(tokens.text_muted())
+                            .text_color(theme.muted_foreground)
                             .child("SEARCH UTILITIES"),
                     )
-                    .child(self.search.render("launcher.search")),
+                    .child(
+                        Input::new(&self.search)
+                            .accessibility_id("launcher.search")
+                            .w_full(),
+                    ),
             )
-            .child(div().h(px(1.)).bg(tokens.border()))
+            .child(div().h(px(1.)).bg(theme.border))
             .child(list)
             .child(
                 div()
                     .pt_2()
                     .border_t_1()
-                    .border_color(tokens.border())
+                    .border_color(theme.border)
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child("↑ ↓ navigate · Return open · Escape dismiss"),
             )
     }

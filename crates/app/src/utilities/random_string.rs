@@ -6,7 +6,13 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    div, AnyElement, AnyView, App, Context, FocusHandle, IntoElement, Render, Subscription, Window,
+    div, AnyElement, AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window,
+};
+use gpui_kit::component::{
+    button::{Button, ButtonVariants as _},
+    input::{Input, InputEvent, InputState, NumberInput},
+    list::ListState,
+    ActiveTheme as _, Disableable as _,
 };
 use serde::{Deserialize, Serialize};
 use sofdevtool_core::session::{Session, SubmitOutcome};
@@ -15,17 +21,13 @@ use sofdevtool_core::utilities::random_string::{
     RandomStringSnapshot, MAX_COUNT, MAX_LENGTH, MIN_COUNT, MIN_LENGTH,
 };
 use sofdevtool_core::utility::Utility;
-use sofui::{
-    copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    ConfirmationBar, DiagnosticSeverity, NumericStepper, SelectableList, SelectableListFocus,
-    SelectableRow, TextField, ThemeTokens,
-};
 
 use crate::clipboard::Clipboard;
 use crate::history::{
     HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState, RETENTION,
 };
 use crate::preferences::{RandomStringControlsPreferences, RandomStringControlsStartup};
+use crate::ui;
 use crate::workbench::Workbench;
 
 type RandomStringSession = Session<RandomString>;
@@ -175,32 +177,15 @@ pub fn construct(
         .into()
 }
 
-/// One distinct focus handle per simultaneously-rendered button. Reusing a
-/// handle across two visible buttons aborts GPUI when both request focus in a
-/// single frame; per-result Copy buttons get handles from `item_focus`.
-struct ButtonFocus {
-    uppercase: FocusHandle,
-    lowercase: FocusHandle,
-    digits: FocusHandle,
-    symbols: FocusHandle,
-    ambiguous: FocusHandle,
-    generate: FocusHandle,
-    paste: FocusHandle,
-    copy_all: FocusHandle,
-    clear: FocusHandle,
-    history_toggle: FocusHandle,
-    history_restore: FocusHandle,
-    history_confirm: FocusHandle,
-    history_cancel: FocusHandle,
-}
-
 pub struct RandomStringWorkspace {
-    custom: TextField,
+    custom: Entity<InputState>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
     controls: RandomStringControlsSession,
     length: usize,
     count: usize,
+    length_input: Entity<InputState>,
+    count_input: Entity<InputState>,
     uppercase: bool,
     lowercase: bool,
     digits: bool,
@@ -210,13 +195,9 @@ pub struct RandomStringWorkspace {
     session: RandomStringSession,
     copied: Option<String>,
     history_view: HistoryViewState,
-    history_focus: SelectableListFocus,
+    history_list: Entity<ListState<ui::HistoryListDelegate>>,
     history_visible: bool,
     _history_subscription: HistorySubscription,
-    item_focus: Vec<FocusHandle>,
-    focus: ButtonFocus,
-    length_stepper_focus: [FocusHandle; 2],
-    count_stepper_focus: [FocusHandle; 2],
     _subscriptions: Vec<Subscription>,
 }
 
@@ -240,27 +221,90 @@ impl RandomStringWorkspace {
         history: Rc<HistoryRecorder>,
         controls: RandomStringControlsSession,
     ) -> Self {
-        let custom = TextField::new(window, cx);
+        let custom = cx.new(|cx| InputState::new(window, cx));
         // Silent assignment: loading the saved controls never emits a user
         // edit, so it cannot trigger a save, a generation or a History
         // operation. The workspace opens neutral until Generate.
-        custom.assign_text(controls.controls().custom_alphabet.clone(), window, cx);
+        custom.update(cx, |state, cx| {
+            state.set_value(controls.controls().custom_alphabet.clone(), window, cx)
+        });
         let initial = controls.controls().clone();
-        let subscriptions = vec![custom.on_change_in(window, cx, |this, _window, cx| {
-            this.custom_alphabet_changed(cx);
-        })];
+        let length_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(initial.length.to_string())
+                .min(MIN_LENGTH as f64)
+                .max(MAX_LENGTH as f64)
+                .step(1_f64)
+        });
+        let count_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(initial.count.to_string())
+                .min(MIN_COUNT as f64)
+                .max(MAX_COUNT as f64)
+                .step(1_f64)
+        });
+        let subscriptions = vec![
+            cx.subscribe_in(
+                &custom,
+                window,
+                |this, _entity, event: &InputEvent, _window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.custom_alphabet_changed(cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &length_input,
+                window,
+                |this, _entity, event: &InputEvent, _window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.commit_length(cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &count_input,
+                window,
+                |this, _entity, event: &InputEvent, _window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.commit_count(cx);
+                    }
+                },
+            ),
+        ];
         let history_view = HistoryViewState::load(&history, RandomString::ID);
         let weak = cx.weak_entity();
         let history_subscription = history.subscribe(RandomString::ID, move |cx| {
             weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
         });
-        Self {
+        let weak = cx.weak_entity();
+        let history_list = ui::history_state(
+            window,
+            cx,
+            "No retained operations yet.",
+            Rc::new(move |id, _window, cx| {
+                weak.update(cx, |this, cx| {
+                    if this.history_view.select(id) {
+                        ui::history_set_selected(
+                            &this.history_list,
+                            this.history_view.selected.clone(),
+                            cx,
+                        );
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }),
+        );
+        let workspace = Self {
             custom,
             clipboard,
             history,
             controls,
             length: initial.length,
             count: initial.count,
+            length_input,
+            count_input,
             uppercase: initial.uppercase,
             lowercase: initial.lowercase,
             digits: initial.digits,
@@ -270,33 +314,13 @@ impl RandomStringWorkspace {
             session: RandomStringSession::new(),
             copied: None,
             history_view,
-            history_focus: SelectableListFocus::new(),
+            history_list,
             history_visible: true,
             _history_subscription: history_subscription,
-            item_focus: Vec::new(),
-            focus: ButtonFocus {
-                uppercase: cx.focus_handle().tab_stop(true).tab_index(0),
-                lowercase: cx.focus_handle().tab_stop(true).tab_index(0),
-                digits: cx.focus_handle().tab_stop(true).tab_index(0),
-                symbols: cx.focus_handle().tab_stop(true).tab_index(0),
-                ambiguous: cx.focus_handle().tab_stop(true).tab_index(0),
-                generate: cx.focus_handle().tab_stop(true).tab_index(0),
-                paste: cx.focus_handle().tab_stop(true).tab_index(0),
-                copy_all: cx.focus_handle().tab_stop(true).tab_index(0),
-                clear: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_toggle: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_restore: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_confirm: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_cancel: cx.focus_handle().tab_stop(true).tab_index(0),
-            },
-            length_stepper_focus: std::array::from_fn(|_| {
-                cx.focus_handle().tab_stop(true).tab_index(0)
-            }),
-            count_stepper_focus: std::array::from_fn(|_| {
-                cx.focus_handle().tab_stop(true).tab_index(0)
-            }),
             _subscriptions: subscriptions,
-        }
+        };
+        workspace.sync_history(cx);
+        workspace
     }
 
     /// The current configuration, without advancing the generation nonce.
@@ -309,7 +333,7 @@ impl RandomStringWorkspace {
             digits: self.digits,
             symbols: self.symbols,
             exclude_ambiguous: self.exclude_ambiguous,
-            custom_alphabet: self.custom.text(cx),
+            custom_alphabet: self.custom.read(cx).value().to_string(),
             nonce: self.nonce,
         }
     }
@@ -344,13 +368,21 @@ impl RandomStringWorkspace {
             .record(RandomString::ID, RandomString::SNAPSHOT_VERSION, payload);
         self.history_view
             .apply_record(&self.history, RandomString::ID, result);
+        self.sync_history(cx);
         self.history.notify_status(cx);
         cx.notify();
     }
 
     fn reconcile_history(&mut self, cx: &mut Context<Self>) {
         self.history_view.reconcile(&self.history, RandomString::ID);
+        self.sync_history(cx);
         cx.notify();
+    }
+
+    /// Reflects the owning view's History rows and selection into the kit list.
+    fn sync_history(&self, cx: &mut Context<Self>) {
+        ui::history_set_rows(&self.history_list, self.history_items(), cx);
+        ui::history_set_selected(&self.history_list, self.history_view.selected.clone(), cx);
     }
 
     /// The controls as currently shown, read from the workspace state.
@@ -363,7 +395,7 @@ impl RandomStringWorkspace {
             digits: self.digits,
             symbols: self.symbols,
             exclude_ambiguous: self.exclude_ambiguous,
-            custom_alphabet: self.custom.text(cx),
+            custom_alphabet: self.custom.read(cx).value().to_string(),
         }
     }
 
@@ -382,30 +414,47 @@ impl RandomStringWorkspace {
         cx.notify();
     }
 
-    fn set_length(&mut self, delta: isize, cx: &App) {
-        let next = self.length as isize + delta;
-        let next = next.clamp(MIN_LENGTH as isize, MAX_LENGTH as isize) as usize;
+    /// Clamps the typed/number-stepped length back into range. The retained
+    /// number input is reflected during render.
+    fn commit_length(&mut self, cx: &mut Context<Self>) {
+        let raw = self.length_input.read(cx).value().to_string();
+        let Ok(parsed) = raw.trim().parse::<isize>() else {
+            self.copied = None;
+            cx.notify();
+            return;
+        };
+        let next = parsed.clamp(MIN_LENGTH as isize, MAX_LENGTH as isize) as usize;
         if next != self.length {
             self.length = next;
             self.persist_controls(cx);
         }
         self.copied = None;
+        cx.notify();
     }
 
-    fn set_count(&mut self, delta: isize, cx: &App) {
-        let next = self.count as isize + delta;
-        let next = next.clamp(MIN_COUNT as isize, MAX_COUNT as isize) as usize;
+    /// Clamps the typed/number-stepped count back into range. The retained
+    /// number input is reflected during render.
+    fn commit_count(&mut self, cx: &mut Context<Self>) {
+        let raw = self.count_input.read(cx).value().to_string();
+        let Ok(parsed) = raw.trim().parse::<isize>() else {
+            self.copied = None;
+            cx.notify();
+            return;
+        };
+        let next = parsed.clamp(MIN_COUNT as isize, MAX_COUNT as isize) as usize;
         if next != self.count {
             self.count = next;
             self.persist_controls(cx);
         }
         self.copied = None;
+        cx.notify();
     }
 
     fn paste_custom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = None;
-            self.custom.edit_text(text, window, cx);
+            self.custom
+                .update(cx, |state, cx| state.replace_all(text, window, cx));
         }
     }
 
@@ -452,6 +501,27 @@ impl RandomStringWorkspace {
         let differs = !current.is_empty() && current != snapshot.values.as_slice();
         if differs {
             self.history_view.pending_restore = Some(entry);
+            let weak = cx.weak_entity();
+            ui::confirm_dialog(
+                window,
+                cx,
+                "Restore History entry",
+                "Restoring this History entry replaces the current Random String session.",
+                "Restore",
+                "Cancel",
+                {
+                    let weak = weak.clone();
+                    move |window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.confirm_restore(window, cx));
+                    }
+                },
+                {
+                    let weak = weak.clone();
+                    move |_window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.cancel_restore(cx));
+                    }
+                },
+            );
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -472,8 +542,9 @@ impl RandomStringWorkspace {
         self.digits = request.digits;
         self.symbols = request.symbols;
         self.exclude_ambiguous = request.exclude_ambiguous;
-        self.custom
-            .assign_text(request.custom_alphabet.clone(), window, cx);
+        self.custom.update(cx, |state, cx| {
+            state.set_value(request.custom_alphabet.clone(), window, cx)
+        });
         // Never let a later deliberate generation reuse an already-recorded
         // nonce for the same configuration.
         self.nonce = self.nonce.max(request.nonce);
@@ -483,6 +554,7 @@ impl RandomStringWorkspace {
         self.session.restore(snapshot);
         self.history_view.pending_restore = None;
         self.copied = None;
+        self.sync_history(cx);
         cx.notify();
     }
 
@@ -528,13 +600,13 @@ impl RandomStringWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<SelectableRow> {
+    fn history_items(&self) -> Vec<ui::HistoryRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                SelectableRow {
+                ui::HistoryRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
@@ -553,18 +625,13 @@ impl RandomStringWorkspace {
         id: &'static str,
         label: &'static str,
         on: bool,
-        handle: FocusHandle,
         cx: &mut Context<Self>,
         toggle: impl Fn(&mut Self) + 'static,
     ) -> Button {
-        Button::with_id(id, label)
-            .variant(if on {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Secondary
-            })
-            .focus_handle(handle)
-            .on_click(view_click(cx, move |this, _window, cx| {
+        Button::new(id)
+            .label(label)
+            .when(on, |button| button.primary())
+            .on_click(cx.listener(move |this, _event, _window, cx| {
                 toggle(this);
                 this.persist_controls(cx);
                 this.copied = None;
@@ -572,24 +639,30 @@ impl RandomStringWorkspace {
             }))
     }
 
-    fn render_diagnostics(&self) -> impl IntoElement {
+    fn render_diagnostics(&self, cx: &App) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_2().w_full();
         for diagnostic in self.session.evaluation().diagnostics() {
             let severity = match diagnostic.severity {
-                sofdevtool_core::diagnostic::Severity::Error => DiagnosticSeverity::Error,
-                sofdevtool_core::diagnostic::Severity::Warning => DiagnosticSeverity::Warning,
+                sofdevtool_core::diagnostic::Severity::Error => ui::DiagnosticSeverity::Error,
+                sofdevtool_core::diagnostic::Severity::Warning => ui::DiagnosticSeverity::Warning,
             };
             let location = diagnostic.location.map(|l| (l.line, l.column));
-            column = column.child(diagnostic_banner(severity, &diagnostic.message, location));
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                severity,
+                &diagnostic.message,
+                location,
+            ));
         }
         column
     }
 
     fn render_results(&self, cx: &mut Context<Self>) -> AnyElement {
-        let tokens = ThemeTokens::active();
+        let theme = cx.theme().clone();
         let values = self.session.evaluation().values();
         if values.is_empty() {
-            return empty_state("Configure an alphabet, then choose Generate").into_any_element();
+            return ui::empty_state(cx, "Configure an alphabet, then choose Generate")
+                .into_any_element();
         }
         let mut list = div()
             .id("random-results")
@@ -601,13 +674,6 @@ impl RandomStringWorkspace {
             .gap_1()
             .overflow_y_scroll();
         for (index, value) in values.iter().enumerate() {
-            let mut copy = Button::with_id(
-                format!("random-string.copy.{index}"),
-                format!("Copy {}", index + 1),
-            );
-            if let Some(handle) = self.item_focus.get(index).cloned() {
-                copy = copy.focus_handle(handle);
-            }
             let row = div()
                 .flex()
                 .flex_row()
@@ -618,13 +684,13 @@ impl RandomStringWorkspace {
                 .py_2()
                 .rounded_md()
                 .border_1()
-                .border_color(tokens.border())
-                .bg(tokens.surface())
+                .border_color(theme.border)
+                .bg(theme.popover)
                 .child(
                     div()
                         .w_6()
                         .text_xs()
-                        .text_color(tokens.text_muted())
+                        .text_color(theme.muted_foreground)
                         .child(format!("{}", index + 1)),
                 )
                 .child(
@@ -632,18 +698,23 @@ impl RandomStringWorkspace {
                         .flex_1()
                         .min_w_0()
                         .text_sm()
-                        .text_color(tokens.text())
+                        .text_color(theme.foreground)
                         .child(value.clone()),
                 )
-                .child(copy.on_click(view_click(cx, move |this, _window, cx| {
-                    this.copy_item(index, cx);
-                })));
+                .child(
+                    Button::new(format!("random-string.copy.{index}"))
+                        .label(format!("Copy {}", index + 1))
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.copy_item(index, cx);
+                        })),
+                );
             list = list.child(row);
         }
         list.into_any_element()
     }
 
     fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
         let selected = self.history_view.selected.clone();
         let restore_enabled = selected
             .as_ref()
@@ -655,33 +726,10 @@ impl RandomStringWorkspace {
             })
             .map(|entry| decode_snapshot(entry).is_some())
             .unwrap_or(false);
-        let actions = div().flex().flex_row().gap_2().child(
-            Button::with_id("random-string.history.restore-selected", "Restore selected")
-                .disabled(!restore_enabled)
-                .focus_handle(self.focus.history_restore.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.restore_selected(window, cx);
-                })),
-        );
-        let weak = cx.weak_entity();
-        let panel = SelectableList::new(
-            "random-string.history",
-            "History",
-            self.history_items(),
-            selected,
-            "No retained operations yet.",
-            self.history_focus.clone(),
-        )
-        .summary(format!("{}/{}", self.history_view.entries.len(), RETENTION))
-        .on_select(Rc::new(move |id, _window, cx| {
-            weak.update(cx, |this, cx| {
-                if this.history_view.select(id) {
-                    cx.notify();
-                }
-            })
-            .ok();
-        }))
-        .actions(actions);
+        let restore = Button::new("random-string.history.restore-selected")
+            .label("Restore selected")
+            .disabled(!restore_enabled)
+            .on_click(cx.listener(|this, _event, window, cx| this.restore_selected(window, cx)));
         div()
             .flex()
             .flex_col()
@@ -690,38 +738,35 @@ impl RandomStringWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::active().border())
-            .child(panel)
-    }
-
-    fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        ConfirmationBar::new(
-            "random-string.restore-confirmation",
-            "Restoring this entry replaces the current generated results.",
-            "Restore",
-            "Cancel",
-        )
-        .focus_handles(
-            self.focus.history_confirm.clone(),
-            self.focus.history_cancel.clone(),
-        )
-        .on_confirm(view_click(cx, |this, window, cx| {
-            this.confirm_restore(window, cx);
-        }))
-        .on_cancel(view_click(cx, |this, _window, cx| {
-            this.cancel_restore(cx);
-        }))
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .child(ui::history_panel(
+                cx,
+                &self.history_list,
+                "History",
+                format!("{}/{}", self.history_view.entries.len(), RETENTION),
+                restore,
+            ))
     }
 }
 
 impl Render for RandomStringWorkspace {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
-        let needed = self.session.evaluation().values().len();
-        while self.item_focus.len() < needed {
-            self.item_focus
-                .push(cx.focus_handle().tab_stop(true).tab_index(0));
-        }
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        // Keep the retained number inputs showing the clamped controls.
+        // Programmatic `set_value` emits no change, so this cannot loop.
+        let length_text = self.length.to_string();
+        self.length_input.update(cx, |state, cx| {
+            if state.value().as_ref() != length_text.as_str() {
+                state.set_value(length_text.clone(), window, cx);
+            }
+        });
+        let count_text = self.count.to_string();
+        self.count_input.update(cx, |state, cx| {
+            if state.value().as_ref() != count_text.as_str() {
+                state.set_value(count_text.clone(), window, cx);
+            }
+        });
 
         let preview = self.configuration(cx);
         let characters = build_alphabet(&preview);
@@ -750,7 +795,7 @@ impl Render for RandomStringWorkspace {
             .child(
                 div()
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child("System randomness for test data · local and offline"),
             );
 
@@ -763,7 +808,6 @@ impl Render for RandomStringWorkspace {
                 "random-string.class.uppercase",
                 "A-Z",
                 self.uppercase,
-                self.focus.uppercase.clone(),
                 cx,
                 |this| this.uppercase = !this.uppercase,
             ))
@@ -771,7 +815,6 @@ impl Render for RandomStringWorkspace {
                 "random-string.class.lowercase",
                 "a-z",
                 self.lowercase,
-                self.focus.lowercase.clone(),
                 cx,
                 |this| this.lowercase = !this.lowercase,
             ))
@@ -779,7 +822,6 @@ impl Render for RandomStringWorkspace {
                 "random-string.class.digits",
                 "0-9",
                 self.digits,
-                self.focus.digits.clone(),
                 cx,
                 |this| this.digits = !this.digits,
             ))
@@ -787,7 +829,6 @@ impl Render for RandomStringWorkspace {
                 "random-string.class.symbols",
                 "Symbols",
                 self.symbols,
-                self.focus.symbols.clone(),
                 cx,
                 |this| this.symbols = !this.symbols,
             ))
@@ -795,62 +836,43 @@ impl Render for RandomStringWorkspace {
                 "random-string.class.exclude-ambiguous",
                 "Exclude ambiguous",
                 self.exclude_ambiguous,
-                self.focus.ambiguous.clone(),
                 cx,
                 |this| this.exclude_ambiguous = !this.exclude_ambiguous,
             ));
 
-        let length_stepper = NumericStepper::new(
-            "random-string.length",
-            "Length",
-            Some(self.length as i32),
-            MIN_LENGTH as i32,
-            MAX_LENGTH as i32,
-            1,
-        )
-        .focus_handles(
-            self.length_stepper_focus[0].clone(),
-            self.length_stepper_focus[1].clone(),
-        )
-        .on_step({
-            let weak = cx.weak_entity();
-            move |delta, _window, cx| {
-                weak.update(cx, |this, cx| {
-                    this.set_length(delta as isize, cx);
-                    cx.notify();
-                })
-                .ok();
-            }
-        });
-        let count_stepper = NumericStepper::new(
-            "random-string.count",
-            "Count",
-            Some(self.count as i32),
-            MIN_COUNT as i32,
-            MAX_COUNT as i32,
-            1,
-        )
-        .focus_handles(
-            self.count_stepper_focus[0].clone(),
-            self.count_stepper_focus[1].clone(),
-        )
-        .on_step({
-            let weak = cx.weak_entity();
-            move |delta, _window, cx| {
-                weak.update(cx, |this, cx| {
-                    this.set_count(delta as isize, cx);
-                    cx.notify();
-                })
-                .ok();
-            }
-        });
         let numbers = div()
             .flex()
             .flex_row()
             .items_center()
             .gap_3()
-            .child(length_stepper)
-            .child(count_stepper);
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child("Length"),
+                    )
+                    .child(div().w_32().child(NumberInput::new(&self.length_input))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child("Count"),
+                    )
+                    .child(div().w_32().child(NumberInput::new(&self.count_input))),
+            );
 
         let custom = div()
             .flex()
@@ -861,10 +883,14 @@ impl Render for RandomStringWorkspace {
             .child(
                 div()
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child("Custom characters"),
             )
-            .child(self.custom.render("random.custom"));
+            .child(
+                Input::new(&self.custom)
+                    .accessibility_id("random.custom")
+                    .w_full(),
+            );
 
         let actions = div()
             .flex()
@@ -872,54 +898,53 @@ impl Render for RandomStringWorkspace {
             .items_center()
             .gap_2()
             .child(
-                Button::primary_with_id("random-string.generate", "Generate")
-                    .focus_handle(self.focus.generate.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
+                Button::new("random-string.generate")
+                    .label("Generate")
+                    .primary()
+                    .on_click(cx.listener(|this, _event, _window, cx| {
                         this.generate(cx);
                     })),
             )
             .child(
-                Button::with_id("random-string.paste-custom", "Paste custom")
-                    .focus_handle(self.focus.paste.clone())
-                    .on_click(view_click(cx, |this, window, cx| {
+                Button::new("random-string.paste-custom")
+                    .label("Paste custom")
+                    .on_click(cx.listener(|this, _event, window, cx| {
                         this.paste_custom(window, cx);
                     })),
             )
             .child(
-                Button::with_id("random-string.copy-all", "Copy All")
+                Button::new("random-string.copy-all")
+                    .label("Copy All")
                     .disabled(!has_results)
-                    .focus_handle(self.focus.copy_all.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
+                    .on_click(cx.listener(|this, _event, _window, cx| {
                         this.copy_all(cx);
                     })),
             )
             .child(
-                Button::with_id("random-string.clear-results", "Clear results")
+                Button::new("random-string.clear-results")
+                    .label("Clear results")
                     .disabled(!has_results)
-                    .focus_handle(self.focus.clear.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
+                    .on_click(cx.listener(|this, _event, _window, cx| {
                         this.clear_results(cx);
                     })),
             )
             .child(div().flex_1())
-            .child(copy_feedback(
+            .child(ui::copy_feedback(
+                cx,
                 self.copied.is_some(),
                 self.copied.as_deref().unwrap_or(""),
             ))
             .child(
-                Button::with_id(
-                    "random-string.history.toggle",
-                    if self.history_visible {
+                Button::new("random-string.history.toggle")
+                    .label(if self.history_visible {
                         "History: on"
                     } else {
                         "History: off"
-                    },
-                )
-                .focus_handle(self.focus.history_toggle.clone())
-                .on_click(view_click(cx, |this, _window, cx| {
-                    this.history_visible = !this.history_visible;
-                    cx.notify();
-                })),
+                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.history_visible = !this.history_visible;
+                        cx.notify();
+                    })),
             );
 
         let mut column = div()
@@ -927,8 +952,8 @@ impl Render for RandomStringWorkspace {
             .flex_col()
             .flex_1()
             .min_h_0()
-            .bg(tokens.background())
-            .text_color(tokens.text())
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .p_3()
             .gap_3()
             .child(header)
@@ -938,29 +963,28 @@ impl Render for RandomStringWorkspace {
             .child(
                 div()
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child(summary),
             )
             .child(actions);
 
-        if self.history_view.pending_restore.is_some() {
-            column = column.child(self.render_restore_confirmation(cx));
-        }
         if let Some(error) = self.history_view.error.clone() {
-            column = column.child(diagnostic_banner(
-                DiagnosticSeverity::Warning,
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                ui::DiagnosticSeverity::Warning,
                 &format!("Random String History: {error}"),
                 None,
             ));
         }
         if let Some(status) = self.controls.status().map(str::to_owned) {
-            column = column.child(diagnostic_banner(
-                DiagnosticSeverity::Warning,
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                ui::DiagnosticSeverity::Warning,
                 &status,
                 None,
             ));
         }
-        column = column.child(self.render_diagnostics());
+        column = column.child(self.render_diagnostics(cx));
 
         let caption = format!(
             "{} result{}",
@@ -971,13 +995,14 @@ impl Render for RandomStringWorkspace {
                 "s"
             }
         );
+        let results_body = self.render_results(cx);
         let mut workspace = div()
             .flex()
             .flex_row()
             .gap_4()
             .flex_1()
             .min_h_0()
-            .child(panel("Generated Results", caption, self.render_results(cx)));
+            .child(ui::panel(cx, "Generated Results", caption, results_body));
         if self.history_visible {
             workspace = workspace.child(self.render_history(cx));
         }
@@ -1020,6 +1045,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use sofdevtool_core::utilities::random_string::RandomStringEvaluation;
+
+    use gpui::{Focusable as _, VisualTestContext};
+    use gpui_kit::component::Root;
 
     use super::*;
     use crate::history::{HistoryPolicy, HistoryRecorder, HistoryStore, SystemClock};
@@ -1365,7 +1393,7 @@ mod tests {
     fn workspace_clear_preserves_generated_batch_and_restore_does_not_record(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofui::init);
+        cx.update(gpui_kit::init);
         let root = temporary_root("history-workspace");
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.join("History")),
@@ -1373,15 +1401,23 @@ mod tests {
         ));
         let controls = reopen(&root);
         let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard::default());
-        let (workspace, cx) = cx.add_window_view(|window, cx| {
-            RandomStringWorkspace::new_with_controls(
-                window,
-                cx,
-                clipboard,
-                history.clone(),
-                controls,
-            )
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| {
+                RandomStringWorkspace::new_with_controls(
+                    window,
+                    cx,
+                    clipboard,
+                    history.clone(),
+                    controls,
+                )
+            });
+            captured = Some(view.clone());
+            Root::new(view, window, cx)
         });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
         let generated = cx.update(|_, cx| {
             workspace.update(cx, |view, cx| {
                 view.generate(cx);
@@ -1439,7 +1475,7 @@ mod tests {
     fn repeated_generation_and_copy_actions_preserve_exact_batch_values(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofui::init);
+        cx.update(gpui_kit::init);
         let root = temporary_root("copy-actions");
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.join("History")),
@@ -1448,50 +1484,53 @@ mod tests {
         let clipboard = Rc::new(TestClipboard::default());
         let app_clipboard: Rc<dyn Clipboard> = clipboard.clone();
         let controls = reopen(&root);
-        let (workspace, cx) = cx.add_window_view(|window, cx| {
-            RandomStringWorkspace::new_with_controls(
-                window,
-                cx,
-                app_clipboard,
-                history.clone(),
-                controls,
-            )
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| {
+                RandomStringWorkspace::new_with_controls(
+                    window,
+                    cx,
+                    app_clipboard,
+                    history.clone(),
+                    controls,
+                )
+            });
+            captured = Some(view.clone());
+            Root::new(view, window, cx)
         });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
 
+        // The kit number input owns stepping: ArrowUp reaches the workspace
+        // through the same Change path as the stepper button.
         cx.update(|window, cx| {
             window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).count_stepper_focus[1].clone();
+            let focus = workspace.read(cx).count_input.read(cx).focus_handle(cx);
             window.focus(&focus, cx);
         });
-        cx.simulate_keystrokes("enter");
-        assert_eq!(workspace.read_with(cx, |view, _| view.count), 2);
+        cx.simulate_keystrokes("up");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(workspace.read_with(&cx, |view, _| view.count), 2);
 
-        for _ in 0..2 {
-            cx.update(|window, cx| {
-                window.draw(cx).clear(cx);
-                let focus = workspace.read(cx).focus.generate.clone();
-                window.focus(&focus, cx);
+        cx.update(|_window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.generate(cx);
+                view.generate(cx);
             });
-            cx.simulate_keystrokes("enter");
-        }
-        let values = workspace.read_with(cx, |view, _| view.session.evaluation().values().to_vec());
+        });
+        let values =
+            workspace.read_with(&cx, |view, _| view.session.evaluation().values().to_vec());
         assert_eq!(values.len(), 2);
         assert_eq!(history.load(RandomString::ID).unwrap().len(), 2);
 
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).item_focus[1].clone();
-            window.focus(&focus, cx);
+        cx.update(|_window, cx| {
+            workspace.update(cx, |view, cx| view.copy_item(1, cx));
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(clipboard.0.borrow().as_deref(), Some(values[1].as_str()));
 
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).focus.copy_all.clone();
-            window.focus(&focus, cx);
+        cx.update(|_window, cx| {
+            workspace.update(cx, |view, cx| view.copy_all(cx));
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(
             clipboard.0.borrow().as_deref(),
             Some(values.join("\n").as_str())

@@ -13,8 +13,13 @@ use gpui::{
     div, px, AnyView, AnyWindowHandle, App, Context, Entity, FocusHandle, IntoElement, Render,
     ScrollHandle, Subscription, Window,
 };
-use sofui::{apply_theme, view_click, Button, ButtonVariant, TextField, ThemeTokens, ThemeVariant};
+use gpui_kit::component::{
+    button::{Button, ButtonVariants as _},
+    input::{Input, InputEvent, InputState},
+    ActiveTheme as _, Root,
+};
 
+use crate::appearance::{self, AppearanceMode};
 use crate::clipboard::Clipboard;
 use crate::history::HistoryRecorder;
 use crate::json_workspace::JsonWorkspace;
@@ -24,6 +29,7 @@ use crate::preferences::{
 use crate::registry::{OpenUtility, UtilityDefinition, UtilityId, UtilityRegistry};
 use crate::shortcut::{Shortcut, ShortcutController};
 use crate::text_diff::TextDiffWorkspace;
+use crate::ui;
 
 #[cfg(target_os = "macos")]
 use crate::shortcut::macos::CarbonShortcutRegistrar;
@@ -52,16 +58,11 @@ pub struct Workbench {
     text_diff: Entity<TextDiffWorkspace>,
     others: HashMap<UtilityId, AnyView>,
     workspace_preferences: Option<WorkspacePreferences>,
-    theme: ThemeVariant,
+    appearance: AppearanceMode,
     favorites: Vec<String>,
     recents: Vec<String>,
     scope: CatalogScope,
-    search: TextField,
-    launcher_focus: FocusHandle,
-    scope_focus: [FocusHandle; 3],
-    theme_focus: [FocusHandle; 2],
-    settings_focus: FocusHandle,
-    favorite_focus: FocusHandle,
+    search: Entity<InputState>,
     catalog_focus: Vec<FocusHandle>,
     catalog_scroll: ScrollHandle,
     launcher: Option<AnyWindowHandle>,
@@ -73,6 +74,7 @@ pub struct Workbench {
     shortcut_error: Option<String>,
     shortcut_preferences: Option<ShortcutPreferences>,
     _search_subscription: Subscription,
+    _appearance_subscription: Subscription,
 }
 
 impl Workbench {
@@ -96,23 +98,25 @@ impl Workbench {
             .as_ref()
             .map(WorkspacePreferences::load)
             .unwrap_or_default();
-        let theme = if data.theme == "catppuccin" {
-            ThemeVariant::CatppuccinFrappe
-        } else {
-            ThemeVariant::Graphite
-        };
-        apply_theme(theme, cx);
+        let appearance = AppearanceMode::from_stored(&data.theme);
+        appearance::apply(appearance, Some(window), cx);
 
-        let search = TextField::new(window, cx);
-        let search_subscription = search.on_change_in(window, cx, |_this, _window, cx| {
-            cx.notify();
+        let search = cx.new(|cx| InputState::new(window, cx));
+        let search_subscription = cx.subscribe_in(
+            &search,
+            window,
+            |_this, _entity, event: &InputEvent, _window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            },
+        );
+        let appearance_subscription = cx.observe_window_appearance(window, |this, window, cx| {
+            if this.appearance == AppearanceMode::System {
+                appearance::apply_system(window, cx);
+            }
         });
         let registry = UtilityRegistry::initial();
-        let catalog_focus = registry
-            .definitions()
-            .iter()
-            .map(|_| cx.focus_handle().tab_stop(true).tab_index(0))
-            .collect();
 
         let shortcut_requested = Arc::new(AtomicBool::new(false));
         #[cfg(target_os = "macos")]
@@ -134,17 +138,12 @@ impl Workbench {
             text_diff,
             others: HashMap::new(),
             workspace_preferences,
-            theme,
+            appearance,
             favorites: data.favorites,
             recents: data.recents,
             scope: CatalogScope::Library,
             search,
-            launcher_focus: cx.focus_handle().tab_stop(true).tab_index(0),
-            scope_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
-            theme_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
-            settings_focus: cx.focus_handle().tab_stop(true).tab_index(0),
-            favorite_focus: cx.focus_handle().tab_stop(true).tab_index(0),
-            catalog_focus,
+            catalog_focus: Vec::new(),
             catalog_scroll: ScrollHandle::new(),
             launcher: None,
             main_window: window.window_handle(),
@@ -155,6 +154,7 @@ impl Workbench {
             shortcut_error,
             shortcut_preferences: None,
             _search_subscription: search_subscription,
+            _appearance_subscription: appearance_subscription,
         };
         workbench.observe_global_shortcut(cx);
         workbench
@@ -192,9 +192,14 @@ impl Workbench {
         self.favorites.iter().any(|slug| slug == id.slug())
     }
 
-    fn set_theme(&mut self, theme: ThemeVariant, cx: &mut Context<Self>) {
-        self.theme = theme;
-        apply_theme(self.theme, cx);
+    fn set_appearance(
+        &mut self,
+        mode: AppearanceMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.appearance = mode;
+        appearance::apply(mode, Some(window), cx);
         self.persist_workspace();
         cx.notify();
     }
@@ -205,12 +210,12 @@ impl Workbench {
     }
 
     fn move_catalog_focus(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let query = self.search.text(cx);
+        let query = self.search.read(cx).value().to_string();
         let mut definitions = self.filtered_definitions(&query);
         if self.scope == CatalogScope::Library {
             definitions.sort_by_key(|definition| catalog_category_rank(definition.category));
         }
-        if definitions.is_empty() {
+        if definitions.is_empty() || self.catalog_focus.len() != self.registry.definitions().len() {
             return;
         }
         let focused = window.focused(cx);
@@ -261,10 +266,7 @@ impl Workbench {
     fn persist_workspace(&self) {
         if let Some(preferences) = &self.workspace_preferences {
             let _ = preferences.save(&WorkspacePreferencesData {
-                theme: match self.theme {
-                    ThemeVariant::Graphite => "graphite".to_owned(),
-                    ThemeVariant::CatppuccinFrappe => "catppuccin".to_owned(),
-                },
+                theme: self.appearance.stored_value().to_owned(),
                 favorites: self.favorites.clone(),
                 recents: self.recents.clone(),
             });
@@ -527,10 +529,10 @@ fn catalog_glyph(id: UtilityId) -> &'static str {
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
+        let theme = cx.theme().clone();
         let selected = self.selected;
         let scope = self.scope;
-        let query = self.search.text(cx);
+        let query = self.search.read(cx).value().to_string();
         let mut definitions = self.filtered_definitions(&query);
         if scope == CatalogScope::Library {
             // Preserve source metadata and within-category order while giving
@@ -538,16 +540,26 @@ impl Render for Workbench {
             definitions.sort_by_key(|definition| catalog_category_rank(definition.category));
         }
 
+        // Kit buttons own their focus handle, keyed by element id. Rebuild the
+        // catalog handles with the window and view in scope so arrow-key
+        // navigation can address the same handles.
+        if self.catalog_focus.len() != self.registry.definitions().len() {
+            self.catalog_focus = self
+                .registry
+                .definitions()
+                .iter()
+                .map(|definition| {
+                    ui::button_focus(window, format!("catalog-{}", definition.id.slug()), cx)
+                })
+                .collect();
+        }
+
         let scope_button =
             |label: &'static str, target: CatalogScope, index: usize, cx: &mut Context<Self>| {
-                Button::with_id(format!("catalog.scope.{index}"), label)
-                    .variant(if scope == target {
-                        ButtonVariant::Primary
-                    } else {
-                        ButtonVariant::Secondary
-                    })
-                    .focus_handle(self.scope_focus[index].clone())
-                    .on_click(view_click(cx, move |this, _window, cx| {
+                Button::new(format!("catalog.scope.{index}"))
+                    .label(label)
+                    .when(scope == target, |button| button.primary())
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
                         this.set_scope(target, cx);
                     }))
             };
@@ -575,12 +587,11 @@ impl Render for Workbench {
                         .px_2()
                         .text_xs()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(tokens.text_muted())
+                        .text_color(theme.muted_foreground)
                         .child(catalog_category_heading(current_category).to_owned()),
                 );
             }
             let id = definition.id;
-            let registry_index = self.registry_index(id);
             let favorite = self.is_favorite(id);
             catalog = catalog.child(
                 div()
@@ -593,51 +604,46 @@ impl Render for Workbench {
                         div()
                             .w_6()
                             .text_xs()
-                            .text_color(tokens.text_muted())
+                            .text_color(theme.muted_foreground)
                             .child(catalog_glyph(id)),
                     )
                     .child(
                         div().flex_1().min_w_0().child(
-                            Button::with_id(format!("catalog-{}", id.slug()), definition.name)
-                                .variant(if id == selected {
-                                    ButtonVariant::Primary
-                                } else {
-                                    ButtonVariant::Secondary
-                                })
-                                .focus_handle(self.catalog_focus[registry_index].clone())
-                                .on_click(view_click(cx, move |this, _window, cx| {
+                            Button::new(format!("catalog-{}", id.slug()))
+                                .label(definition.name)
+                                .when(id == selected, |button| button.primary())
+                                .on_click(cx.listener(move |this, _event, _window, cx| {
                                     this.open(OpenUtility(id), cx);
                                 })),
                         ),
                     )
                     .child(
-                        Button::with_id(
-                            format!("favorite-{}", id.slug()),
-                            if favorite { "★" } else { "☆" },
-                        )
-                        .aria_label(format!(
-                            "{} favorite {}",
-                            if favorite { "Remove" } else { "Add" },
-                            definition.name
-                        ))
-                        .on_click(view_click(
-                            cx,
-                            move |this, _window, cx| {
+                        Button::new(format!("favorite-{}", id.slug()))
+                            .label(if favorite { "★" } else { "☆" })
+                            .accessibility_label(format!(
+                                "{} favorite {}",
+                                if favorite { "Remove" } else { "Add" },
+                                definition.name
+                            ))
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
                                 this.toggle_favorite(id);
                                 cx.notify();
-                            },
-                        )),
+                            })),
                     ),
             );
         }
         if definitions.is_empty() {
-            catalog = catalog.child(div().p_3().text_xs().text_color(tokens.text_muted()).child(
-                match scope {
-                    CatalogScope::Recent => "No recently opened Utilities yet.",
-                    CatalogScope::Favorites => "No favorites yet.",
-                    CatalogScope::Library => "No Utilities match the search.",
-                },
-            ));
+            catalog = catalog.child(
+                div()
+                    .p_3()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(match scope {
+                        CatalogScope::Recent => "No recently opened Utilities yet.",
+                        CatalogScope::Favorites => "No favorites yet.",
+                        CatalogScope::Library => "No Utilities match the search.",
+                    }),
+            );
         }
 
         let sidebar = div()
@@ -648,9 +654,9 @@ impl Render for Workbench {
             .min_h_0()
             .p_3()
             .gap_3()
-            .bg(tokens.surface())
+            .bg(theme.popover)
             .border_r_1()
-            .border_color(tokens.border())
+            .border_color(theme.border)
             .child(
                 div()
                     .flex()
@@ -668,19 +674,23 @@ impl Render for Workbench {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(tokens.text_muted())
+                            .text_color(theme.muted_foreground)
                             .child("SEARCH UTILITIES"),
                     )
-                    .child(self.search.render("catalog.search")),
+                    .child(
+                        Input::new(&self.search)
+                            .accessibility_id("catalog.search")
+                            .w_full(),
+                    ),
             )
             .child(catalog)
             .child(
                 div()
                     .pt_2()
                     .border_t_1()
-                    .border_color(tokens.border())
+                    .border_color(theme.border)
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child(format!(
                         "{} of {} Utilities",
                         definitions.len(),
@@ -693,7 +703,7 @@ impl Render for Workbench {
             .definition(selected)
             .expect("the selected Utility is registered");
         let view = self.workspace_view(selected, window, cx);
-        let theme = self.theme;
+        let selected_appearance = self.appearance;
         let topbar = div()
             .flex()
             .items_center()
@@ -703,7 +713,7 @@ impl Render for Workbench {
             .flex_shrink_0()
             .px_4()
             .border_b_1()
-            .border_color(tokens.border())
+            .border_color(theme.border)
             .child(
                 div()
                     .flex()
@@ -718,7 +728,7 @@ impl Render for Workbench {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(tokens.text_muted())
+                            .text_color(theme.muted_foreground)
                             .child("/ Workbench"),
                     ),
             )
@@ -732,53 +742,59 @@ impl Render for Workbench {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(div().size_2().rounded_full().bg(tokens.accent()))
+                            .child(div().size_2().rounded_full().bg(theme.primary))
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(tokens.text_muted())
+                                    .text_color(theme.muted_foreground)
                                     .child("LOCAL · OFFLINE"),
                             ),
                     )
                     .child(
-                        Button::with_id(
-                            "workbench.launcher",
-                            format!("Launcher · {}", self.current_shortcut().display_name),
-                        )
-                        .focus_handle(self.launcher_focus.clone())
-                        .on_click(view_click(cx, |this, window, cx| {
-                            this.show_launcher(window, cx);
-                        })),
+                        Button::new("workbench.launcher")
+                            .label(format!(
+                                "Launcher · {}",
+                                self.current_shortcut().display_name
+                            ))
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.show_launcher(window, cx);
+                            })),
                     )
                     .child(
-                        Button::with_id("workbench.settings", "Settings")
-                            .focus_handle(self.settings_focus.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
+                        Button::new("workbench.settings")
+                            .label("Settings")
+                            .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.show_settings(cx);
                             })),
                     )
                     .child(
-                        Button::with_id("workbench.theme.graphite", "Graphite")
-                            .variant(if theme == ThemeVariant::Graphite {
-                                ButtonVariant::Primary
-                            } else {
-                                ButtonVariant::Secondary
+                        Button::new("workbench.appearance.system")
+                            .label(AppearanceMode::System.label())
+                            .when(selected_appearance == AppearanceMode::System, |button| {
+                                button.primary()
                             })
-                            .focus_handle(self.theme_focus[0].clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.set_theme(ThemeVariant::Graphite, cx);
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.set_appearance(AppearanceMode::System, window, cx);
                             })),
                     )
                     .child(
-                        Button::with_id("workbench.theme.frappe", "Frappé")
-                            .variant(if theme == ThemeVariant::CatppuccinFrappe {
-                                ButtonVariant::Primary
-                            } else {
-                                ButtonVariant::Secondary
+                        Button::new("workbench.appearance.light")
+                            .label(AppearanceMode::Light.label())
+                            .when(selected_appearance == AppearanceMode::Light, |button| {
+                                button.primary()
                             })
-                            .focus_handle(self.theme_focus[1].clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                this.set_theme(ThemeVariant::CatppuccinFrappe, cx);
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.set_appearance(AppearanceMode::Light, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("workbench.appearance.dark")
+                            .label(AppearanceMode::Dark.label())
+                            .when(selected_appearance == AppearanceMode::Dark, |button| {
+                                button.primary()
+                            })
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.set_appearance(AppearanceMode::Dark, window, cx);
                             })),
                     ),
             );
@@ -802,25 +818,22 @@ impl Render for Workbench {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(tokens.text_muted())
+                            .text_color(theme.muted_foreground)
                             .child(definition.summary),
                     ),
             )
             .child(
-                Button::with_id(
-                    "toggle-favorite",
-                    if self.is_favorite(selected) {
+                Button::new("toggle-favorite")
+                    .label(if self.is_favorite(selected) {
                         "★ Saved"
                     } else {
                         "☆ Save"
-                    },
-                )
-                .focus_handle(self.favorite_focus.clone())
-                .on_click(view_click(cx, |this, _window, cx| {
-                    let selected = this.selected;
-                    this.toggle_favorite(selected);
-                    cx.notify();
-                })),
+                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        let selected = this.selected;
+                        this.toggle_favorite(selected);
+                        cx.notify();
+                    })),
             );
         let workspace = div()
             .flex()
@@ -831,7 +844,7 @@ impl Render for Workbench {
             .p_4()
             .gap_3()
             .child(heading)
-            .child(div().h(px(1.)).bg(tokens.border()))
+            .child(div().h(px(1.)).bg(theme.border))
             .child(div().flex().flex_1().min_h_0().min_w_0().child(view));
         let footer = div()
             .flex()
@@ -842,9 +855,9 @@ impl Render for Workbench {
             .flex_shrink_0()
             .px_4()
             .border_t_1()
-            .border_color(tokens.border())
+            .border_color(theme.border)
             .text_xs()
-            .text_color(tokens.text_muted())
+            .text_color(theme.muted_foreground)
             .child(format!(
                 "{} · History stays with this workspace",
                 definition.category
@@ -863,9 +876,10 @@ impl Render for Workbench {
         div()
             .flex()
             .flex_col()
+            .relative()
             .size_full()
-            .bg(tokens.background())
-            .text_color(tokens.text())
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .text_size(px(13.))
             .child(topbar)
             .child(
@@ -882,10 +896,14 @@ impl Render for Workbench {
                         .px_4()
                         .py_2()
                         .text_xs()
-                        .text_color(tokens.danger())
+                        .text_color(theme.danger)
                         .child(format!("Launcher: {error}")),
                 )
             })
             .child(footer)
+            // GPUI Kit renders modal dialogs in a separate layer that the host
+            // view must include; `Root::render` does not mount it. Utility
+            // restore confirmations open here.
+            .children(Root::render_dialog_layer(window, cx))
     }
 }

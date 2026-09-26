@@ -3,6 +3,7 @@
 //! The application owns Registry, workspaces, History policy, preferences,
 //! platform composition and lifecycle.
 
+pub mod appearance;
 pub mod clipboard;
 pub mod history;
 pub mod identity;
@@ -14,5 +15,6 @@ pub mod registry;
 pub mod settings;
 pub mod shortcut;
 pub mod text_diff;
+pub mod ui;
 pub mod utilities;
 pub mod workbench;

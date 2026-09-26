@@ -38,4 +38,8 @@ Primary: existing application interactions from input/generation through results
 
 ## Current frontier
 
-01 is the only unblocked ticket. No ticket has been claimed or resolved. Work the dependency frontier when implementation is requested; final completion depends on integration and native acceptance.
+01–09 are implemented in the working tree; the complete integrated tree passes
+`make verify-full` on macOS 26.2 arm64 (see the
+[native acceptance record](issues/10-native-acceptance-record.md)). 10 remains
+open: native acceptance on macOS 14/15 has **not** been performed, and the
+whole-grapheme deletion finding is awaiting an owner decision.

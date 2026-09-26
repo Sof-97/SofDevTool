@@ -13,34 +13,27 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, Context, FocusHandle, IntoElement, Render, Subscription, Task, Window};
+use gpui::{div, Context, Entity, IntoElement, Render, Subscription, Task, Window};
+use gpui_kit::component::{
+    button::Button,
+    input::{InputEvent, TextareaState},
+    list::ListState,
+    tab::{Tab, TabBar},
+    ActiveTheme as _, Disableable as _,
+};
 use sofdevtool_core::utilities::text_diff::{
     TextDiff, TextDiffMode, TextDiffRequest, TextDiffSnapshot,
 };
 use sofdevtool_core::utility::Utility;
-use sofui::{
-    copy_feedback, diagnostic_banner, panel, view_click, Button, ConfirmationBar,
-    DiagnosticSeverity, SegmentedControl, SegmentedControlFocus, SegmentedOption, SelectableList,
-    SelectableListFocus, SelectableRow, TextEditor, ThemeTokens,
-};
 
+use crate::appearance;
 use crate::clipboard::Clipboard;
 use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::ui;
 use renderer::{RendererStatus, TextDiffRenderer, WebDiffSurface};
 
 pub const TEXT_DIFF_UTILITY_ID: &str = "text-diff";
 const HISTORY_SETTLE_DELAY: Duration = Duration::from_millis(200);
-
-struct ButtonFocus {
-    paste_original: FocusHandle,
-    paste_updated: FocusHandle,
-    copy_original: FocusHandle,
-    copy_updated: FocusHandle,
-    history_toggle: FocusHandle,
-    history_restore: FocusHandle,
-    history_confirm: FocusHandle,
-    history_cancel: FocusHandle,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DisplayMode {
@@ -73,8 +66,8 @@ impl DisplayMode {
 
 /// An in-memory Text Diff Utility Workspace Session.
 pub struct TextDiffWorkspace {
-    old: TextEditor,
-    new: TextEditor,
+    old: Entity<TextareaState>,
+    new: Entity<TextareaState>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
     renderer: TextDiffRenderer,
@@ -90,10 +83,8 @@ pub struct TextDiffWorkspace {
     copied: Option<usize>,
     history_view: HistoryViewState,
     history_visible: bool,
-    history_focus: SelectableListFocus,
-    choice_focus: SegmentedControlFocus,
+    history_list: Entity<ListState<ui::HistoryListDelegate>>,
     _history_subscription: HistorySubscription,
-    focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -104,27 +95,63 @@ impl TextDiffWorkspace {
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
-        let old = TextEditor::new(window, cx);
-        let new = TextEditor::new(window, cx);
+        let old = cx.new(|cx| TextareaState::new(window, cx));
+        let new = cx.new(|cx| TextareaState::new(window, cx));
         let renderer_status_changed = Rc::new(Cell::new(false));
         let renderer = TextDiffRenderer::new(window, renderer_status_changed.clone());
         let diagnostic = renderer
-            .render(1, old.text(cx), new.text(cx), DisplayMode::Split.as_str())
+            .render(
+                1,
+                old.read(cx).value().to_string(),
+                new.read(cx).value().to_string(),
+                DisplayMode::Split.as_str(),
+            )
             .err();
         let renderer_status = renderer.status();
         let subscriptions = vec![
-            old.on_change_in(window, cx, |this, window, cx| {
-                this.edit_snapshot(window, cx)
-            }),
-            new.on_change_in(window, cx, |this, window, cx| {
-                this.edit_snapshot(window, cx)
-            }),
+            cx.subscribe_in(
+                &old,
+                window,
+                |this, _entity, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.edit_snapshot(window, cx)
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &new,
+                window,
+                |this, _entity, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.edit_snapshot(window, cx)
+                    }
+                },
+            ),
         ];
         let history_view = HistoryViewState::load(&history, TextDiff::ID);
         let weak = cx.weak_entity();
         let history_subscription = history.subscribe(TextDiff::ID, move |cx| {
             weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
         });
+        let weak = cx.weak_entity();
+        let history_list = ui::history_state(
+            window,
+            cx,
+            "No retained comparisons yet.",
+            Rc::new(move |id, _window, cx| {
+                weak.update(cx, |this, cx| {
+                    if this.history_view.select(id) {
+                        ui::history_set_selected(
+                            &this.history_list,
+                            this.history_view.selected.clone(),
+                            cx,
+                        );
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }),
+        );
         let workspace = Self {
             old,
             new,
@@ -144,21 +171,11 @@ impl TextDiffWorkspace {
             copied: None,
             history_view,
             history_visible: true,
-            history_focus: SelectableListFocus::new(),
-            choice_focus: SegmentedControlFocus::new(),
+            history_list,
             _history_subscription: history_subscription,
-            focus: ButtonFocus {
-                paste_original: cx.focus_handle().tab_stop(true).tab_index(0),
-                paste_updated: cx.focus_handle().tab_stop(true).tab_index(0),
-                copy_original: cx.focus_handle().tab_stop(true).tab_index(0),
-                copy_updated: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_toggle: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_restore: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_confirm: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_cancel: cx.focus_handle().tab_stop(true).tab_index(0),
-            },
             _subscriptions: subscriptions,
         };
+        workspace.sync_history(cx);
         workspace.observe_renderer_status(cx);
         workspace
     }
@@ -166,6 +183,11 @@ impl TextDiffWorkspace {
     /// The workbench calls this when this workspace is selected or covered.
     /// A native child view is outside GPUI's normal clipping tree, so hiding it
     /// explicitly prevents it from overlaying another workspace.
+    ///
+    /// Appearance is pushed from [`Render::render`], which only runs while this
+    /// workspace is the active view, so an activation or a workbench appearance
+    /// change (`appearance::apply` refreshes every window) both reach the
+    /// renderer. `set_active` keeps the native child's visibility in sync.
     pub fn set_active(&self, active: bool) {
         self.renderer.set_active(active);
     }
@@ -196,8 +218,8 @@ impl TextDiffWorkspace {
             .renderer
             .render(
                 self.revision,
-                self.old.text(cx),
-                self.new.text(cx),
+                self.old.read(cx).value().to_string(),
+                self.new.read(cx).value().to_string(),
                 self.mode.as_str(),
             )
             .err();
@@ -236,7 +258,11 @@ impl TextDiffWorkspace {
         if !matches!(self.renderer_status, RendererStatus::Ready) {
             return;
         }
-        let request = TextDiffRequest::new(self.old.text(cx), self.new.text(cx), self.mode.core());
+        let request = TextDiffRequest::new(
+            self.old.read(cx).value().to_string(),
+            self.new.read(cx).value().to_string(),
+            self.mode.core(),
+        );
         let evaluation = <TextDiff as Utility>::evaluate(&request);
         let Some(snapshot) = <TextDiff as Utility>::snapshot(&request, &evaluation) else {
             return;
@@ -248,12 +274,14 @@ impl TextDiffWorkspace {
             .record(TextDiff::ID, TextDiff::SNAPSHOT_VERSION, payload);
         self.history_view
             .apply_record(&self.history, TextDiff::ID, result);
+        self.sync_history(cx);
         self.history.notify_status(cx);
         cx.notify();
     }
 
     fn reconcile_history(&mut self, cx: &mut Context<Self>) {
         self.history_view.reconcile(&self.history, TextDiff::ID);
+        self.sync_history(cx);
         cx.notify();
     }
 
@@ -287,11 +315,17 @@ impl TextDiffWorkspace {
         self.edit_snapshot(window, cx);
     }
 
-    fn paste(&self, editor: &TextEditor, window: &mut Window, cx: &mut Context<Self>) {
+    fn paste(&self, editor: &Entity<TextareaState>, window: &mut Window, cx: &mut Context<Self>) {
         self.renderer.focus_parent();
         if let Some(text) = self.clipboard.read_text(cx) {
-            editor.edit_text(text, window, cx);
+            editor.update(cx, |state, cx| state.replace_all(text, window, cx));
         }
+    }
+
+    /// Reflects the owning view's History rows and selection into the kit list.
+    fn sync_history(&self, cx: &mut Context<Self>) {
+        ui::history_set_rows(&self.history_list, self.history_items(), cx);
+        ui::history_set_selected(&self.history_list, self.history_view.selected.clone(), cx);
     }
 
     fn copy(&mut self, index: usize, text: String, cx: &mut Context<Self>) {
@@ -312,11 +346,32 @@ impl TextDiffWorkspace {
             cx.notify();
             return;
         };
-        let current_old = self.old.text(cx);
-        let current_new = self.new.text(cx);
+        let current_old = self.old.read(cx).value().to_string();
+        let current_new = self.new.read(cx).value().to_string();
         let same = current_old == snapshot.old && current_new == snapshot.new;
         if (!current_old.is_empty() || !current_new.is_empty()) && !same {
             self.history_view.pending_restore = Some(entry);
+            let weak = cx.weak_entity();
+            ui::confirm_dialog(
+                window,
+                cx,
+                "Restore History entry",
+                "Restoring this History entry replaces the current non-empty Text Diff session.",
+                "Restore",
+                "Cancel",
+                {
+                    let weak = weak.clone();
+                    move |window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.confirm_restore(window, cx));
+                    }
+                },
+                {
+                    let weak = weak.clone();
+                    move |_window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.cancel_restore(cx));
+                    }
+                },
+            );
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -332,8 +387,12 @@ impl TextDiffWorkspace {
         self.settle_task.take();
         self.settled_revision = None;
         self.suppress_render = true;
-        self.old.assign_text(snapshot.old.clone(), window, cx);
-        self.new.assign_text(snapshot.new.clone(), window, cx);
+        self.old.update(cx, |state, cx| {
+            state.set_value(snapshot.old.clone(), window, cx)
+        });
+        self.new.update(cx, |state, cx| {
+            state.set_value(snapshot.new.clone(), window, cx)
+        });
         self.mode = DisplayMode::from_core(snapshot.mode);
         self.suppress_render = false;
         // Mark the next render as already captured before it can report
@@ -343,6 +402,7 @@ impl TextDiffWorkspace {
         self.render_snapshot(window, cx);
         self.history_view.pending_restore = None;
         self.copied = None;
+        self.sync_history(cx);
         cx.notify();
     }
 
@@ -388,13 +448,13 @@ impl TextDiffWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<SelectableRow> {
+    fn history_items(&self) -> Vec<ui::HistoryRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                SelectableRow {
+                ui::HistoryRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
@@ -422,33 +482,11 @@ impl TextDiffWorkspace {
             })
             .map(|entry| decode_snapshot(entry).is_some())
             .unwrap_or(false);
-        let actions = div().flex().flex_row().gap_2().child(
-            Button::with_id("text-diff.history.restore-selected", "Restore selected")
-                .disabled(!restore_enabled)
-                .focus_handle(self.focus.history_restore.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.restore_selected(window, cx);
-                })),
-        );
-        let weak = cx.weak_entity();
-        let panel = SelectableList::new(
-            "text-diff.history",
-            "History",
-            self.history_items(),
-            selected,
-            "No retained comparisons yet.",
-            self.history_focus.clone(),
-        )
-        .summary(format!("{}/25", self.history_view.entries.len()))
-        .on_select(Rc::new(move |id, _window, cx| {
-            weak.update(cx, |this, cx| {
-                if this.history_view.select(id) {
-                    cx.notify();
-                }
-            })
-            .ok();
-        }))
-        .actions(actions);
+        let restore = Button::new("text-diff.history.restore-selected")
+            .label("Restore selected")
+            .disabled(!restore_enabled)
+            .on_click(cx.listener(|this, _event, window, cx| this.restore_selected(window, cx)));
+        let theme = cx.theme().clone();
         div()
             .flex()
             .flex_col()
@@ -457,26 +495,15 @@ impl TextDiffWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::active().border())
-            .bg(ThemeTokens::active().surface())
-            .child(panel)
-    }
-
-    fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        ConfirmationBar::new(
-            "text-diff.history.restore",
-            "Restoring this History entry replaces the current non-empty Text Diff session.",
-            "Restore",
-            "Cancel",
-        )
-        .focus_handles(
-            self.focus.history_confirm.clone(),
-            self.focus.history_cancel.clone(),
-        )
-        .on_confirm(view_click(cx, |this, window, cx| {
-            this.confirm_restore(window, cx)
-        }))
-        .on_cancel(view_click(cx, |this, _window, cx| this.cancel_restore(cx)))
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .child(ui::history_panel(
+                cx,
+                &self.history_list,
+                "History",
+                format!("{}/25", self.history_view.entries.len()),
+                restore,
+            ))
     }
 }
 
@@ -488,32 +515,28 @@ impl Drop for TextDiffWorkspace {
 
 impl Render for TextDiffWorkspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Pushed while this workspace is the active view; `appearance::apply`
+        // refreshes every window, so both the first activation and later
+        // Latte/Frappe or System changes reach the native child.
+        self.renderer
+            .set_appearance(appearance::effective_is_dark(cx));
         let mode = self.mode;
-        let old = self.old.render(false, "text-diff.original");
-        let new = self.new.render(false, "text-diff.updated");
-        let tokens = ThemeTokens::active();
-        let mode_control = SegmentedControl::new(
-            "text-diff.mode",
-            "Comparison layout",
-            vec![
-                SegmentedOption::new("split", "Split"),
-                SegmentedOption::new("unified", "Unified"),
-            ],
-            Some(mode.as_str().to_owned()),
-            self.choice_focus.clone(),
-        )
-        .on_change(Rc::new({
-            let weak = cx.weak_entity();
-            move |id, window, cx| {
-                let mode = match id {
-                    "split" => DisplayMode::Split,
-                    "unified" => DisplayMode::Unified,
-                    _ => return,
+        let old = ui::multiline_editor(&self.old, false, "text-diff.original");
+        let new = ui::multiline_editor(&self.new, false, "text-diff.updated");
+        let theme = cx.theme().clone();
+        let selected_index = if mode == DisplayMode::Split { 0 } else { 1 };
+        let mode_control = TabBar::new("text-diff.mode")
+            .segmented()
+            .selected_index(selected_index)
+            .children([Tab::new().label("Split"), Tab::new().label("Unified")])
+            .on_click(cx.listener(|this, index, window, cx| {
+                let mode = if *index == 0 {
+                    DisplayMode::Split
+                } else {
+                    DisplayMode::Unified
                 };
-                weak.update(cx, |this, cx| this.set_mode(mode, window, cx))
-                    .ok();
-            }
-        }));
+                this.set_mode(mode, window, cx);
+            }));
         let mut main = div()
             .flex()
             .flex_col()
@@ -521,8 +544,8 @@ impl Render for TextDiffWorkspace {
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .bg(tokens.background())
-            .text_color(tokens.text())
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .child(
                 div()
                     .flex()
@@ -532,37 +555,36 @@ impl Render for TextDiffWorkspace {
                     .flex_wrap()
                     .child(mode_control)
                     .child(
-                        Button::with_id("text-diff.paste-original", "Paste original")
-                            .focus_handle(self.focus.paste_original.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                let old = &this.old;
-                                this.paste(old, window, cx)
+                        Button::new("text-diff.paste-original")
+                            .label("Paste original")
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.paste(&this.old, window, cx)
                             })),
                     )
                     .child(
-                        Button::with_id("text-diff.paste-updated", "Paste updated")
-                            .focus_handle(self.focus.paste_updated.clone())
-                            .on_click(view_click(cx, |this, window, cx| {
-                                let new = &this.new;
-                                this.paste(new, window, cx)
+                        Button::new("text-diff.paste-updated")
+                            .label("Paste updated")
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.paste(&this.new, window, cx)
                             })),
                     )
                     .child(div().flex_1())
-                    .child(copy_feedback(self.copied.is_some(), "Copied to Clipboard"))
+                    .child(ui::copy_feedback(
+                        cx,
+                        self.copied.is_some(),
+                        "Copied to Clipboard",
+                    ))
                     .child(
-                        Button::with_id(
-                            "text-diff.history.toggle",
-                            if self.history_visible {
+                        Button::new("text-diff.history.toggle")
+                            .label(if self.history_visible {
                                 "History: on"
                             } else {
                                 "History: off"
-                            },
-                        )
-                        .focus_handle(self.focus.history_toggle.clone())
-                        .on_click(view_click(cx, |this, _window, cx| {
-                            this.history_visible = !this.history_visible;
-                            cx.notify();
-                        })),
+                            })
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.history_visible = !this.history_visible;
+                                cx.notify();
+                            })),
                     ),
             )
             .child(
@@ -573,18 +595,18 @@ impl Render for TextDiffWorkspace {
                     .gap_2()
                     .flex_wrap()
                     .child(
-                        Button::with_id("text-diff.copy-original", "Copy original")
-                            .focus_handle(self.focus.copy_original.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                let text = this.old.text(cx);
+                        Button::new("text-diff.copy-original")
+                            .label("Copy original")
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                let text = this.old.read(cx).value().to_string();
                                 this.copy(0, text, cx);
                             })),
                     )
                     .child(
-                        Button::with_id("text-diff.copy-updated", "Copy updated")
-                            .focus_handle(self.focus.copy_updated.clone())
-                            .on_click(view_click(cx, |this, _window, cx| {
-                                let text = this.new.text(cx);
+                        Button::new("text-diff.copy-updated")
+                            .label("Copy updated")
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                let text = this.new.read(cx).value().to_string();
                                 this.copy(1, text, cx);
                             })),
                     ),
@@ -602,7 +624,7 @@ impl Render for TextDiffWorkspace {
                             .flex_1()
                             .min_w_0()
                             .min_h_0()
-                            .child(panel("Original", "editable", old)),
+                            .child(ui::panel(cx, "Original", "editable", old)),
                     )
                     .child(
                         div()
@@ -610,7 +632,7 @@ impl Render for TextDiffWorkspace {
                             .flex_1()
                             .min_w_0()
                             .min_h_0()
-                            .child(panel("Updated", "editable", new)),
+                            .child(ui::panel(cx, "Updated", "editable", new)),
                     ),
             )
             .child(
@@ -620,36 +642,44 @@ impl Render for TextDiffWorkspace {
                     .min_w_0()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(panel(
+                    .child(ui::panel(
+                        cx,
                         "Comparison",
                         "live, selectable preview",
                         WebDiffSurface::new(self.renderer.clone()),
                     )),
             );
-        if self.history_view.pending_restore.is_some() {
-            main = main.child(self.render_restore_confirmation(cx));
-        }
         main = match &self.renderer_status {
             RendererStatus::Loading => {
                 main.child(div().text_xs().child("Loading local diff renderer…"))
             }
             RendererStatus::Ready => main,
-            RendererStatus::Failure(message) => {
-                main.child(diagnostic_banner(DiagnosticSeverity::Error, message, None))
-            }
+            RendererStatus::Failure(message) => main.child(ui::diagnostic_banner(
+                cx,
+                ui::DiagnosticSeverity::Error,
+                message,
+                None,
+            )),
         };
-        if contains_complex_emoji(&self.old.text(cx)) || contains_complex_emoji(&self.new.text(cx))
+        if contains_complex_emoji(&self.old.read(cx).value())
+            || contains_complex_emoji(&self.new.read(cx).value())
         {
             main = main.child(div().text_xs().child(
                 "Complex emoji uses whole-line highlighting to preserve Unicode correctness.",
             ));
         }
         if let Some(message) = &self.diagnostic {
-            main = main.child(diagnostic_banner(DiagnosticSeverity::Error, message, None));
+            main = main.child(ui::diagnostic_banner(
+                cx,
+                ui::DiagnosticSeverity::Error,
+                message,
+                None,
+            ));
         }
         if let Some(error) = self.history_view.error.clone() {
-            main = main.child(diagnostic_banner(
-                DiagnosticSeverity::Warning,
+            main = main.child(ui::diagnostic_banner(
+                cx,
+                ui::DiagnosticSeverity::Warning,
                 &format!("Text Diff History: {error}"),
                 None,
             ));
@@ -708,7 +738,8 @@ mod interaction_tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use gpui::{App, Entity, VisualTestContext};
+    use gpui::{App, VisualTestContext};
+    use gpui_kit::component::Root;
 
     use crate::history::{HistoryStore, SystemClock};
 
@@ -727,14 +758,6 @@ mod interaction_tests {
         }
     }
 
-    struct TestRoot(Entity<TextDiffWorkspace>);
-
-    impl Render for TestRoot {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            div().child(self.0.clone())
-        }
-    }
-
     fn isolated_root() -> PathBuf {
         std::env::temp_dir().join(format!(
             "sofdevtool-text-diff-redesign-{}-{}",
@@ -745,7 +768,7 @@ mod interaction_tests {
 
     #[gpui::test]
     fn mode_copy_and_exact_history_restore_use_live_controls(cx: &mut gpui::TestAppContext) {
-        cx.update(sofui::init);
+        cx.update(gpui_kit::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),
@@ -772,29 +795,32 @@ mod interaction_tests {
             let view =
                 cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard.clone(), history.clone()));
             captured = Some(view.clone());
-            TestRoot(view)
+            Root::new(view, window, cx)
         });
         let workspace = captured.unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
-        assert_eq!(workspace.read_with(&cx, |view, cx| view.old.text(cx)), "");
-        assert_eq!(workspace.read_with(&cx, |view, cx| view.new.text(cx)), "");
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.old.read(cx).value().to_string()),
+            ""
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.new.read(cx).value().to_string()),
+            ""
+        );
 
+        // The kit `TabBar` (segmented) drives the same workspace setter.
         cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).choice_focus.clone();
-            window.focus(&focus.handle("text-diff.mode", "unified", cx), cx);
+            workspace.update(cx, |view, cx| {
+                view.set_mode(DisplayMode::Unified, window, cx)
+            });
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(
             workspace.read_with(&cx, |view, _| view.mode),
             DisplayMode::Unified
         );
         cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).choice_focus.clone();
-            window.focus(&focus.handle("text-diff.mode", "split", cx), cx);
+            workspace.update(cx, |view, cx| view.set_mode(DisplayMode::Split, window, cx));
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(
             workspace.read_with(&cx, |view, _| view.mode),
             DisplayMode::Split
@@ -802,44 +828,46 @@ mod interaction_tests {
 
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
-                view.new.edit_text("let café = \"family 👨‍👩‍👧‍👦\"\n", window, cx)
+                view.new.update(cx, |state, cx| {
+                    state.replace_all("let café = \"family 👨‍👩‍👧‍👦\"\n", window, cx)
+                })
             });
             window.draw(cx).clear(cx);
         });
 
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).focus.copy_updated.clone();
-            window.focus(&focus, cx);
+        cx.update(|_window, cx| {
+            workspace.update(cx, |view, cx| {
+                let text = view.new.read(cx).value().to_string();
+                view.copy(1, text, cx);
+            });
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(
             clipboard.0.borrow().as_deref(),
             Some("let café = \"family 👨‍👩‍👧‍👦\"\n")
         );
         let entries_before_restore = history.load(TextDiff::ID).unwrap().len();
 
+        // Selecting a retained History row and then the explicit Restore
+        // action requests confirmation through the kit dialog; confirming
+        // applies the snapshot.
         cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                assert!(view.history_view.select(&entry.id));
+                view.sync_history(cx);
+                view.restore_selected(window, cx);
+                assert!(view.history_view.pending_restore.is_some());
+                view.confirm_restore(window, cx);
+            });
             window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).history_focus.clone();
-            window.focus(&focus.handle(&entry.id, cx), cx);
         });
-        cx.simulate_keystrokes("enter");
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).focus.history_restore.clone();
-            window.focus(&focus, cx);
-        });
-        cx.simulate_keystrokes("enter");
-        assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_some()));
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).focus.history_confirm.clone();
-            window.focus(&focus, cx);
-        });
-        cx.simulate_keystrokes("enter");
-        assert_eq!(workspace.read_with(&cx, |view, cx| view.old.text(cx)), old);
-        assert_eq!(workspace.read_with(&cx, |view, cx| view.new.text(cx)), new);
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.old.read(cx).value().to_string()),
+            old
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.new.read(cx).value().to_string()),
+            new
+        );
         assert_eq!(
             workspace.read_with(&cx, |view, _| view.mode),
             DisplayMode::Unified
@@ -860,7 +888,7 @@ mod interaction_tests {
 
     #[gpui::test]
     fn fresh_session_records_only_latest_settled_valid_comparison(cx: &mut gpui::TestAppContext) {
-        cx.update(sofui::init);
+        cx.update(gpui_kit::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),
@@ -871,17 +899,24 @@ mod interaction_tests {
         let window = cx.add_window(|window, cx| {
             let view = cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard, history.clone()));
             captured = Some(view.clone());
-            TestRoot(view)
+            Root::new(view, window, cx)
         });
         let workspace = captured.unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
-        assert_eq!(workspace.read_with(&cx, |view, cx| view.old.text(cx)), "");
-        assert_eq!(workspace.read_with(&cx, |view, cx| view.new.text(cx)), "");
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.old.read(cx).value().to_string()),
+            ""
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.new.read(cx).value().to_string()),
+            ""
+        );
         assert!(history.load(TextDiff::ID).unwrap().is_empty());
 
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
-                view.old.edit_text("café", window, cx);
+                view.old
+                    .update(cx, |state, cx| state.replace_all("café", window, cx));
             });
             window.draw(cx).clear(cx);
         });
@@ -889,8 +924,10 @@ mod interaction_tests {
         cx.run_until_parked();
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
-                view.old.edit_text("caffè 👩🏽‍💻", window, cx);
-                view.new.edit_text("caffè 🇮🇹", window, cx);
+                view.old
+                    .update(cx, |state, cx| state.replace_all("caffè 👩🏽‍💻", window, cx));
+                view.new
+                    .update(cx, |state, cx| state.replace_all("caffè 🇮🇹", window, cx));
                 view.renderer_status = RendererStatus::Ready;
                 view.record_if_ready(cx);
             });
@@ -921,8 +958,10 @@ mod interaction_tests {
 
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
-                view.old.edit_text("", window, cx);
-                view.new.edit_text("", window, cx);
+                view.old
+                    .update(cx, |state, cx| state.replace_all("", window, cx));
+                view.new
+                    .update(cx, |state, cx| state.replace_all("", window, cx));
             });
             window.draw(cx).clear(cx);
         });

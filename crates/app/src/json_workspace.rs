@@ -9,40 +9,30 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, App, Context, FocusHandle, IntoElement, Render, Subscription, Window};
+use gpui::{div, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui_kit::component::{
+    button::{Button, ButtonVariants as _},
+    input::{Input, InputEvent, InputState, TextareaState},
+    list::ListState,
+    tab::{Tab, TabBar},
+    ActiveTheme as _, Disableable as _,
+};
 use sofdevtool_core::json::{
     Indentation, Json, JsonEvaluation, JsonMode, JsonRequest, JsonSession, JsonSnapshot, Severity,
 };
 use sofdevtool_core::session::SubmitOutcome;
 use sofdevtool_core::utility::Utility;
-use sofui::{
-    copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    ConfirmationBar, DiagnosticSeverity, LabeledField, SegmentedControl, SegmentedControlFocus,
-    SegmentedOption, SelectableList, SelectableListFocus, SelectableRow, TextEditor, TextField,
-    ThemeTokens,
-};
 
 use crate::clipboard::Clipboard;
 use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::ui;
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 
-struct ButtonFocus {
-    indent: FocusHandle,
-    sort: FocusHandle,
-    paste: FocusHandle,
-    copy: FocusHandle,
-    clear: FocusHandle,
-    history_toggle: FocusHandle,
-    history_restore: FocusHandle,
-    history_confirm: FocusHandle,
-    history_cancel: FocusHandle,
-}
-
 pub struct JsonWorkspace {
-    input: TextEditor,
-    result: TextEditor,
-    query: TextField,
+    input: Entity<TextareaState>,
+    result: Entity<TextareaState>,
+    query: Entity<InputState>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
     mode: JsonMode,
@@ -54,10 +44,8 @@ pub struct JsonWorkspace {
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_visible: bool,
-    history_focus: SelectableListFocus,
-    choice_focus: SegmentedControlFocus,
+    history_list: Entity<ListState<ui::HistoryListDelegate>>,
     _history_subscription: HistorySubscription,
-    focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -68,17 +56,29 @@ impl JsonWorkspace {
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
-        let input = TextEditor::new(window, cx);
-        let result = TextEditor::new(window, cx);
-        let query = TextField::new(window, cx);
+        let input = cx.new(|cx| TextareaState::new(window, cx));
+        let result = cx.new(|cx| TextareaState::new(window, cx));
+        let query = cx.new(|cx| InputState::new(window, cx));
 
         let subscriptions = vec![
-            input.on_change_in(window, cx, |this, window, cx| {
-                this.schedule(window, cx);
-            }),
-            query.on_change_in(window, cx, |this, window, cx| {
-                this.schedule(window, cx);
-            }),
+            cx.subscribe_in(
+                &input,
+                window,
+                |this, _entity, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.schedule(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &query,
+                window,
+                |this, _entity, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.schedule(window, cx);
+                    }
+                },
+            ),
         ];
 
         let history_view = HistoryViewState::load(&history, Json::ID);
@@ -86,8 +86,27 @@ impl JsonWorkspace {
         let history_subscription = history.subscribe(Json::ID, move |cx| {
             weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
         });
+        let weak = cx.weak_entity();
+        let history_list = ui::history_state(
+            window,
+            cx,
+            "No retained operations yet.",
+            Rc::new(move |id, _window, cx| {
+                weak.update(cx, |this, cx| {
+                    if this.history_view.select(id) {
+                        ui::history_set_selected(
+                            &this.history_list,
+                            this.history_view.selected.clone(),
+                            cx,
+                        );
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }),
+        );
 
-        Self {
+        let workspace = Self {
             input,
             result,
             query,
@@ -102,31 +121,21 @@ impl JsonWorkspace {
             suppress_changes: false,
             history_view,
             history_visible: true,
-            history_focus: SelectableListFocus::new(),
-            choice_focus: SegmentedControlFocus::new(),
+            history_list,
             _history_subscription: history_subscription,
-            focus: ButtonFocus {
-                indent: cx.focus_handle().tab_stop(true).tab_index(0),
-                sort: cx.focus_handle().tab_stop(true).tab_index(0),
-                paste: cx.focus_handle().tab_stop(true).tab_index(0),
-                copy: cx.focus_handle().tab_stop(true).tab_index(0),
-                clear: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_toggle: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_restore: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_confirm: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_cancel: cx.focus_handle().tab_stop(true).tab_index(0),
-            },
             _subscriptions: subscriptions,
-        }
+        };
+        workspace.sync_history(cx);
+        workspace
     }
 
     fn request(&self, cx: &App) -> JsonRequest {
         JsonRequest {
-            input: self.input.text(cx),
+            input: self.input.read(cx).value().to_string(),
             mode: self.mode,
             indentation: self.indentation,
             sort_keys: self.sort_keys,
-            query: self.query.text(cx),
+            query: self.query.read(cx).value().to_string(),
         }
     }
 
@@ -168,13 +177,21 @@ impl JsonWorkspace {
             .record(Json::ID, Json::SNAPSHOT_VERSION, payload);
         self.history_view
             .apply_record(&self.history, Json::ID, result);
+        self.sync_history(cx);
         self.history.notify_status(cx);
         cx.notify();
     }
 
     fn reconcile_history(&mut self, cx: &mut Context<Self>) {
         self.history_view.reconcile(&self.history, Json::ID);
+        self.sync_history(cx);
         cx.notify();
+    }
+
+    /// Reflects the owning view's History rows and selection into the kit list.
+    fn sync_history(&self, cx: &mut Context<Self>) {
+        ui::history_set_rows(&self.history_list, self.history_items(), cx);
+        ui::history_set_selected(&self.history_list, self.history_view.selected.clone(), cx);
     }
 
     fn sync_display(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -183,12 +200,12 @@ impl JsonWorkspace {
             return;
         }
         self.display_epoch = epoch;
-        match self.session.evaluation() {
-            JsonEvaluation::Valid { output } => {
-                self.result.assign_text(output.clone(), window, cx);
-            }
-            _ => self.result.assign_text("", window, cx),
-        }
+        let value = match self.session.evaluation() {
+            JsonEvaluation::Valid { output } => output.clone(),
+            _ => String::new(),
+        };
+        self.result
+            .update(cx, |state, cx| state.set_value(value, window, cx));
     }
 
     fn set_mode(&mut self, mode: JsonMode, window: &mut Window, cx: &mut Context<Self>) {
@@ -212,7 +229,8 @@ impl JsonWorkspace {
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            self.input.edit_text(text, window, cx);
+            self.input
+                .update(cx, |state, cx| state.replace_all(text, window, cx));
         }
     }
 
@@ -227,7 +245,8 @@ impl JsonWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
-        self.input.edit_text("", window, cx);
+        self.input
+            .update(cx, |state, cx| state.replace_all("", window, cx));
     }
 
     /// Requests a restore. Replacing a different nonempty session is confirmed
@@ -244,9 +263,30 @@ impl JsonWorkspace {
             cx.notify();
             return;
         };
-        let current = self.input.text(cx);
+        let current = self.input.read(cx).value().to_string();
         if !current.trim().is_empty() && current != snapshot.request.input {
             self.history_view.pending_restore = Some(entry);
+            let weak = cx.weak_entity();
+            ui::confirm_dialog(
+                window,
+                cx,
+                "Restore History entry",
+                "Restoring this History entry replaces the current non-empty JSON session.",
+                "Restore",
+                "Cancel",
+                {
+                    let weak = weak.clone();
+                    move |window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.confirm_restore(window, cx));
+                    }
+                },
+                {
+                    let weak = weak.clone();
+                    move |_window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.cancel_restore(cx));
+                    }
+                },
+            );
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -265,15 +305,18 @@ impl JsonWorkspace {
         self.mode = snapshot.request.mode;
         self.indentation = snapshot.request.indentation;
         self.sort_keys = snapshot.request.sort_keys;
-        self.input
-            .assign_text(snapshot.request.input.clone(), window, cx);
-        self.query
-            .assign_text(snapshot.request.query.clone(), window, cx);
+        self.input.update(cx, |state, cx| {
+            state.set_value(snapshot.request.input.clone(), window, cx)
+        });
+        self.query.update(cx, |state, cx| {
+            state.set_value(snapshot.request.query.clone(), window, cx)
+        });
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
         self.history_view.pending_restore = None;
         self.copied = false;
+        self.sync_history(cx);
         self.sync_display(window, cx);
         cx.notify();
     }
@@ -297,12 +340,6 @@ impl JsonWorkspace {
         cx.notify();
     }
 
-    fn select_history(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.history_view.select(id) {
-            cx.notify();
-        }
-    }
-
     fn restore_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(selected) = self.history_view.selected.clone() else {
             return;
@@ -322,13 +359,13 @@ impl JsonWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<SelectableRow> {
+    fn history_items(&self) -> Vec<ui::HistoryRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                SelectableRow {
+                ui::HistoryRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
@@ -344,15 +381,20 @@ impl JsonWorkspace {
             .collect()
     }
 
-    fn render_diagnostics(&self) -> impl IntoElement {
+    fn render_diagnostics(&self, cx: &App) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_2().w_full();
         for diagnostic in self.session.evaluation().diagnostics() {
             let severity = match diagnostic.severity {
-                Severity::Error => DiagnosticSeverity::Error,
-                Severity::Warning => DiagnosticSeverity::Warning,
+                Severity::Error => ui::DiagnosticSeverity::Error,
+                Severity::Warning => ui::DiagnosticSeverity::Warning,
             };
             let location = diagnostic.location.map(|l| (l.line, l.column));
-            column = column.child(diagnostic_banner(severity, &diagnostic.message, location));
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                severity,
+                &diagnostic.message,
+                location,
+            ));
         }
         column
     }
@@ -367,37 +409,14 @@ impl JsonWorkspace {
                     .iter()
                     .find(|entry| &entry.id == id)
             })
-            .map(|entry| decode_snapshot(entry).is_some())
-            .unwrap_or(false);
+            .is_some_and(|entry| decode_snapshot(entry).is_some());
 
-        let actions = div().flex().flex_row().gap_2().child(
-            Button::with_id("json.history.restore-selected", "Restore selected")
-                .disabled(!restore_enabled)
-                .focus_handle(self.focus.history_restore.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.restore_selected(window, cx);
-                })),
-        );
+        let restore = Button::new("json.history.restore-selected")
+            .label("Restore selected")
+            .disabled(!restore_enabled)
+            .on_click(cx.listener(|this, _event, window, cx| this.restore_selected(window, cx)));
 
-        let items = self.history_items();
-        let count = items.len();
-        let panel = SelectableList::new(
-            "json.history",
-            "History",
-            items,
-            selected,
-            "No retained operations yet.",
-            self.history_focus.clone(),
-        )
-        .summary(format!("{count}/25"))
-        .on_select(Rc::new({
-            let weak = cx.weak_entity();
-            move |id, _window, cx| {
-                weak.update(cx, |this, cx| this.select_history(id, cx)).ok();
-            }
-        }))
-        .actions(actions);
-
+        let theme = cx.theme();
         div()
             .flex()
             .flex_col()
@@ -406,28 +425,15 @@ impl JsonWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::active().border())
-            .bg(ThemeTokens::active().surface())
-            .child(panel)
-    }
-
-    fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        ConfirmationBar::new(
-            "json.history.restore",
-            "Restoring this History entry replaces the current non-empty JSON session.",
-            "Restore",
-            "Cancel",
-        )
-        .focus_handles(
-            self.focus.history_confirm.clone(),
-            self.focus.history_cancel.clone(),
-        )
-        .on_confirm(view_click(cx, |this, window, cx| {
-            this.confirm_restore(window, cx);
-        }))
-        .on_cancel(view_click(cx, |this, _window, cx| {
-            this.cancel_restore(cx);
-        }))
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .child(ui::history_panel(
+                cx,
+                &self.history_list,
+                "History",
+                format!("{}/25", self.history_view.entries.len()),
+                restore,
+            ))
     }
 }
 
@@ -435,7 +441,7 @@ impl Render for JsonWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_display(window, cx);
 
-        let tokens = ThemeTokens::active();
+        let theme = cx.theme().clone();
         let can_copy = self.session.evaluation().is_valid_operation();
         let pending = matches!(self.session.evaluation(), JsonEvaluation::Empty)
             && self
@@ -444,35 +450,28 @@ impl Render for JsonWorkspace {
                 .map(|request| !request.input.trim().is_empty())
                 .unwrap_or(false);
 
-        let selected_mode = match self.mode {
-            JsonMode::Format => "format",
-            JsonMode::Minify => "minify",
-            JsonMode::Query => "query",
+        let mode_index = match self.mode {
+            JsonMode::Format => 0,
+            JsonMode::Minify => 1,
+            JsonMode::Query => 2,
         };
-        let mode_control = SegmentedControl::new(
-            "json.mode",
-            "JSON operation",
-            vec![
-                SegmentedOption::new("format", "Format"),
-                SegmentedOption::new("minify", "Minify"),
-                SegmentedOption::new("query", "Query"),
-            ],
-            Some(selected_mode.to_owned()),
-            self.choice_focus.clone(),
-        )
-        .on_change(Rc::new({
-            let weak = cx.weak_entity();
-            move |id, window, cx| {
-                let mode = match id {
-                    "format" => JsonMode::Format,
-                    "minify" => JsonMode::Minify,
-                    "query" => JsonMode::Query,
-                    _ => return,
+        let mode_control = TabBar::new("json.mode")
+            .segmented()
+            .selected_index(mode_index)
+            .children([
+                Tab::new().label("Format"),
+                Tab::new().label("Minify"),
+                Tab::new().label("Query"),
+            ])
+            .on_click(cx.listener(|this, index, window, cx| {
+                let mode = match index {
+                    0 => JsonMode::Format,
+                    1 => JsonMode::Minify,
+                    _ => JsonMode::Query,
                 };
-                weak.update(cx, |this, cx| this.set_mode(mode, window, cx))
-                    .ok();
-            }
-        }));
+                this.set_mode(mode, window, cx);
+            }));
+
         let mut toolbar = div()
             .flex()
             .flex_row()
@@ -483,76 +482,63 @@ impl Render for JsonWorkspace {
 
         if self.mode == JsonMode::Format {
             toolbar = toolbar.child(
-                Button::with_id(
-                    "json.indentation",
-                    match self.indentation {
+                Button::new("json.indentation")
+                    .label(match self.indentation {
                         Indentation::TwoSpaces => "Indent: 2",
                         Indentation::FourSpaces => "Indent: 4",
-                    },
-                )
-                .focus_handle(self.focus.indent.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.toggle_indentation(window, cx);
-                })),
+                    })
+                    .on_click(cx.listener(|this, _event, window, cx| {
+                        this.toggle_indentation(window, cx);
+                    })),
             );
         }
 
         toolbar = toolbar
             .child(
-                Button::with_id(
-                    "json.sort-keys",
-                    if self.sort_keys {
+                Button::new("json.sort-keys")
+                    .label(if self.sort_keys {
                         "Sort keys: on"
                     } else {
                         "Sort keys: off"
-                    },
-                )
-                .variant(if self.sort_keys {
-                    ButtonVariant::Primary
-                } else {
-                    ButtonVariant::Secondary
-                })
-                .focus_handle(self.focus.sort.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.toggle_sort(window, cx);
-                })),
+                    })
+                    .when(self.sort_keys, |button| button.primary())
+                    .on_click(cx.listener(|this, _event, window, cx| {
+                        this.toggle_sort(window, cx);
+                    })),
             )
             .child(div().flex_1())
-            .child(copy_feedback(self.copied, "Copied to Clipboard"))
+            .child(ui::copy_feedback(cx, self.copied, "Copied to Clipboard"))
             .child(
-                Button::with_id(
-                    "json.history.toggle",
-                    if self.history_visible {
+                Button::new("json.history.toggle")
+                    .label(if self.history_visible {
                         "History: on"
                     } else {
                         "History: off"
-                    },
-                )
-                .focus_handle(self.focus.history_toggle.clone())
-                .on_click(view_click(cx, |this, _window, cx| {
-                    this.history_visible = !this.history_visible;
-                    cx.notify();
-                })),
+                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.history_visible = !this.history_visible;
+                        cx.notify();
+                    })),
             )
             .child(
-                Button::with_id("json.paste", "Paste")
-                    .focus_handle(self.focus.paste.clone())
-                    .on_click(view_click(cx, |this, window, cx| {
+                Button::new("json.paste")
+                    .label("Paste")
+                    .on_click(cx.listener(|this, _event, window, cx| {
                         this.paste(window, cx);
                     })),
             )
             .child(
-                Button::with_id("json.copy-result", "Copy Result")
+                Button::new("json.copy-result")
+                    .label("Copy Result")
                     .disabled(!can_copy)
-                    .focus_handle(self.focus.copy.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
+                    .on_click(cx.listener(|this, _event, _window, cx| {
                         this.copy_result(cx);
                     })),
             )
             .child(
-                Button::with_id("json.clear", "Clear")
-                    .focus_handle(self.focus.clear.clone())
-                    .on_click(view_click(cx, |this, window, cx| {
+                Button::new("json.clear")
+                    .label("Clear")
+                    .on_click(cx.listener(|this, _event, window, cx| {
                         this.clear(window, cx);
                     })),
             );
@@ -562,35 +548,37 @@ impl Render for JsonWorkspace {
             .flex_col()
             .flex_1()
             .min_h_0()
-            .bg(tokens.background())
-            .text_color(tokens.text())
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .gap_3()
             .child(toolbar);
 
         if self.mode == JsonMode::Query {
-            column = column.child(
-                LabeledField::new("Path", self.query.render("json.query"))
-                    .hint("JSON Pointer (/a/b) or dot/bracket (a.b[0])"),
-            );
+            column = column.child(ui::labeled_field(
+                cx,
+                "Path",
+                Some("JSON Pointer (/a/b) or dot/bracket (a.b[0])"),
+                Input::new(&self.query)
+                    .accessibility_id("json.query")
+                    .w_full(),
+            ));
         }
 
-        if self.history_view.pending_restore.is_some() {
-            column = column.child(self.render_restore_confirmation(cx));
-        }
         if let Some(error) = self.history_view.error.clone() {
-            column = column.child(diagnostic_banner(
-                DiagnosticSeverity::Warning,
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                ui::DiagnosticSeverity::Warning,
                 &format!("JSON History: {error}"),
                 None,
             ));
         }
 
         let result_body = if pending {
-            empty_state("Evaluating…").into_any_element()
+            ui::empty_state(cx, "Evaluating…").into_any_element()
         } else if matches!(self.session.evaluation(), JsonEvaluation::Empty) {
-            empty_state("Paste JSON to begin").into_any_element()
+            ui::empty_state(cx, "Paste JSON to begin").into_any_element()
         } else {
-            self.result.render(true, "json.result").into_any_element()
+            ui::multiline_editor(&self.result, true, "json.result").into_any_element()
         };
 
         let mut workspace = div()
@@ -599,17 +587,23 @@ impl Render for JsonWorkspace {
             .gap_3()
             .flex_1()
             .min_h_0()
-            .child(panel(
+            .child(ui::panel(
+                cx,
                 "Input",
                 "live validation",
-                self.input.render(false, "json.input"),
+                ui::multiline_editor(&self.input, false, "json.input"),
             ))
-            .child(panel("Result", "read-only, selectable", result_body));
+            .child(ui::panel(
+                cx,
+                "Result",
+                "read-only, selectable",
+                result_body,
+            ));
         if self.history_visible {
             workspace = workspace.child(self.render_history(cx));
         }
 
-        column.child(workspace).child(self.render_diagnostics())
+        column.child(workspace).child(self.render_diagnostics(cx))
     }
 }
 
@@ -641,7 +635,8 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use gpui::{Entity, VisualTestContext};
+    use gpui::VisualTestContext;
+    use gpui_kit::component::Root;
 
     use crate::history::{HistoryStore, SystemClock};
 
@@ -653,14 +648,6 @@ mod tests {
         }
 
         fn write_text(&self, _text: &str, _cx: &mut App) {}
-    }
-
-    struct TestRoot(Entity<JsonWorkspace>);
-
-    impl Render for TestRoot {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            div().child(self.0.clone())
-        }
     }
 
     fn isolated_root() -> PathBuf {
@@ -678,7 +665,7 @@ mod tests {
     fn selectable_history_and_confirmation_reconcile_after_settings_deletion(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofui::init);
+        cx.update(gpui_kit::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),
@@ -690,33 +677,33 @@ mod tests {
                 JsonWorkspace::new(window, cx, Rc::new(TestClipboard), Rc::clone(&history))
             });
             captured = Some(view.clone());
-            TestRoot(view)
+            Root::new(view, window, cx)
         });
         let workspace = captured.unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
+
         cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| view.set_mode(JsonMode::Minify, window, cx));
             window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).choice_focus.clone();
-            window.focus(&focus.handle("json.mode", "minify", cx), cx);
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(
             workspace.read_with(&cx, |view, _| view.mode),
             JsonMode::Minify
         );
         cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| view.set_mode(JsonMode::Format, window, cx));
             window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).choice_focus.clone();
-            window.focus(&focus.handle("json.mode", "format", cx), cx);
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(
             workspace.read_with(&cx, |view, _| view.mode),
             JsonMode::Format
         );
         for text in [r#"{"first":1}"#, r#"{"second":2}"#] {
             cx.update(|window, cx| {
-                workspace.update(cx, |view, cx| view.input.edit_text(text, window, cx));
+                workspace.update(cx, |view, cx| {
+                    view.input
+                        .update(cx, |state, cx| state.replace_all(text, window, cx))
+                });
                 window.draw(cx).clear(cx);
             });
             cx.executor().advance_clock(DEBOUNCE);
@@ -727,71 +714,40 @@ mod tests {
         let first_id = entries[1].id.clone();
         let second_id = entries[0].id.clone();
         cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let list = workspace.read(cx).history_focus.clone();
-            window.focus(&list.handle(&first_id, cx), cx);
+            workspace.update(cx, |view, cx| {
+                assert!(view.history_view.select(&first_id));
+                view.sync_history(cx);
+                view.restore_selected(window, cx);
+                assert!(view.history_view.pending_restore.is_some());
+                view.cancel_restore(cx);
+                assert!(view.history_view.pending_restore.is_none());
+                assert_eq!(view.input.read(cx).value().to_string(), r#"{"second":2}"#);
+            });
         });
-        cx.simulate_keystrokes("enter");
-        assert_eq!(
-            workspace.read_with(&cx, |view, _| view.history_view.selected.clone()),
-            Some(first_id.clone())
-        );
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).focus.history_restore.clone();
-            window.focus(&focus, cx);
-        });
-        cx.simulate_keystrokes("enter");
-        assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_some()));
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).focus.history_cancel.clone();
-            window.focus(&focus, cx);
-        });
-        cx.simulate_keystrokes("enter");
-        assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_none()));
-        assert_eq!(
-            workspace.read_with(&cx, |view, cx| view.input.text(cx)),
-            r#"{"second":2}"#
-        );
 
         cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).focus.history_restore.clone();
-            window.focus(&focus, cx);
+            workspace.update(cx, |view, cx| {
+                view.restore_selected(window, cx);
+                view.confirm_restore(window, cx);
+                assert_eq!(view.input.read(cx).value().to_string(), r#"{"first":1}"#);
+            });
         });
-        cx.simulate_keystrokes("enter");
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).focus.history_confirm.clone();
-            window.focus(&focus, cx);
-        });
-        cx.simulate_keystrokes("enter");
-        assert_eq!(
-            workspace.read_with(&cx, |view, cx| view.input.text(cx)),
-            r#"{"first":1}"#
-        );
         assert_eq!(history.load(Json::ID).unwrap().len(), 2);
 
         cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let list = workspace.read(cx).history_focus.clone();
-            window.focus(&list.handle(&second_id, cx), cx);
+            workspace.update(cx, |view, cx| {
+                assert!(view.history_view.select(&second_id));
+                view.sync_history(cx);
+                view.restore_selected(window, cx);
+                assert!(view.history_view.pending_restore.is_some());
+            });
         });
-        cx.simulate_keystrokes("enter");
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).focus.history_restore.clone();
-            window.focus(&focus, cx);
-        });
-        cx.simulate_keystrokes("enter");
-        assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_some()));
         cx.update(|_window, cx| history.clear_utility(Json::ID, cx).unwrap());
         assert!(workspace.read_with(&cx, |view, _| view.history_view.entries.is_empty()));
         assert!(workspace.read_with(&cx, |view, _| view.history_view.selected.is_none()));
         assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_none()));
         assert_eq!(
-            workspace.read_with(&cx, |view, cx| view.input.text(cx)),
+            workspace.read_with(&cx, |view, cx| view.input.read(cx).value().to_string()),
             r#"{"first":1}"#
         );
         fs::remove_dir_all(root).unwrap();

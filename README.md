@@ -2,7 +2,7 @@
 
 SofDevTool 0.2.0 is a local native macOS Developer Toolbox built with Rust and GPUI. Its fifteen Utilities cover JSON, YAML/JSON, Base64, URL encoding, hashes, identifiers, timestamps, JWT inspection, regex, case and whitespace conversion, color, sample data, random strings, and Text Diff. No account or service is required to use the installed application.
 
-The root Cargo workspace is the sole maintained product. [`crates/app`](crates/app) owns the Workbench, Launcher, application lifecycle, Clipboard, preferences, and History policy; [`crates/core`](crates/core) owns Utility behavior and validation. [`sofui`](crates/ui/README.md) is an independently versioned 0.1.0 GPUI component library intended for a later separate release. It owns reusable controls and their interaction logic, while each consumer owns its domain behavior and starts GPUI itself.
+The root Cargo workspace is the sole maintained product. [`crates/app`](crates/app) owns the Workbench, Launcher, application lifecycle, Clipboard, preferences, and History policy; [`crates/core`](crates/core) owns Utility behavior and validation. The application consumes [GPUI Kit](https://docs.rs/crate/gpui-kit/0.6.6) directly for its controls and appearance; there is no separate component library. Appearance offers System, Light and Dark over the kit's official Catppuccin Latte and Frappé presets, bundled offline under `crates/app/assets/themes`.
 
 ## Development
 
@@ -12,9 +12,8 @@ Use an Apple Silicon Mac with macOS 14 or newer, the pinned Rust toolchain in `r
 | --- | --- |
 | `make help` | List maintained commands. |
 | `make run` | Build and open `artifacts/SofDevTool Debug.app`. |
-| `make gallery` | Open the independent `sofui` component gallery. |
 | `make format` | Apply workspace Rust formatting. |
-| `make verify` | Check formatting and Clippy, run tests, and build Debug app/gallery. |
+| `make verify` | Check formatting and Clippy, run tests, and build the Debug app. |
 | `make verify-full` | Add Release build, Text Diff asset reproduction and both bundles. |
 | `make release` | Package `artifacts/SofDevTool.app`. |
 | `make install` | Build and install Release in `~/Applications`. |

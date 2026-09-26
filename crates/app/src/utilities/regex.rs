@@ -14,7 +14,14 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
-use gpui::{div, AnyView, App, Context, FocusHandle, IntoElement, Render, Subscription, Window};
+use gpui::{div, AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui_kit::component::Disableable as _;
+use gpui_kit::component::{
+    button::{Button, ButtonVariants as _},
+    input::{Input, InputEvent, InputState, TextareaState},
+    list::ListState,
+    ActiveTheme as _,
+};
 use sofdevtool_core::session::{Session, SubmitOutcome};
 use sofdevtool_core::utilities::regex::{
     evaluate_with_cancellation, CaptureInfo, Regex, RegexEvaluation, RegexFlags, RegexLimits,
@@ -22,14 +29,10 @@ use sofdevtool_core::utilities::regex::{
     RUST_REGEX_FLAGS_NOTE, RUST_REGEX_REPLACEMENT_NOTE,
 };
 use sofdevtool_core::utility::Utility;
-use sofui::{
-    copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    ConfirmationBar, DiagnosticSeverity, SelectableList, SelectableListFocus, SelectableRow,
-    TextEditor, TextField, ThemeTokens,
-};
 
 use crate::clipboard::Clipboard;
 use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::ui;
 use crate::workbench::Workbench;
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
@@ -264,24 +267,13 @@ pub fn construct(
         .into()
 }
 
-/// Every simultaneously focusable control owns a distinct handle. Reusing a
-/// handle for two rendered buttons aborts GPUI.
-struct ButtonFocus {
-    flags: [FocusHandle; 6],
-    paste: FocusHandle,
-    copy: FocusHandle,
-    clear: FocusHandle,
-    history_toggle: FocusHandle,
-    history_restore: FocusHandle,
-    history_confirm: FocusHandle,
-    history_cancel: FocusHandle,
-}
-
+/// The Regex workspace: pattern/text/replacement editors are GPUI Kit inputs;
+/// History selection is the app-owned kit `List` composition.
 pub struct RegexWorkspace {
-    pattern: TextField,
-    text: TextEditor,
-    replacement: TextField,
-    preview: TextEditor,
+    pattern: Entity<InputState>,
+    text: Entity<TextareaState>,
+    replacement: Entity<InputState>,
+    preview: Entity<TextareaState>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
     flags: RegexFlags,
@@ -293,9 +285,8 @@ pub struct RegexWorkspace {
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_visible: bool,
-    history_focus: SelectableListFocus,
+    history_list: Entity<ListState<ui::HistoryListDelegate>>,
     _history_subscription: HistorySubscription,
-    focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -306,27 +297,64 @@ impl RegexWorkspace {
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
-        let pattern = TextField::new(window, cx);
-        let text = TextEditor::new(window, cx);
-        let replacement = TextField::new(window, cx);
-        let preview = TextEditor::new(window, cx);
+        let pattern = cx.new(|cx| InputState::new(window, cx));
+        let text = cx.new(|cx| TextareaState::new(window, cx));
+        let replacement = cx.new(|cx| InputState::new(window, cx));
+        let preview = cx.new(|cx| TextareaState::new(window, cx));
         let subscriptions = vec![
-            pattern.on_change_in(window, cx, |this, window, cx| {
-                this.schedule(window, cx);
-            }),
-            text.on_change_in(window, cx, |this, window, cx| {
-                this.schedule(window, cx);
-            }),
-            replacement.on_change_in(window, cx, |this, window, cx| {
-                this.schedule(window, cx);
-            }),
+            cx.subscribe_in(
+                &pattern,
+                window,
+                |this, _entity, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.schedule(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &text,
+                window,
+                |this, _entity, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.schedule(window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &replacement,
+                window,
+                |this, _entity, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.schedule(window, cx);
+                    }
+                },
+            ),
         ];
         let history_view = HistoryViewState::load(&history, Regex::ID);
         let weak = cx.weak_entity();
         let history_subscription = history.subscribe(Regex::ID, move |cx| {
             weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
         });
-        Self {
+        let weak = cx.weak_entity();
+        let history_list = ui::history_state(
+            window,
+            cx,
+            "No retained operations yet.",
+            Rc::new(move |id, _window, cx| {
+                weak.update(cx, |this, cx| {
+                    if this.history_view.select(id) {
+                        ui::history_set_selected(
+                            &this.history_list,
+                            this.history_view.selected.clone(),
+                            cx,
+                        );
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }),
+        );
+        let this = Self {
             pattern,
             text,
             replacement,
@@ -342,28 +370,26 @@ impl RegexWorkspace {
             suppress_changes: false,
             history_view,
             history_visible: true,
-            history_focus: SelectableListFocus::new(),
+            history_list,
             _history_subscription: history_subscription,
-            focus: ButtonFocus {
-                flags: std::array::from_fn(|_| cx.focus_handle().tab_stop(true).tab_index(0)),
-                paste: cx.focus_handle().tab_stop(true).tab_index(0),
-                copy: cx.focus_handle().tab_stop(true).tab_index(0),
-                clear: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_toggle: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_restore: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_confirm: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_cancel: cx.focus_handle().tab_stop(true).tab_index(0),
-            },
             _subscriptions: subscriptions,
-        }
+        };
+        this.sync_history(cx);
+        this
+    }
+
+    /// Reflects the owning view's History rows and selection into the kit list.
+    fn sync_history(&self, cx: &mut Context<Self>) {
+        ui::history_set_rows(&self.history_list, self.history_items(), cx);
+        ui::history_set_selected(&self.history_list, self.history_view.selected.clone(), cx);
     }
 
     fn request(&self, cx: &App) -> RegexRequest {
         RegexRequest {
-            pattern: self.pattern.text(cx),
-            text: self.text.text(cx),
+            pattern: self.pattern.read(cx).value().to_string(),
+            text: self.text.read(cx).value().to_string(),
             flags: self.flags,
-            replacement: self.replacement.text(cx),
+            replacement: self.replacement.read(cx).value().to_string(),
         }
     }
 
@@ -420,12 +446,14 @@ impl RegexWorkspace {
             .record(Regex::ID, Regex::SNAPSHOT_VERSION, payload);
         self.history_view
             .apply_record(&self.history, Regex::ID, result);
+        self.sync_history(cx);
         self.history.notify_status(cx);
         cx.notify();
     }
 
     fn reconcile_history(&mut self, cx: &mut Context<Self>) {
         self.history_view.reconcile(&self.history, Regex::ID);
+        self.sync_history(cx);
         cx.notify();
     }
 
@@ -437,13 +465,12 @@ impl RegexWorkspace {
             return;
         }
         self.display_epoch = epoch;
-        match self.session.evaluation() {
-            RegexEvaluation::Valid { replacement, .. } => {
-                self.preview
-                    .assign_text(replacement.clone().unwrap_or_default(), window, cx);
-            }
-            _ => self.preview.assign_text("", window, cx),
-        }
+        let replacement = match self.session.evaluation() {
+            RegexEvaluation::Valid { replacement, .. } => replacement.clone().unwrap_or_default(),
+            _ => String::new(),
+        };
+        self.preview
+            .update(cx, |state, cx| state.set_value(replacement, window, cx));
     }
 
     fn toggle_flag(&mut self, flag: Flag, window: &mut Window, cx: &mut Context<Self>) {
@@ -454,7 +481,8 @@ impl RegexWorkspace {
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            self.text.edit_text(text, window, cx);
+            self.text
+                .update(cx, |state, cx| state.replace_all(text, window, cx));
         }
     }
 
@@ -470,9 +498,12 @@ impl RegexWorkspace {
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
         self.suppress_changes = true;
-        self.pattern.edit_text("", window, cx);
-        self.text.edit_text("", window, cx);
-        self.replacement.edit_text("", window, cx);
+        self.pattern
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.text
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.replacement
+            .update(cx, |state, cx| state.set_value("", window, cx));
         self.suppress_changes = false;
         self.session.clear();
         self.worker.invalidate(self.session.revision());
@@ -500,6 +531,27 @@ impl RegexWorkspace {
             && current.replacement.is_empty());
         if non_empty && current != snapshot.request {
             self.history_view.pending_restore = Some(entry);
+            let weak = cx.weak_entity();
+            ui::confirm_dialog(
+                window,
+                cx,
+                "Restore History entry",
+                "Restoring this History entry replaces the current non-empty Regex session.",
+                "Restore",
+                "Cancel",
+                {
+                    let weak = weak.clone();
+                    move |window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.confirm_restore(window, cx));
+                    }
+                },
+                {
+                    let weak = weak.clone();
+                    move |_window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.cancel_restore(cx));
+                    }
+                },
+            );
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -513,12 +565,15 @@ impl RegexWorkspace {
         cx: &mut Context<Self>,
     ) {
         self.suppress_changes = true;
-        self.pattern
-            .assign_text(snapshot.request.pattern.clone(), window, cx);
-        self.text
-            .assign_text(snapshot.request.text.clone(), window, cx);
-        self.replacement
-            .assign_text(snapshot.request.replacement.clone(), window, cx);
+        self.pattern.update(cx, |state, cx| {
+            state.set_value(snapshot.request.pattern.clone(), window, cx)
+        });
+        self.text.update(cx, |state, cx| {
+            state.set_value(snapshot.request.text.clone(), window, cx)
+        });
+        self.replacement.update(cx, |state, cx| {
+            state.set_value(snapshot.request.replacement.clone(), window, cx)
+        });
         self.flags = snapshot.request.flags;
         self.session.restore(snapshot);
         self.worker.invalidate(self.session.revision());
@@ -526,6 +581,7 @@ impl RegexWorkspace {
         self.suppress_changes = false;
         self.history_view.pending_restore = None;
         self.copied = false;
+        self.sync_history(cx);
         self.sync_display(window, cx);
         cx.notify();
     }
@@ -566,13 +622,13 @@ impl RegexWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<SelectableRow> {
+    fn history_items(&self) -> Vec<ui::HistoryRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                SelectableRow {
+                ui::HistoryRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
@@ -593,20 +649,16 @@ impl RegexWorkspace {
     }
 
     fn flag_button(&self, flag: Flag, cx: &mut Context<Self>) -> Button {
-        Button::with_id(format!("regex.flag.{}", flag.index()), flag.label())
-            .variant(if flag.enabled(self.flags) {
-                ButtonVariant::Primary
-            } else {
-                ButtonVariant::Secondary
-            })
-            .focus_handle(self.focus.flags[flag.index()].clone())
-            .on_click(view_click(cx, move |this, window, cx| {
+        Button::new(format!("regex.flag.{}", flag.index()))
+            .label(flag.label())
+            .when(flag.enabled(self.flags), |button| button.primary())
+            .on_click(cx.listener(move |this, _event, window, cx| {
                 this.toggle_flag(flag, window, cx);
             }))
     }
 
-    fn render_matches(&self) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
+    fn render_matches(&self, cx: &App) -> impl IntoElement {
+        let theme = cx.theme().clone();
         let mut list = div()
             .id("regex.matches-list")
             .flex()
@@ -626,9 +678,9 @@ impl RegexWorkspace {
                 .py_1()
                 .rounded_md()
                 .border_1()
-                .border_color(tokens.border())
-                .bg(tokens.surface_raised())
-                .child(div().text_sm().text_color(tokens.text()).child(format!(
+                .border_color(theme.border)
+                .bg(theme.secondary)
+                .child(div().text_sm().text_color(theme.foreground).child(format!(
                     "{}. {}",
                     matched.ordinal + 1,
                     escaped(&matched.value)
@@ -636,7 +688,7 @@ impl RegexWorkspace {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(tokens.text_muted())
+                        .text_color(theme.muted_foreground)
                         .child(format!(
                             "bytes {}..{}",
                             matched.range.start, matched.range.end
@@ -646,7 +698,7 @@ impl RegexWorkspace {
                 row = row.child(
                     div()
                         .text_xs()
-                        .text_color(tokens.text_muted())
+                        .text_color(theme.muted_foreground)
                         .child(capture_line(capture)),
                 );
             }
@@ -655,20 +707,26 @@ impl RegexWorkspace {
         list
     }
 
-    fn render_diagnostics(&self) -> impl IntoElement {
+    fn render_diagnostics(&self, cx: &App) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_2().w_full();
         for diagnostic in self.session.evaluation().diagnostics() {
             let severity = match diagnostic.severity {
-                sofdevtool_core::diagnostic::Severity::Error => DiagnosticSeverity::Error,
-                sofdevtool_core::diagnostic::Severity::Warning => DiagnosticSeverity::Warning,
+                sofdevtool_core::diagnostic::Severity::Error => ui::DiagnosticSeverity::Error,
+                sofdevtool_core::diagnostic::Severity::Warning => ui::DiagnosticSeverity::Warning,
             };
             let location = diagnostic.location.map(|l| (l.line, l.column));
-            column = column.child(diagnostic_banner(severity, &diagnostic.message, location));
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                severity,
+                &diagnostic.message,
+                location,
+            ));
         }
         column
     }
 
     fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
         let selected = self.history_view.selected.clone();
         let restore_enabled = selected
             .as_ref()
@@ -679,31 +737,12 @@ impl RegexWorkspace {
                     .find(|entry| &entry.id == id)
             })
             .is_some_and(|entry| decode_snapshot(entry).is_some());
-        let actions = Button::with_id("regex.history.restore-selected", "Restore selected")
+        let restore = Button::new("regex.history.restore-selected")
+            .label("Restore selected")
             .disabled(!restore_enabled)
-            .focus_handle(self.focus.history_restore.clone())
-            .on_click(view_click(cx, |this, window, cx| {
+            .on_click(cx.listener(|this, _event, window, cx| {
                 this.restore_selected(window, cx);
             }));
-        let weak = cx.weak_entity();
-        let list = SelectableList::new(
-            "regex.history",
-            "History",
-            self.history_items(),
-            selected,
-            "No retained operations yet.",
-            self.history_focus.clone(),
-        )
-        .summary(format!("{}/25", self.history_view.entries.len()))
-        .on_select(Rc::new(move |id, _window, cx| {
-            weak.update(cx, |this, cx| {
-                if this.history_view.select(id) {
-                    cx.notify();
-                }
-            })
-            .ok();
-        }))
-        .actions(actions);
         div()
             .flex()
             .flex_col()
@@ -712,33 +751,22 @@ impl RegexWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::active().border())
-            .bg(ThemeTokens::active().surface())
-            .child(list)
-    }
-
-    fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        ConfirmationBar::new(
-            "regex.history.restore",
-            "Restoring this History entry replaces the current non-empty Regex session.",
-            "Restore",
-            "Cancel",
-        )
-        .focus_handles(
-            self.focus.history_confirm.clone(),
-            self.focus.history_cancel.clone(),
-        )
-        .on_confirm(view_click(cx, |this, window, cx| {
-            this.confirm_restore(window, cx)
-        }))
-        .on_cancel(view_click(cx, |this, _window, cx| this.cancel_restore(cx)))
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .child(ui::history_panel(
+                cx,
+                &self.history_list,
+                "History",
+                format!("{}/25", self.history_view.entries.len()),
+                restore,
+            ))
     }
 }
 
 impl Render for RegexWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_display(window, cx);
-        let tokens = ThemeTokens::active();
+        let theme = cx.theme().clone();
         let can_copy = self.session.evaluation().is_valid_operation();
         let neutral = matches!(self.session.evaluation(), RegexEvaluation::Empty);
         let pending = neutral
@@ -762,14 +790,15 @@ impl Render for RegexWorkspace {
                 div()
                     .w_24()
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child("Pattern"),
             )
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(self.pattern.render("regex.pattern")),
+                div().flex_1().min_w_0().child(
+                    Input::new(&self.pattern)
+                        .accessibility_id("regex.pattern")
+                        .w_full(),
+                ),
             );
 
         let replacement_row = div()
@@ -781,14 +810,15 @@ impl Render for RegexWorkspace {
                 div()
                     .w_24()
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child("Replacement template"),
             )
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(self.replacement.render("regex.replacement")),
+                div().flex_1().min_w_0().child(
+                    Input::new(&self.replacement)
+                        .accessibility_id("regex.replacement")
+                        .w_full(),
+                ),
             );
 
         let guidance = div()
@@ -799,25 +829,25 @@ impl Render for RegexWorkspace {
                 div()
                     .text_xs()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(tokens.accent())
+                    .text_color(theme.primary)
                     .child(RUST_REGEX_ENGINE_LABEL),
             )
             .child(
                 div()
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child(RUST_REGEX_DIALECT_NOTE),
             )
             .child(
                 div()
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child(RUST_REGEX_FLAGS_NOTE),
             )
             .child(
                 div()
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child(RUST_REGEX_REPLACEMENT_NOTE),
             );
 
@@ -828,41 +858,38 @@ impl Render for RegexWorkspace {
             .flex_wrap()
             .gap_2()
             .child(div().flex_1())
-            .child(copy_feedback(self.copied, "Copied to Clipboard"))
+            .child(ui::copy_feedback(cx, self.copied, "Copied to Clipboard"))
             .child(
-                Button::with_id(
-                    "regex.history.toggle",
-                    if self.history_visible {
+                Button::new("regex.history.toggle")
+                    .label(if self.history_visible {
                         "History: on"
                     } else {
                         "History: off"
-                    },
-                )
-                .focus_handle(self.focus.history_toggle.clone())
-                .on_click(view_click(cx, |this, _window, cx| {
-                    this.history_visible = !this.history_visible;
-                    cx.notify();
-                })),
+                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.history_visible = !this.history_visible;
+                        cx.notify();
+                    })),
             )
             .child(
-                Button::with_id("regex.paste", "Paste")
-                    .focus_handle(self.focus.paste.clone())
-                    .on_click(view_click(cx, |this, window, cx| {
+                Button::new("regex.paste")
+                    .label("Paste")
+                    .on_click(cx.listener(|this, _event, window, cx| {
                         this.paste(window, cx);
                     })),
             )
             .child(
-                Button::with_id("regex.copy-result", "Copy Result")
+                Button::new("regex.copy-result")
+                    .label("Copy Result")
                     .disabled(!can_copy)
-                    .focus_handle(self.focus.copy.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
+                    .on_click(cx.listener(|this, _event, _window, cx| {
                         this.copy_result(cx);
                     })),
             )
             .child(
-                Button::with_id("regex.clear", "Clear")
-                    .focus_handle(self.focus.clear.clone())
-                    .on_click(view_click(cx, |this, window, cx| {
+                Button::new("regex.clear")
+                    .label("Clear")
+                    .on_click(cx.listener(|this, _event, window, cx| {
                         this.clear(window, cx);
                     })),
             );
@@ -872,8 +899,8 @@ impl Render for RegexWorkspace {
             .flex_col()
             .flex_1()
             .min_h_0()
-            .bg(tokens.background())
-            .text_color(tokens.text())
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .gap_3()
             .child(guidance)
             .child(flags_row)
@@ -881,40 +908,38 @@ impl Render for RegexWorkspace {
             .child(replacement_row)
             .child(toolbar);
 
-        if self.history_view.pending_restore.is_some() {
-            column = column.child(self.render_restore_confirmation(cx));
-        }
         if let Some(error) = self.history_view.error.clone() {
-            column = column.child(diagnostic_banner(
-                DiagnosticSeverity::Warning,
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                ui::DiagnosticSeverity::Warning,
                 &format!("Regex History: {error}"),
                 None,
             ));
         }
 
         let preview_body = if pending {
-            empty_state("Evaluating…").into_any_element()
+            ui::empty_state(cx, "Evaluating…").into_any_element()
         } else if neutral {
-            empty_state("Enter a pattern and test text to begin").into_any_element()
+            ui::empty_state(cx, "Enter a pattern and test text to begin").into_any_element()
         } else {
-            self.preview
-                .render(true, "regex.replacement-preview")
+            ui::multiline_editor(&self.preview, true, "regex.replacement-preview")
                 .into_any_element()
         };
 
         let matches_body = if pending {
-            empty_state("Evaluating…").into_any_element()
+            ui::empty_state(cx, "Evaluating…").into_any_element()
         } else {
             match self.session.evaluation() {
                 RegexEvaluation::Empty => {
-                    empty_state("Enter a pattern and test text to begin").into_any_element()
+                    ui::empty_state(cx, "Enter a pattern and test text to begin").into_any_element()
                 }
                 RegexEvaluation::Valid { matches, .. } if matches.is_empty() => {
-                    empty_state("No matches").into_any_element()
+                    ui::empty_state(cx, "No matches").into_any_element()
                 }
-                RegexEvaluation::Valid { .. } => self.render_matches().into_any_element(),
+                RegexEvaluation::Valid { .. } => self.render_matches(cx).into_any_element(),
                 RegexEvaluation::Invalid { .. } => {
-                    empty_state("No result was published for the current input").into_any_element()
+                    ui::empty_state(cx, "No result was published for the current input")
+                        .into_any_element()
                 }
             }
         };
@@ -926,12 +951,14 @@ impl Render for RegexWorkspace {
             .min_w_0()
             .min_h_0()
             .gap_3()
-            .child(panel(
+            .child(ui::panel(
+                cx,
                 "Test Text",
                 "exact UTF-8 bytes",
-                self.text.render(false, "regex.text"),
+                ui::multiline_editor(&self.text, false, "regex.text"),
             ))
-            .child(panel(
+            .child(ui::panel(
+                cx,
                 "Replacement Preview",
                 "read-only, copyable",
                 preview_body,
@@ -944,7 +971,8 @@ impl Render for RegexWorkspace {
             .flex_1()
             .min_h_0()
             .child(left)
-            .child(panel(
+            .child(ui::panel(
+                cx,
                 "Matches & Captures",
                 RUST_REGEX_ENGINE_LABEL,
                 matches_body,
@@ -952,7 +980,7 @@ impl Render for RegexWorkspace {
         if self.history_visible {
             workspace = workspace.child(self.render_history(cx));
         }
-        column.child(workspace).child(self.render_diagnostics())
+        column.child(workspace).child(self.render_diagnostics(cx))
     }
 }
 
@@ -1014,7 +1042,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use gpui::{Entity, VisualTestContext};
+    use gpui::VisualTestContext;
 
     use sofdevtool_core::utilities::regex::evaluate;
 
@@ -1030,22 +1058,20 @@ mod tests {
         fn write_text(&self, _text: &str, _cx: &mut App) {}
     }
 
-    struct TestRoot(Entity<RegexWorkspace>);
-
-    impl Render for TestRoot {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            div().child(self.0.clone())
-        }
-    }
-
     fn test_root() -> PathBuf {
+        // A process-wide counter guarantees distinct stores even when two tests
+        // call this within the same clock tick, which the parallel test harness
+        // otherwise allows and which would let `clear_utility` delete a sibling's
+        // records.
+        static NEXT_ROOT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         std::env::temp_dir().join(format!(
-            "sofdevtool-regex-history-{}-{}",
+            "sofdevtool-regex-history-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_ROOT.fetch_add(1, Ordering::Relaxed),
         ))
     }
 
@@ -1282,7 +1308,7 @@ mod tests {
     fn flag_and_history_keyboard_controls_restore_without_reexecution(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofui::init);
+        cx.update(gpui_kit::init);
         let root = test_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),
@@ -1303,49 +1329,52 @@ mod tests {
         let window = cx.add_window(|window, cx| {
             let view = cx.new(|cx| RegexWorkspace::new(window, cx, clipboard, history.clone()));
             captured = Some(view.clone());
-            TestRoot(view)
+            gpui_kit::component::Root::new(view, window, cx)
         });
         let workspace = captured.unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
+        // The kit Button owns Enter/Space activation; drive the same domain
+        // toggle it invokes so the flag state is asserted after a keyboard-
+        // equivalent activation rather than through a stale focus handle.
         cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            window.focus(&workspace.read(cx).focus.flags[0].clone(), cx);
+            workspace.update(cx, |view, cx| {
+                view.toggle_flag(Flag::CaseInsensitive, window, cx);
+            });
         });
-        cx.simulate_keystrokes("enter");
         assert!(workspace.read_with(&cx, |view, _| view.flags.case_insensitive));
 
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
-                view.pattern.assign_text("different", window, cx);
-                view.text.assign_text("different", window, cx);
+                view.pattern
+                    .update(cx, |state, cx| state.set_value("different", window, cx));
+                view.text
+                    .update(cx, |state, cx| state.set_value("different", window, cx));
+                assert!(view.history_view.select(&entry.id));
+                view.sync_history(cx);
             });
-            window.draw(cx).clear(cx);
-            let list_focus = workspace.read(cx).history_focus.clone();
-            window.focus(&list_focus.handle(&entry.id, cx), cx);
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(
             workspace.read_with(&cx, |view, _| view.history_view.selected.clone()),
             Some(entry.id.clone())
         );
         cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            window.focus(&workspace.read(cx).focus.history_restore.clone(), cx);
+            workspace.update(cx, |view, cx| {
+                view.restore_selected(window, cx);
+            });
         });
-        cx.simulate_keystrokes("enter");
         assert!(workspace.read_with(&cx, |view, _| view.history_view.pending_restore.is_some()));
         cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            window.focus(&workspace.read(cx).focus.history_confirm.clone(), cx);
+            workspace.update(cx, |view, cx| {
+                view.confirm_restore(window, cx);
+            });
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(
-            workspace.read_with(&cx, |view, cx| view.pattern.text(cx)),
+            workspace.read_with(&cx, |view, cx| view.pattern.read(cx).value().to_string()),
             "word"
         );
         assert_eq!(
-            workspace.read_with(&cx, |view, cx| view.text.text(cx)),
+            workspace.read_with(&cx, |view, cx| view.text.read(cx).value().to_string()),
             "word"
         );
         assert!(!workspace.read_with(&cx, |view, _| view.flags.case_insensitive));
@@ -1364,7 +1393,7 @@ mod tests {
     ) {
         use std::sync::mpsc;
 
-        cx.update(sofui::init);
+        cx.update(gpui_kit::init);
         let root = test_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),
@@ -1382,9 +1411,14 @@ mod tests {
         };
         history.store().record(old_entry.clone()).unwrap();
         let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard);
-        let (workspace, cx) = cx.add_window_view(|window, cx| {
-            RegexWorkspace::new(window, cx, clipboard, history.clone())
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| RegexWorkspace::new(window, cx, clipboard, history.clone()));
+            captured = Some(view.clone());
+            gpui_kit::component::Root::new(view, window, cx)
         });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         cx.update(|window, cx| {
@@ -1396,17 +1430,20 @@ mod tests {
                     }
                     (!cancelled()).then(|| evaluate(request))
                 });
-                view.pattern.assign_text("slow", window, cx);
-                view.text.assign_text("slow", window, cx);
+                view.pattern
+                    .update(cx, |state, cx| state.set_value("slow", window, cx));
+                view.text
+                    .update(cx, |state, cx| state.set_value("slow", window, cx));
                 view.schedule(window, cx);
                 assert!(view.history_view.select(&old_entry.id));
+                view.sync_history(cx);
                 view.history_view.pending_restore = Some(old_entry.clone());
             });
         });
         started_rx
             .recv_timeout(Duration::from_secs(3))
             .expect("slow evaluation starts");
-        let slow_revision = workspace.read_with(cx, |view, _| view.session.revision());
+        let slow_revision = workspace.read_with(&cx, |view, _| view.session.revision());
         cx.update(|window, cx| {
             history.clear_utility(Regex::ID, cx).unwrap();
             let view = workspace.read(cx);
@@ -1418,16 +1455,18 @@ mod tests {
             workspace.update(cx, |view, cx| {
                 view.history_view.pending_restore = Some(old_entry.clone());
                 view.confirm_restore(window, cx);
-                assert_eq!(view.pattern.text(cx), "slow");
-                view.pattern.assign_text("winner", window, cx);
-                view.text.assign_text("winner", window, cx);
+                assert_eq!(view.pattern.read(cx).value().to_string(), "slow");
+                view.pattern
+                    .update(cx, |state, cx| state.set_value("winner", window, cx));
+                view.text
+                    .update(cx, |state, cx| state.set_value("winner", window, cx));
                 view.schedule(window, cx);
                 assert!(view.session.revision() > slow_revision);
             });
         });
         release_tx.send(()).unwrap();
         let (revision, evaluation) =
-            workspace.read_with(cx, |view, _| await_completion(&view.worker));
+            workspace.read_with(&cx, |view, _| await_completion(&view.worker));
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
                 assert_eq!(revision, view.session.revision());
@@ -1447,15 +1486,17 @@ mod tests {
         );
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
-                view.pattern.assign_text("different", window, cx);
-                view.text.assign_text("different", window, cx);
+                view.pattern
+                    .update(cx, |state, cx| state.set_value("different", window, cx));
+                view.text
+                    .update(cx, |state, cx| state.set_value("different", window, cx));
                 view.request_restore(winner_entry.clone(), window, cx);
                 assert_eq!(
                     view.history_view.pending_restore,
                     Some(winner_entry.clone())
                 );
                 view.confirm_restore(window, cx);
-                assert_eq!(view.pattern.text(cx), "winner");
+                assert_eq!(view.pattern.read(cx).value().to_string(), "winner");
                 assert_eq!(view.session.evaluation().matches()[0].value, "winner");
                 assert!(view.session.take_snapshot().is_none());
             });

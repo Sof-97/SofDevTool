@@ -1,24 +1,20 @@
 PYTHON ?= python3
 INSTALL_DESTINATION ?= $(HOME)/Applications
 
-.PHONY: help run gallery format verify verify-full release install
+.PHONY: help run format verify verify-full release install
 
 help:
 	@echo 'SofDevTool root commands:'
 	@echo '  make run          Build and open the Debug app'
-	@echo '  make gallery      Open the independent sofui component gallery'
 	@echo '  make format       Apply Rust formatting'
-	@echo '  make verify       Format check, Clippy, tests, Debug app/gallery build'
-	@echo '  make verify-full  Verify plus Release, sofui isolation, Text Diff assets and both bundles'
+	@echo '  make verify       Format check, Clippy, tests, Debug app build'
+	@echo '  make verify-full  Verify plus Release, Text Diff assets and both bundles'
 	@echo '  make release      Package artifacts/SofDevTool.app'
 	@echo '  make install      Install Release to INSTALL_DESTINATION (default ~/Applications)'
 
 run:
 	$(PYTHON) scripts/rust/package.py --profile debug
 	/usr/bin/open 'artifacts/SofDevTool Debug.app'
-
-gallery:
-	cargo run -p sofui --example gallery
 
 format:
 	scripts/rust/format

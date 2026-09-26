@@ -29,6 +29,9 @@ struct RendererState {
     webview: Option<WebView>,
     protocol: BridgeProtocol,
     changed: Rc<Cell<bool>>,
+    /// The effective Latte/Frappe appearance last pushed from the workspace.
+    /// `false` selects `pierre-light`, `true` selects `pierre-dark`.
+    dark: bool,
 }
 
 /// The revision gate is deliberately independent of Wry so its semantics can
@@ -106,13 +109,42 @@ fn allow_navigation(url: &str) -> bool {
     url == "about:blank"
 }
 
-fn render_payload(revision: u64, old: &str, new: &str, mode: &str) -> serde_json::Value {
+fn render_payload(
+    revision: u64,
+    old: &str,
+    new: &str,
+    mode: &str,
+    dark: bool,
+) -> serde_json::Value {
     let line_diff_type = if contains_complex_emoji(old) || contains_complex_emoji(new) {
         "none"
     } else {
         "word-alt"
     };
-    serde_json::json!({"revision":revision,"oldFile":{"name":"Comparison.txt","contents":old},"newFile":{"name":"Comparison.txt","contents":new},"options":{"theme":{"dark":"pierre-dark","light":"pierre-light"},"themeType":"dark","diffStyle":mode,"overflow":"scroll","diffIndicators":"bars","hunkSeparators":"line-info","lineDiffType":line_diff_type,"tokenizeMaxLength":500000,"tokenizeMaxLineLength":10000}})
+    let theme_type = if dark { "dark" } else { "light" };
+    serde_json::json!({"revision":revision,"oldFile":{"name":"Comparison.txt","contents":old},"newFile":{"name":"Comparison.txt","contents":new},"options":{"theme":{"dark":"pierre-dark","light":"pierre-light"},"themeType":theme_type,"diffStyle":mode,"overflow":"scroll","diffIndicators":"bars","hunkSeparators":"line-info","lineDiffType":line_diff_type,"tokenizeMaxLength":500000,"tokenizeMaxLineLength":10000}})
+}
+
+/// The bridge script that switches the already-rendered diff's theme.
+///
+/// Deferred so it lands after a queued `renderDiff` setTimeout, and guarded so
+/// an early call before the bundle loads cannot throw.
+fn appearance_script(dark: bool) -> String {
+    let theme = if dark { "dark" } else { "light" };
+    format!(
+        "setTimeout(()=>{{window.pierreBridge&&window.pierreBridge.setTheme(\"{theme}\");}},0);"
+    )
+}
+
+/// Re-applies the stored appearance to a live WebView, if one is attached.
+///
+/// Called after a diff render completes so an appearance pushed while the
+/// bundle was still loading is not lost.
+fn evaluate_appearance(state: &mut RendererState) {
+    let script = appearance_script(state.dark);
+    if let Some(webview) = &state.webview {
+        let _ = webview.evaluate_script(&script);
+    }
 }
 
 fn preserve_initialization_failure(
@@ -133,6 +165,9 @@ impl TextDiffRenderer {
             webview: None,
             protocol: BridgeProtocol::new(),
             changed,
+            // The workspace pushes the effective appearance on activation; the
+            // prior independent chrome was dark, so that remains the default.
+            dark: true,
         }));
         let bridge_state = Rc::downgrade(&state);
         let html = match renderer_html() {
@@ -178,12 +213,18 @@ impl TextDiffRenderer {
                                 state.protocol.failure(error.to_string());
                             }
                         }
+                        // The queued render may carry a stale theme if it was
+                        // built before the workspace pushed the appearance.
+                        evaluate_appearance(&mut state);
                     }
                     Some("ready") => {
                         state.protocol.callback(
                             message.get("revision").and_then(serde_json::Value::as_u64),
                             RendererStatus::Ready,
                         );
+                        // Apply any appearance change that arrived while this
+                        // render was in flight.
+                        evaluate_appearance(&mut state);
                     }
                     Some("error") => state.protocol.callback(
                         message.get("revision").and_then(serde_json::Value::as_u64),
@@ -210,6 +251,7 @@ impl TextDiffRenderer {
                         state_ref.protocol.failure(error.to_string());
                     }
                 }
+                evaluate_appearance(&mut state_ref);
                 state_ref.changed.set(true);
             }
             Err(error) => {
@@ -230,7 +272,7 @@ impl TextDiffRenderer {
     ) -> Result<(), String> {
         let mut state = self.0.borrow_mut();
         preserve_initialization_failure(state.webview.is_some(), &state.protocol.status)?;
-        let payload = render_payload(revision, &old, &new, mode);
+        let payload = render_payload(revision, &old, &new, mode, state.dark);
         // Pierre can emit ready/error during the same JavaScript turn. Queue
         // it after evaluate_script returns so the IPC callback never re-borrows
         // this renderer while its native WebView is being submitted.
@@ -289,6 +331,21 @@ impl TextDiffRenderer {
         if let Some(webview) = &self.0.borrow().webview {
             let _ = webview.set_visible(active);
         }
+    }
+
+    /// Sets the effective Latte/Frappe appearance of the rendered diff.
+    ///
+    /// `false` selects `pierre-light`, `true` selects `pierre-dark`. The value
+    /// is remembered so the next `render` payload uses it, and a live WebView is
+    /// switched immediately.
+    pub(super) fn set_appearance(&self, dark: bool) {
+        let mut state = self.0.borrow_mut();
+        if state.dark == dark {
+            return;
+        }
+        state.dark = dark;
+        evaluate_appearance(&mut state);
+        state.changed.set(true);
     }
 
     pub(super) fn focus_parent(&self) {
@@ -397,14 +454,18 @@ mod protocol_tests {
     fn renderer_payload_round_trips_utf8_and_selects_the_disclosed_emoji_fallback() {
         let old = "caffè café 🇮🇹 👩🏽‍💻 1️⃣";
         let new = "caffè cafés 🇮🇹 👩🏽‍💻 1️⃣";
-        let payload = render_payload(17, old, new, "split");
+        let payload = render_payload(17, old, new, "split", true);
         assert_eq!(payload["oldFile"]["contents"], old);
         assert_eq!(payload["newFile"]["contents"], new);
         assert_eq!(payload["options"]["lineDiffType"], "none");
+        assert_eq!(payload["options"]["themeType"], "dark");
         assert_eq!(payload["revision"], 17);
 
-        let ordinary = render_payload(18, "caffè", "café", "unified");
+        let ordinary = render_payload(18, "caffè", "café", "unified", false);
         assert_eq!(ordinary["options"]["lineDiffType"], "word-alt");
+        assert_eq!(ordinary["options"]["themeType"], "light");
+        assert_eq!(ordinary["options"]["theme"]["light"], "pierre-light");
+        assert_eq!(ordinary["options"]["theme"]["dark"], "pierre-dark");
     }
 
     #[test]

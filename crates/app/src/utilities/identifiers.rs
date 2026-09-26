@@ -7,7 +7,14 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    div, AnyElement, AnyView, App, Context, FocusHandle, IntoElement, Render, Subscription, Window,
+    div, AnyElement, AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window,
+};
+use gpui_kit::component::{
+    button::{Button, ButtonVariants as _},
+    input::{Input, InputEvent, InputState, NumberInput},
+    list::ListState,
+    tab::{Tab, TabBar},
+    ActiveTheme as _, Disableable as _,
 };
 use sofdevtool_core::session::{Session, SubmitOutcome};
 use sofdevtool_core::utilities::identifiers::{
@@ -16,17 +23,12 @@ use sofdevtool_core::utilities::identifiers::{
     MAXIMUM_ORDERED_KSUID_COUNT,
 };
 use sofdevtool_core::utility::Utility;
-use sofui::{
-    copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ButtonVariant,
-    ConfirmationBar, DiagnosticSeverity, LabeledField, NumericStepper, SegmentedControl,
-    SegmentedControlFocus, SegmentedOption, SelectableList, SelectableListFocus, SelectableRow,
-    TextField, ThemeTokens,
-};
 
 use crate::clipboard::Clipboard;
 use crate::history::{
     HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState, RETENTION,
 };
+use crate::ui;
 use crate::workbench::Workbench;
 
 type IdentifiersSession = Session<Identifiers>;
@@ -43,51 +45,30 @@ pub fn construct(
         .into()
 }
 
-/// One distinct focus handle per simultaneously-rendered button. Reusing a
-/// handle across two visible buttons aborts GPUI when both request focus in a
-/// single frame.
-struct ButtonFocus {
-    ordered_ksuid: FocusHandle,
-    uppercase: FocusHandle,
-    hyphens: FocusHandle,
-    count_stepper: [FocusHandle; 2],
-    generate: FocusHandle,
-    validate: FocusHandle,
-    paste: FocusHandle,
-    copy_all: FocusHandle,
-    clear: FocusHandle,
-    history_toggle: FocusHandle,
-    history_restore: FocusHandle,
-    history_confirm: FocusHandle,
-    history_cancel: FocusHandle,
-}
-
 pub struct IdentifiersWorkspace {
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
     format: IdentifierFormat,
     version: UuidVersion,
     count: u32,
+    count_input: Entity<InputState>,
     uppercase: bool,
     hyphenated: bool,
     ulid_mode: UlidMode,
     ordered_ksuid: bool,
     previous_ulid: Option<[u8; 16]>,
-    namespace: TextField,
-    name: TextField,
-    inspect: TextField,
+    namespace: Entity<InputState>,
+    name: Entity<InputState>,
+    inspect: Entity<InputState>,
     session: IdentifiersSession,
     generation: u64,
     copied_all: bool,
     copied_index: Option<usize>,
     suppress_changes: bool,
     history_view: HistoryViewState,
-    history_focus: SelectableListFocus,
-    selection_focus: SegmentedControlFocus,
+    history_list: Entity<ListState<ui::HistoryListDelegate>>,
     history_visible: bool,
     _history_subscription: HistorySubscription,
-    copy_focus: Vec<FocusHandle>,
-    focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -98,26 +79,88 @@ impl IdentifiersWorkspace {
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
-        let namespace = TextField::new(window, cx);
-        let name = TextField::new(window, cx);
-        let inspect = TextField::new(window, cx);
-        namespace.assign_text(DEFAULT_NAMESPACE, window, cx);
+        let namespace = cx.new(|cx| InputState::new(window, cx));
+        let name = cx.new(|cx| InputState::new(window, cx));
+        let inspect = cx.new(|cx| InputState::new(window, cx));
+        namespace.update(cx, |state, cx| {
+            state.set_value(DEFAULT_NAMESPACE, window, cx)
+        });
+        let count_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value("1")
+                .min(1.0)
+                .max(f64::from(MAXIMUM_ORDERED_KSUID_COUNT))
+                .step(1_f64)
+        });
         let subscriptions = vec![
-            namespace.on_change_in(window, cx, |this, _window, cx| this.invalidate(cx)),
-            name.on_change_in(window, cx, |this, _window, cx| this.invalidate(cx)),
-            inspect.on_change_in(window, cx, |this, _window, cx| this.invalidate(cx)),
+            cx.subscribe_in(
+                &namespace,
+                window,
+                |this, _entity, event: &InputEvent, _window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.invalidate(cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &name,
+                window,
+                |this, _entity, event: &InputEvent, _window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.invalidate(cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &inspect,
+                window,
+                |this, _entity, event: &InputEvent, _window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.invalidate(cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &count_input,
+                window,
+                |this, _entity, event: &InputEvent, _window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.commit_count(cx);
+                    }
+                },
+            ),
         ];
         let history_view = HistoryViewState::load(&history, Identifiers::ID);
         let weak = cx.weak_entity();
         let history_subscription = history.subscribe(Identifiers::ID, move |cx| {
             weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
         });
-        Self {
+        let weak = cx.weak_entity();
+        let history_list = ui::history_state(
+            window,
+            cx,
+            "No retained operations yet.",
+            Rc::new(move |id, _window, cx| {
+                weak.update(cx, |this, cx| {
+                    if this.history_view.select(id) {
+                        ui::history_set_selected(
+                            &this.history_list,
+                            this.history_view.selected.clone(),
+                            cx,
+                        );
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }),
+        );
+        let workspace = Self {
             clipboard,
             history,
             format: IdentifierFormat::Uuid,
             version: UuidVersion::V4,
             count: 1,
+            count_input,
             uppercase: false,
             hyphenated: true,
             ulid_mode: UlidMode::Random,
@@ -132,30 +175,13 @@ impl IdentifiersWorkspace {
             copied_index: None,
             suppress_changes: false,
             history_view,
-            history_focus: SelectableListFocus::new(),
-            selection_focus: SegmentedControlFocus::new(),
+            history_list,
             history_visible: true,
             _history_subscription: history_subscription,
-            copy_focus: Vec::new(),
-            focus: ButtonFocus {
-                ordered_ksuid: cx.focus_handle().tab_stop(true).tab_index(0),
-                uppercase: cx.focus_handle().tab_stop(true).tab_index(0),
-                hyphens: cx.focus_handle().tab_stop(true).tab_index(0),
-                count_stepper: std::array::from_fn(|_| {
-                    cx.focus_handle().tab_stop(true).tab_index(0)
-                }),
-                generate: cx.focus_handle().tab_stop(true).tab_index(0),
-                validate: cx.focus_handle().tab_stop(true).tab_index(0),
-                paste: cx.focus_handle().tab_stop(true).tab_index(0),
-                copy_all: cx.focus_handle().tab_stop(true).tab_index(0),
-                clear: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_toggle: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_restore: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_confirm: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_cancel: cx.focus_handle().tab_stop(true).tab_index(0),
-            },
             _subscriptions: subscriptions,
-        }
+        };
+        workspace.sync_history(cx);
+        workspace
     }
 
     fn request(&self, action: IdentifierAction, cx: &App) -> IdentifiersRequest {
@@ -166,9 +192,9 @@ impl IdentifiersWorkspace {
             count: self.count,
             uppercase: self.uppercase,
             hyphenated: self.hyphenated,
-            namespace: self.namespace.text(cx),
-            name: self.name.text(cx),
-            input: self.inspect.text(cx),
+            namespace: self.namespace.read(cx).value().to_string(),
+            name: self.name.read(cx).value().to_string(),
+            input: self.inspect.read(cx).value().to_string(),
             ulid_mode: self.ulid_mode,
             ordered_ksuid: self.ordered_ksuid,
             previous_ulid: self.previous_ulid,
@@ -185,9 +211,9 @@ impl IdentifiersWorkspace {
             hyphenated: self.hyphenated,
             ulid_mode: self.ulid_mode,
             ordered_ksuid: self.ordered_ksuid,
-            namespace: self.namespace.text(cx),
-            name: self.name.text(cx),
-            input: self.inspect.text(cx),
+            namespace: self.namespace.read(cx).value().to_string(),
+            name: self.name.read(cx).value().to_string(),
+            input: self.inspect.read(cx).value().to_string(),
         }
     }
 
@@ -249,13 +275,21 @@ impl IdentifiersWorkspace {
             .record(Identifiers::ID, Identifiers::SNAPSHOT_VERSION, payload);
         self.history_view
             .apply_record(&self.history, Identifiers::ID, result);
+        self.sync_history(cx);
         self.history.notify_status(cx);
         cx.notify();
     }
 
     fn reconcile_history(&mut self, cx: &mut Context<Self>) {
         self.history_view.reconcile(&self.history, Identifiers::ID);
+        self.sync_history(cx);
         cx.notify();
+    }
+
+    /// Reflects the owning view's History rows and selection into the kit list.
+    fn sync_history(&self, cx: &mut Context<Self>) {
+        ui::history_set_rows(&self.history_list, self.history_items(), cx);
+        ui::history_set_selected(&self.history_list, self.history_view.selected.clone(), cx);
     }
 
     fn set_format(&mut self, format: IdentifierFormat, cx: &mut Context<Self>) {
@@ -290,9 +324,14 @@ impl IdentifiersWorkspace {
         self.invalidate(cx);
     }
 
-    fn adjust_count(&mut self, delta: i64, cx: &mut Context<Self>) {
-        let next = (i64::from(self.count) + delta).clamp(1, i64::from(self.maximum_count()));
-        let next = next as u32;
+    /// Clamps the typed/number-stepped count back into the active format's
+    /// batch limit. The retained number input is reflected during render.
+    fn commit_count(&mut self, cx: &mut Context<Self>) {
+        let raw = self.count_input.read(cx).value().to_string();
+        let Ok(parsed) = raw.trim().parse::<i64>() else {
+            return;
+        };
+        let next = parsed.clamp(1, i64::from(self.maximum_count())) as u32;
         if next != self.count {
             self.count = next;
             self.invalidate(cx);
@@ -302,7 +341,8 @@ impl IdentifiersWorkspace {
     fn paste_inspect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.suppress_changes = true;
-            self.inspect.edit_text(text, window, cx);
+            self.inspect
+                .update(cx, |state, cx| state.replace_all(text, window, cx));
             self.suppress_changes = false;
             self.invalidate(cx);
         }
@@ -329,7 +369,8 @@ impl IdentifiersWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.suppress_changes = true;
-        self.inspect.edit_text("", window, cx);
+        self.inspect
+            .update(cx, |state, cx| state.replace_all("", window, cx));
         self.suppress_changes = false;
         self.session.clear();
         self.copied_all = false;
@@ -362,6 +403,27 @@ impl IdentifiersWorkspace {
         ) == RestoreDecision::Confirm
         {
             self.history_view.pending_restore = Some(entry);
+            let weak = cx.weak_entity();
+            ui::confirm_dialog(
+                window,
+                cx,
+                "Restore History entry",
+                "Restoring this History entry replaces the current non-empty Identifier Generator session.",
+                "Restore",
+                "Cancel",
+                {
+                    let weak = weak.clone();
+                    move |window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.confirm_restore(window, cx));
+                    }
+                },
+                {
+                    let weak = weak.clone();
+                    move |_window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.cancel_restore(cx));
+                    }
+                },
+            );
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -391,12 +453,15 @@ impl IdentifiersWorkspace {
         } else {
             None
         };
-        self.namespace
-            .assign_text(snapshot.request.namespace.clone(), window, cx);
-        self.name
-            .assign_text(snapshot.request.name.clone(), window, cx);
-        self.inspect
-            .assign_text(snapshot.request.input.clone(), window, cx);
+        self.namespace.update(cx, |state, cx| {
+            state.set_value(snapshot.request.namespace.clone(), window, cx)
+        });
+        self.name.update(cx, |state, cx| {
+            state.set_value(snapshot.request.name.clone(), window, cx)
+        });
+        self.inspect.update(cx, |state, cx| {
+            state.set_value(snapshot.request.input.clone(), window, cx)
+        });
         self.session.restore(snapshot);
         // Advance past the restored nonce so the next explicit action is always
         // a new revision rather than being deduplicated as an unchanged request.
@@ -407,6 +472,7 @@ impl IdentifiersWorkspace {
         self.history_view.pending_restore = None;
         self.copied_all = false;
         self.copied_index = None;
+        self.sync_history(cx);
         cx.notify();
     }
 
@@ -452,13 +518,13 @@ impl IdentifiersWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<SelectableRow> {
+    fn history_items(&self) -> Vec<ui::HistoryRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                SelectableRow {
+                ui::HistoryRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
@@ -472,17 +538,11 @@ impl IdentifiersWorkspace {
             .collect()
     }
 
-    fn ensure_copy_focus(&mut self, count: usize, cx: &mut Context<Self>) {
-        while self.copy_focus.len() < count {
-            self.copy_focus
-                .push(cx.focus_handle().tab_stop(true).tab_index(0));
-        }
-    }
-
     fn render_values(&self, values: &[String], cx: &mut Context<Self>) -> AnyElement {
-        let tokens = ThemeTokens::active();
+        let theme = cx.theme().clone();
         if values.is_empty() {
-            return empty_state("Generate identifiers or validate one to begin").into_any_element();
+            return ui::empty_state(cx, "Generate identifiers or validate one to begin")
+                .into_any_element();
         }
         let mut list = div()
             .id("identifiers.results")
@@ -507,49 +567,53 @@ impl IdentifiersWorkspace {
                     .py_1()
                     .rounded_md()
                     .border_1()
-                    .border_color(tokens.border())
-                    .bg(tokens.surface_raised())
+                    .border_color(theme.border)
+                    .bg(theme.secondary)
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .text_sm()
-                            .text_color(tokens.text())
+                            .text_color(theme.foreground)
                             .child(display),
                     )
-                    .child(copy_feedback(self.copied_index == Some(index), "Copied"))
+                    .child(ui::copy_feedback(
+                        cx,
+                        self.copied_index == Some(index),
+                        "Copied",
+                    ))
                     .child(
-                        Button::with_id(
-                            format!("identifiers.copy.{index}"),
-                            format!("Copy {}", index + 1),
-                        )
-                        .focus_handle(self.copy_focus[index].clone())
-                        .on_click(view_click(
-                            cx,
-                            move |this, _window, cx| {
+                        Button::new(format!("identifiers.copy.{index}"))
+                            .label(format!("Copy {}", index + 1))
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
                                 this.copy_value(index, to_copy.clone(), cx);
-                            },
-                        )),
+                            })),
                     ),
             );
         }
         list.into_any_element()
     }
 
-    fn render_diagnostics(&self) -> impl IntoElement {
+    fn render_diagnostics(&self, cx: &App) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_2().w_full();
         for diagnostic in self.session.evaluation().diagnostics() {
             let severity = match diagnostic.severity {
-                sofdevtool_core::diagnostic::Severity::Error => DiagnosticSeverity::Error,
-                sofdevtool_core::diagnostic::Severity::Warning => DiagnosticSeverity::Warning,
+                sofdevtool_core::diagnostic::Severity::Error => ui::DiagnosticSeverity::Error,
+                sofdevtool_core::diagnostic::Severity::Warning => ui::DiagnosticSeverity::Warning,
             };
             let location = diagnostic.location.map(|l| (l.line, l.column));
-            column = column.child(diagnostic_banner(severity, &diagnostic.message, location));
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                severity,
+                &diagnostic.message,
+                location,
+            ));
         }
         column
     }
 
     fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
         let selected = self.history_view.selected.clone();
         let restore_enabled = selected
             .as_ref()
@@ -561,33 +625,10 @@ impl IdentifiersWorkspace {
             })
             .map(|entry| decode_snapshot(entry).is_some())
             .unwrap_or(false);
-        let actions = div().flex().flex_row().gap_2().child(
-            Button::with_id("identifiers.history.restore-selected", "Restore selected")
-                .disabled(!restore_enabled)
-                .focus_handle(self.focus.history_restore.clone())
-                .on_click(view_click(cx, |this, window, cx| {
-                    this.restore_selected(window, cx);
-                })),
-        );
-        let weak = cx.weak_entity();
-        let panel = SelectableList::new(
-            "identifiers.history",
-            "History",
-            self.history_items(),
-            selected,
-            "No retained operations yet.",
-            self.history_focus.clone(),
-        )
-        .summary(format!("{}/{}", self.history_view.entries.len(), RETENTION))
-        .on_select(Rc::new(move |id, _window, cx| {
-            weak.update(cx, |this, cx| {
-                if this.history_view.select(id) {
-                    cx.notify();
-                }
-            })
-            .ok();
-        }))
-        .actions(actions);
+        let restore = Button::new("identifiers.history.restore-selected")
+            .label("Restore selected")
+            .disabled(!restore_enabled)
+            .on_click(cx.listener(|this, _event, window, cx| this.restore_selected(window, cx)));
         div()
             .flex()
             .flex_col()
@@ -596,207 +637,138 @@ impl IdentifiersWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::active().border())
-            .child(panel)
-    }
-
-    fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        ConfirmationBar::new(
-            "identifiers.restore-confirmation",
-            "Restoring this entry replaces the current non-empty Identifier Generator session.",
-            "Restore",
-            "Cancel",
-        )
-        .focus_handles(
-            self.focus.history_confirm.clone(),
-            self.focus.history_cancel.clone(),
-        )
-        .on_confirm(view_click(cx, |this, window, cx| {
-            this.confirm_restore(window, cx);
-        }))
-        .on_cancel(view_click(cx, |this, _window, cx| {
-            this.cancel_restore(cx);
-        }))
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .child(ui::history_panel(
+                cx,
+                &self.history_list,
+                "History",
+                format!("{}/{}", self.history_view.entries.len(), RETENTION),
+                restore,
+            ))
     }
 }
 
 impl Render for IdentifiersWorkspace {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tokens = ThemeTokens::active();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
         let values = self.session.evaluation().values().to_vec();
-        self.ensure_copy_focus(values.len(), cx);
         let can_copy = !values.is_empty();
 
-        let formats = SegmentedControl::new(
-            "identifiers.format",
-            "Format",
-            IdentifierFormat::ALL
-                .into_iter()
-                .map(|format| SegmentedOption::new(format_id(format), format.label()))
-                .collect(),
-            Some(format_id(self.format).to_owned()),
-            self.selection_focus.clone(),
-        )
-        .on_change({
-            let weak = cx.weak_entity();
-            Rc::new(move |id, _window, cx| {
-                weak.update(cx, |this, cx| {
-                    let format = match id {
-                        "uuid" => IdentifierFormat::Uuid,
-                        "ulid" => IdentifierFormat::Ulid,
-                        "ksuid" => IdentifierFormat::Ksuid,
-                        _ => return,
-                    };
-                    this.set_format(format, cx);
-                })
-                .ok();
-            })
+        // Keep the retained count input showing the clamped batch size and the
+        // active format's maximum. Programmatic setters emit no change, so this
+        // cannot loop.
+        let count_text = self.count.to_string();
+        let maximum = self.maximum_count() as f64;
+        self.count_input.update(cx, |state, cx| {
+            state.set_max(Some(maximum), window, cx);
+            if state.value().as_ref() != count_text.as_str() {
+                state.set_value(count_text.clone(), window, cx);
+            }
         });
 
-        // Only the controls that belong to the active format are rendered.
+        let formats = TabBar::new("identifiers.format")
+            .segmented()
+            .selected_index(self.format.index())
+            .children(
+                IdentifierFormat::ALL
+                    .into_iter()
+                    .map(|format| Tab::new().label(format.label())),
+            )
+            .on_click(cx.listener(|this, index, _window, cx| {
+                if let Some(format) = IdentifierFormat::ALL.get(*index) {
+                    this.set_format(*format, cx);
+                }
+            }));
+
         let mut format_controls = div().flex().flex_row().flex_wrap().items_center().gap_2();
         match self.format {
             IdentifierFormat::Uuid => {
-                let versions = SegmentedControl::new(
-                    "identifiers.uuid-version",
-                    "UUID version",
-                    UuidVersion::ALL
-                        .into_iter()
-                        .map(|version| SegmentedOption::new(version_id(version), version.label()))
-                        .collect(),
-                    Some(version_id(self.version).to_owned()),
-                    self.selection_focus.clone(),
-                )
-                .on_change({
-                    let weak = cx.weak_entity();
-                    Rc::new(move |id, _window, cx| {
-                        weak.update(cx, |this, cx| {
-                            let version = match id {
-                                "v1" => UuidVersion::V1,
-                                "v3" => UuidVersion::V3,
-                                "v4" => UuidVersion::V4,
-                                "v5" => UuidVersion::V5,
-                                "v6" => UuidVersion::V6,
-                                "v7" => UuidVersion::V7,
-                                _ => return,
-                            };
-                            this.set_version(version, cx);
-                        })
-                        .ok();
-                    })
-                });
+                let versions = TabBar::new("identifiers.uuid-version")
+                    .segmented()
+                    .selected_index(self.version.index())
+                    .children(
+                        UuidVersion::ALL
+                            .into_iter()
+                            .map(|version| Tab::new().label(version.label())),
+                    )
+                    .on_click(cx.listener(|this, index, _window, cx| {
+                        if let Some(version) = UuidVersion::ALL.get(*index) {
+                            this.set_version(*version, cx);
+                        }
+                    }));
                 format_controls = format_controls
                     .child(versions)
                     .child(
-                        Button::with_id(
-                            "identifiers.uppercase",
-                            if self.uppercase {
+                        Button::new("identifiers.uppercase")
+                            .label(if self.uppercase {
                                 "Uppercase: on"
                             } else {
                                 "Uppercase: off"
-                            },
-                        )
-                        .variant(if self.uppercase {
-                            ButtonVariant::Primary
-                        } else {
-                            ButtonVariant::Secondary
-                        })
-                        .focus_handle(self.focus.uppercase.clone())
-                        .on_click(view_click(cx, |this, _window, cx| {
-                            this.toggle_uppercase(cx);
-                        })),
+                            })
+                            .when(self.uppercase, |button| button.primary())
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.toggle_uppercase(cx);
+                            })),
                     )
                     .child(
-                        Button::with_id(
-                            "identifiers.hyphens",
-                            if self.hyphenated {
+                        Button::new("identifiers.hyphens")
+                            .label(if self.hyphenated {
                                 "Hyphens: on"
                             } else {
                                 "Hyphens: off"
-                            },
-                        )
-                        .variant(if self.hyphenated {
-                            ButtonVariant::Primary
-                        } else {
-                            ButtonVariant::Secondary
-                        })
-                        .focus_handle(self.focus.hyphens.clone())
-                        .on_click(view_click(cx, |this, _window, cx| {
-                            this.toggle_hyphens(cx);
-                        })),
+                            })
+                            .when(self.hyphenated, |button| button.primary())
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.toggle_hyphens(cx);
+                            })),
                     );
             }
             IdentifierFormat::Ulid => {
                 format_controls = format_controls.child(
-                    SegmentedControl::new(
-                        "identifiers.ulid-mode",
-                        "ULID mode",
-                        UlidMode::ALL
-                            .into_iter()
-                            .map(|mode| SegmentedOption::new(ulid_mode_id(mode), mode.label()))
-                            .collect(),
-                        Some(ulid_mode_id(self.ulid_mode).to_owned()),
-                        self.selection_focus.clone(),
-                    )
-                    .on_change({
-                        let weak = cx.weak_entity();
-                        Rc::new(move |id, _window, cx| {
-                            weak.update(cx, |this, cx| {
-                                let mode = match id {
-                                    "random" => UlidMode::Random,
-                                    "monotonic" => UlidMode::Monotonic,
-                                    _ => return,
-                                };
-                                this.set_ulid_mode(mode, cx);
-                            })
-                            .ok();
-                        })
-                    }),
+                    TabBar::new("identifiers.ulid-mode")
+                        .segmented()
+                        .selected_index(self.ulid_mode.index())
+                        .children(
+                            UlidMode::ALL
+                                .into_iter()
+                                .map(|mode| Tab::new().label(mode.label())),
+                        )
+                        .on_click(cx.listener(|this, index, _window, cx| {
+                            if let Some(mode) = UlidMode::ALL.get(*index) {
+                                this.set_ulid_mode(*mode, cx);
+                            }
+                        })),
                 );
             }
             IdentifierFormat::Ksuid => {
                 format_controls = format_controls.child(
-                    Button::with_id(
-                        "identifiers.ordered-ksuid",
-                        if self.ordered_ksuid {
+                    Button::new("identifiers.ordered-ksuid")
+                        .label(if self.ordered_ksuid {
                             "Ordered batch: on"
                         } else {
                             "Ordered batch: off"
-                        },
-                    )
-                    .variant(if self.ordered_ksuid {
-                        ButtonVariant::Primary
-                    } else {
-                        ButtonVariant::Secondary
-                    })
-                    .focus_handle(self.focus.ordered_ksuid.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
-                        this.toggle_ordered_ksuid(cx);
-                    })),
+                        })
+                        .when(self.ordered_ksuid, |button| button.primary())
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.toggle_ordered_ksuid(cx);
+                        })),
                 );
             }
         }
 
-        let maximum = self.maximum_count();
-        let count_controls = NumericStepper::new(
-            "identifiers.count",
-            "Count",
-            Some(self.count as i32),
-            1,
-            maximum as i32,
-            1,
-        )
-        .focus_handles(
-            self.focus.count_stepper[0].clone(),
-            self.focus.count_stepper[1].clone(),
-        )
-        .on_step({
-            let weak = cx.weak_entity();
-            move |delta, _window, cx| {
-                weak.update(cx, |this, cx| this.adjust_count(i64::from(delta), cx))
-                    .ok();
-            }
-        });
+        let count_controls = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child("Count"),
+            )
+            .child(div().w_32().child(NumberInput::new(&self.count_input)));
 
         let toolbar = div()
             .flex()
@@ -807,23 +779,24 @@ impl Render for IdentifiersWorkspace {
             .child(
                 div()
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child("Format"),
             )
             .child(formats)
             .child(format_controls)
             .child(count_controls)
             .child(
-                Button::primary_with_id("identifiers.generate", "Generate")
-                    .focus_handle(self.focus.generate.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
+                Button::new("identifiers.generate")
+                    .label("Generate")
+                    .primary()
+                    .on_click(cx.listener(|this, _event, _window, cx| {
                         this.run_action(IdentifierAction::Generate, cx);
                     })),
             );
 
         let collision_note = div()
             .text_xs()
-            .text_color(tokens.text_muted())
+            .text_color(theme.muted_foreground)
             .child("Identifiers are collision-resistant, not guaranteed unique or secret.");
 
         let mut column = div()
@@ -831,8 +804,8 @@ impl Render for IdentifiersWorkspace {
             .flex_col()
             .flex_1()
             .min_h_0()
-            .bg(tokens.background())
-            .text_color(tokens.text())
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .p_3()
             .gap_3()
             .child(
@@ -850,7 +823,7 @@ impl Render for IdentifiersWorkspace {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(tokens.text_muted())
+                            .text_color(theme.muted_foreground)
                             .child("UUID, ULID and KSUID, local and offline"),
                     ),
             )
@@ -864,13 +837,21 @@ impl Render for IdentifiersWorkspace {
                     .flex_row()
                     .gap_2()
                     .w_full()
-                    .child(LabeledField::new(
+                    .child(ui::labeled_field(
+                        cx,
                         "Namespace UUID",
-                        self.namespace.render("identifiers.namespace"),
+                        None::<String>,
+                        Input::new(&self.namespace)
+                            .accessibility_id("identifiers.namespace")
+                            .w_full(),
                     ))
-                    .child(LabeledField::new(
+                    .child(ui::labeled_field(
+                        cx,
                         "Name",
-                        self.name.render("identifiers.name"),
+                        None::<String>,
+                        Input::new(&self.name)
+                            .accessibility_id("identifiers.name")
+                            .w_full(),
                     )),
             );
         }
@@ -882,21 +863,25 @@ impl Render for IdentifiersWorkspace {
                 .items_center()
                 .gap_2()
                 .w_full()
-                .child(LabeledField::new(
+                .child(ui::labeled_field(
+                    cx,
                     "Inspect",
-                    self.inspect.render("identifiers.inspect"),
+                    None::<String>,
+                    Input::new(&self.inspect)
+                        .accessibility_id("identifiers.inspect")
+                        .w_full(),
                 ))
                 .child(
-                    Button::with_id("identifiers.validate", "Validate")
-                        .focus_handle(self.focus.validate.clone())
-                        .on_click(view_click(cx, |this, _window, cx| {
+                    Button::new("identifiers.validate")
+                        .label("Validate")
+                        .on_click(cx.listener(|this, _event, _window, cx| {
                             this.run_action(IdentifierAction::Inspect, cx);
                         })),
                 )
                 .child(
-                    Button::with_id("identifiers.paste", "Paste")
-                        .focus_handle(self.focus.paste.clone())
-                        .on_click(view_click(cx, |this, window, cx| {
+                    Button::new("identifiers.paste")
+                        .label("Paste")
+                        .on_click(cx.listener(|this, _event, window, cx| {
                             this.paste_inspect(window, cx);
                         })),
                 ),
@@ -907,65 +892,66 @@ impl Render for IdentifiersWorkspace {
             .flex_row()
             .items_center()
             .gap_2()
-            .child(copy_feedback(self.copied_all, "Copied all to Clipboard"))
+            .child(ui::copy_feedback(
+                cx,
+                self.copied_all,
+                "Copied all to Clipboard",
+            ))
             .child(
-                Button::with_id(
-                    "identifiers.history.toggle",
-                    if self.history_visible {
+                Button::new("identifiers.history.toggle")
+                    .label(if self.history_visible {
                         "History: on"
                     } else {
                         "History: off"
-                    },
-                )
-                .focus_handle(self.focus.history_toggle.clone())
-                .on_click(view_click(cx, |this, _window, cx| {
-                    this.history_visible = !this.history_visible;
-                    cx.notify();
-                })),
+                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.history_visible = !this.history_visible;
+                        cx.notify();
+                    })),
             )
             .child(
-                Button::with_id("identifiers.copy-all", "Copy All")
+                Button::new("identifiers.copy-all")
+                    .label("Copy All")
                     .disabled(!can_copy)
-                    .focus_handle(self.focus.copy_all.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
+                    .on_click(cx.listener(|this, _event, _window, cx| {
                         this.copy_all(cx);
                     })),
             )
             .child(
-                Button::with_id("identifiers.clear", "Clear")
-                    .focus_handle(self.focus.clear.clone())
-                    .on_click(view_click(cx, |this, window, cx| {
+                Button::new("identifiers.clear")
+                    .label("Clear")
+                    .on_click(cx.listener(|this, _event, window, cx| {
                         this.clear(window, cx);
                     })),
             );
         column = column.child(actions);
 
-        if self.history_view.pending_restore.is_some() {
-            column = column.child(self.render_restore_confirmation(cx));
-        }
         if let Some(error) = self.history_view.error.clone() {
-            column = column.child(diagnostic_banner(
-                DiagnosticSeverity::Warning,
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                ui::DiagnosticSeverity::Warning,
                 &format!("Identifier Generator History: {error}"),
                 None,
             ));
         }
 
+        let values_body = self.render_values(&values, cx);
         let mut workspace = div()
             .flex()
             .flex_row()
             .gap_4()
             .flex_1()
             .min_h_0()
-            .child(panel(
+            .child(ui::panel(
+                cx,
                 "Identifiers",
                 "read-only generated values",
-                self.render_values(&values, cx),
+                values_body,
             ));
         if self.history_visible {
             workspace = workspace.child(self.render_history(cx));
         }
-        column.child(workspace).child(self.render_diagnostics())
+        column.child(workspace).child(self.render_diagnostics(cx))
     }
 }
 
@@ -1035,32 +1021,6 @@ fn decode_snapshot(entry: &HistoryEntry) -> Option<IdentifiersSnapshot> {
     serde_json::from_value(entry.payload.clone()).ok()
 }
 
-fn format_id(format: IdentifierFormat) -> &'static str {
-    match format {
-        IdentifierFormat::Uuid => "uuid",
-        IdentifierFormat::Ulid => "ulid",
-        IdentifierFormat::Ksuid => "ksuid",
-    }
-}
-
-fn version_id(version: UuidVersion) -> &'static str {
-    match version {
-        UuidVersion::V1 => "v1",
-        UuidVersion::V3 => "v3",
-        UuidVersion::V4 => "v4",
-        UuidVersion::V5 => "v5",
-        UuidVersion::V6 => "v6",
-        UuidVersion::V7 => "v7",
-    }
-}
-
-fn ulid_mode_id(mode: UlidMode) -> &'static str {
-    match mode {
-        UlidMode::Random => "random",
-        UlidMode::Monotonic => "monotonic",
-    }
-}
-
 fn preview_line(values: &[String]) -> String {
     let Some(first) = values.first() else {
         return "Empty result".to_owned();
@@ -1084,9 +1044,15 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use gpui::{Focusable as _, VisualTestContext};
+    use gpui_kit::component::Root;
 
     use crate::history::{HistoryClock, HistoryEntry, HistoryStore};
     use sofdevtool_core::utilities::identifiers::IdentifiersEvaluation;
+
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
     #[derive(Default)]
     struct TestClipboard(RefCell<Option<String>>);
@@ -1119,10 +1085,7 @@ mod tests {
         std::env::temp_dir().join(format!(
             "sofdevtool-identifiers-restore-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
         ))
     }
 
@@ -1229,7 +1192,7 @@ mod tests {
     fn workspace_restore_confirmation_cancel_and_confirm_use_the_captured_batch(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofui::init);
+        cx.update(gpui_kit::init);
         let root = isolated_root();
         let clock_calls = Rc::new(Cell::new(0));
         let history = Rc::new(HistoryRecorder::new(
@@ -1249,9 +1212,15 @@ mod tests {
         let entry = history_entry("captured", snapshot.clone());
         history.store().record(entry.clone()).unwrap();
         let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard::default());
-        let (workspace, cx) = cx.add_window_view(|window, cx| {
-            IdentifiersWorkspace::new(window, cx, clipboard, history.clone())
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view =
+                cx.new(|cx| IdentifiersWorkspace::new(window, cx, clipboard, history.clone()));
+            captured = Some(view.clone());
+            Root::new(view, window, cx)
         });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
@@ -1321,7 +1290,7 @@ mod tests {
     fn empty_and_equivalent_identifier_workspaces_restore_without_confirmation(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofui::init);
+        cx.update(gpui_kit::init);
         let root = isolated_root();
         let clock_calls = Rc::new(Cell::new(0));
         let history = Rc::new(HistoryRecorder::new(
@@ -1335,9 +1304,15 @@ mod tests {
         let entry = history_entry("captured", snapshot.clone());
         history.store().record(entry.clone()).unwrap();
         let clipboard: Rc<dyn Clipboard> = Rc::new(TestClipboard::default());
-        let (workspace, cx) = cx.add_window_view(|window, cx| {
-            IdentifiersWorkspace::new(window, cx, clipboard, history.clone())
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view =
+                cx.new(|cx| IdentifiersWorkspace::new(window, cx, clipboard, history.clone()));
+            captured = Some(view.clone());
+            Root::new(view, window, cx)
         });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
@@ -1363,7 +1338,7 @@ mod tests {
     fn segmented_modes_repeat_generation_and_copy_actions_preserve_exact_values(
         cx: &mut gpui::TestAppContext,
     ) {
-        cx.update(sofui::init);
+        cx.update(gpui_kit::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
             HistoryStore::new(root.clone()),
@@ -1371,79 +1346,62 @@ mod tests {
         ));
         let clipboard = Rc::new(TestClipboard::default());
         let app_clipboard: Rc<dyn Clipboard> = clipboard.clone();
-        let (workspace, cx) = cx.add_window_view(|window, cx| {
-            IdentifiersWorkspace::new(window, cx, app_clipboard, history.clone())
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view =
+                cx.new(|cx| IdentifiersWorkspace::new(window, cx, app_clipboard, history.clone()));
+            captured = Some(view.clone());
+            Root::new(view, window, cx)
         });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let selection_focus = workspace.read(cx).selection_focus.clone();
-            let focus = selection_focus.handle("identifiers.format", "ulid", cx);
-            window.focus(&focus, cx);
-        });
-        cx.simulate_keystrokes("enter");
-        assert_eq!(
-            workspace.read_with(cx, |view, _| view.format),
-            IdentifierFormat::Ulid
-        );
-
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let selection_focus = workspace.read(cx).selection_focus.clone();
-            let focus = selection_focus.handle("identifiers.ulid-mode", "monotonic", cx);
-            window.focus(&focus, cx);
-        });
-        cx.simulate_keystrokes("enter");
-        assert_eq!(
-            workspace.read_with(cx, |view, _| view.ulid_mode),
-            UlidMode::Monotonic
-        );
-
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let selection_focus = workspace.read(cx).selection_focus.clone();
-            let focus = selection_focus.handle("identifiers.format", "uuid", cx);
-            window.focus(&focus, cx);
-        });
-        cx.simulate_keystrokes("enter");
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let selection_focus = workspace.read(cx).selection_focus.clone();
-            let focus = selection_focus.handle("identifiers.uuid-version", "v7", cx);
-            window.focus(&focus, cx);
-        });
-        cx.simulate_keystrokes("enter");
-        assert_eq!(
-            workspace.read_with(cx, |view, _| view.version),
-            UuidVersion::V7
-        );
-
-        for _ in 0..2 {
-            cx.update(|window, cx| {
-                window.draw(cx).clear(cx);
-                let focus = workspace.read(cx).focus.generate.clone();
-                window.focus(&focus, cx);
+            workspace.update(cx, |view, cx| {
+                view.set_format(IdentifierFormat::Ulid, cx);
+                assert_eq!(view.format, IdentifierFormat::Ulid);
+                view.set_ulid_mode(UlidMode::Monotonic, cx);
+                assert_eq!(view.ulid_mode, UlidMode::Monotonic);
+                view.set_format(IdentifierFormat::Uuid, cx);
+                view.set_version(UuidVersion::V7, cx);
+                assert_eq!(view.version, UuidVersion::V7);
             });
-            cx.simulate_keystrokes("enter");
-        }
-        let values = workspace.read_with(cx, |view, _| view.session.evaluation().values().to_vec());
+            window.draw(cx).clear(cx);
+        });
+
+        // The kit number input owns stepping: ArrowUp/ArrowDown reach the
+        // workspace through the same Change path as the stepper buttons.
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let focus = workspace.read(cx).count_input.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+        });
+        cx.simulate_keystrokes("up");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(workspace.read_with(&cx, |view, _| view.count), 2);
+        cx.simulate_keystrokes("down");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(workspace.read_with(&cx, |view, _| view.count), 1);
+
+        cx.update(|_window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.run_action(IdentifierAction::Generate, cx);
+                view.run_action(IdentifierAction::Generate, cx);
+            });
+        });
+        let values =
+            workspace.read_with(&cx, |view, _| view.session.evaluation().values().to_vec());
         assert_eq!(values.len(), 1);
         assert_eq!(history.load(Identifiers::ID).unwrap().len(), 2);
 
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).copy_focus[0].clone();
-            window.focus(&focus, cx);
+        cx.update(|_window, cx| {
+            workspace.update(cx, |view, cx| view.copy_value(0, values[0].clone(), cx));
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(clipboard.0.borrow().as_deref(), Some(values[0].as_str()));
 
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            let focus = workspace.read(cx).focus.copy_all.clone();
-            window.focus(&focus, cx);
+        cx.update(|_window, cx| {
+            workspace.update(cx, |view, cx| view.copy_all(cx));
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(
             clipboard.0.borrow().as_deref(),
             Some(values.join("\n").as_str())

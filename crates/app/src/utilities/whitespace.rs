@@ -5,21 +5,24 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, AnyView, App, Context, FocusHandle, IntoElement, Render, Subscription, Window};
+use gpui::{div, AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui_kit::component::{
+    button::Button,
+    input::{InputEvent, InputState, NumberInput, TextareaState},
+    list::ListState,
+    tab::{Tab, TabBar},
+    ActiveTheme as _, Disableable as _,
+};
 use sofdevtool_core::session::{Session, SubmitOutcome};
 use sofdevtool_core::utilities::whitespace::{
     Whitespace, WhitespaceAction, WhitespaceEvaluation, WhitespaceLineEnding, WhitespaceRequest,
     WhitespaceSnapshot, DEFAULT_TAB_WIDTH, MAX_TAB_WIDTH, MIN_TAB_WIDTH,
 };
 use sofdevtool_core::utility::Utility;
-use sofui::{
-    copy_feedback, diagnostic_banner, empty_state, panel, view_click, Button, ConfirmationBar,
-    DiagnosticSeverity, NumericStepper, SegmentedControl, SegmentedControlFocus, SegmentedOption,
-    SelectableList, SelectableListFocus, SelectableRow, TextEditor, ThemeTokens,
-};
 
 use crate::clipboard::Clipboard;
 use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::ui;
 use crate::workbench::Workbench;
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
@@ -37,36 +40,23 @@ pub fn construct(
         .into()
 }
 
-struct ButtonFocus {
-    tab_decrease: FocusHandle,
-    tab_increase: FocusHandle,
-    paste: FocusHandle,
-    copy: FocusHandle,
-    clear: FocusHandle,
-    history_toggle: FocusHandle,
-    history_restore: FocusHandle,
-    history_confirm: FocusHandle,
-    history_cancel: FocusHandle,
-}
-
 pub struct WhitespaceWorkspace {
-    input: TextEditor,
-    result: TextEditor,
+    input: Entity<TextareaState>,
+    result: Entity<TextareaState>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
     action: WhitespaceAction,
     line_ending: WhitespaceLineEnding,
     tab_width: u8,
+    tab_width_input: Entity<InputState>,
     session: WhitespaceSession,
     display_epoch: u64,
     copied: bool,
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_visible: bool,
-    history_focus: SelectableListFocus,
-    choice_focus: SegmentedControlFocus,
+    history_list: Entity<ListState<ui::HistoryListDelegate>>,
     _history_subscription: HistorySubscription,
-    focus: ButtonFocus,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -77,17 +67,58 @@ impl WhitespaceWorkspace {
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
-        let input = TextEditor::new(window, cx);
-        let result = TextEditor::new(window, cx);
-        let subscriptions = vec![input.on_change_in(window, cx, |this, window, cx| {
-            this.schedule(window, cx);
-        })];
+        let input = cx.new(|cx| TextareaState::new(window, cx));
+        let result = cx.new(|cx| TextareaState::new(window, cx));
+        let mut subscriptions = vec![cx.subscribe_in(
+            &input,
+            window,
+            |this, _entity, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.schedule(window, cx);
+                }
+            },
+        )];
+        let tab_width_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(DEFAULT_TAB_WIDTH.to_string())
+                .min(f64::from(MIN_TAB_WIDTH))
+                .max(f64::from(MAX_TAB_WIDTH))
+                .step(1_f64)
+        });
+        subscriptions.push(cx.subscribe_in(
+            &tab_width_input,
+            window,
+            |this, _entity, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.commit_tab_width(window, cx);
+                }
+            },
+        ));
         let history_view = HistoryViewState::load(&history, Whitespace::ID);
         let weak = cx.weak_entity();
         let history_subscription = history.subscribe(Whitespace::ID, move |cx| {
             weak.update(cx, |this, cx| this.reconcile_history(cx)).ok();
         });
-        Self {
+        let weak = cx.weak_entity();
+        let history_list = ui::history_state(
+            window,
+            cx,
+            "No retained operations yet.",
+            Rc::new(move |id, _window, cx| {
+                weak.update(cx, |this, cx| {
+                    if this.history_view.select(id) {
+                        ui::history_set_selected(
+                            &this.history_list,
+                            this.history_view.selected.clone(),
+                            cx,
+                        );
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }),
+        );
+        let workspace = Self {
             input,
             result,
             clipboard,
@@ -95,33 +126,24 @@ impl WhitespaceWorkspace {
             action: WhitespaceAction::EdgeTrim,
             line_ending: WhitespaceLineEnding::Lf,
             tab_width: DEFAULT_TAB_WIDTH,
+            tab_width_input,
             session: WhitespaceSession::new(),
             display_epoch: u64::MAX,
             copied: false,
             suppress_changes: false,
             history_view,
             history_visible: true,
-            history_focus: SelectableListFocus::new(),
-            choice_focus: SegmentedControlFocus::new(),
+            history_list,
             _history_subscription: history_subscription,
-            focus: ButtonFocus {
-                tab_decrease: cx.focus_handle().tab_stop(true).tab_index(0),
-                tab_increase: cx.focus_handle().tab_stop(true).tab_index(0),
-                paste: cx.focus_handle().tab_stop(true).tab_index(0),
-                copy: cx.focus_handle().tab_stop(true).tab_index(0),
-                clear: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_toggle: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_restore: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_confirm: cx.focus_handle().tab_stop(true).tab_index(0),
-                history_cancel: cx.focus_handle().tab_stop(true).tab_index(0),
-            },
             _subscriptions: subscriptions,
-        }
+        };
+        workspace.sync_history(cx);
+        workspace
     }
 
     fn request(&self, cx: &App) -> WhitespaceRequest {
         WhitespaceRequest {
-            input: self.input.text(cx),
+            input: self.input.read(cx).value().to_string(),
             action: self.action,
             line_ending: self.line_ending,
             tab_width: self.tab_width,
@@ -161,13 +183,21 @@ impl WhitespaceWorkspace {
             .record(Whitespace::ID, Whitespace::SNAPSHOT_VERSION, payload);
         self.history_view
             .apply_record(&self.history, Whitespace::ID, result);
+        self.sync_history(cx);
         self.history.notify_status(cx);
         cx.notify();
     }
 
     fn reconcile_history(&mut self, cx: &mut Context<Self>) {
         self.history_view.reconcile(&self.history, Whitespace::ID);
+        self.sync_history(cx);
         cx.notify();
+    }
+
+    /// Reflects the owning view's History rows and selection into the kit list.
+    fn sync_history(&self, cx: &mut Context<Self>) {
+        ui::history_set_rows(&self.history_list, self.history_items(), cx);
+        ui::history_set_selected(&self.history_list, self.history_view.selected.clone(), cx);
     }
 
     fn sync_display(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -176,12 +206,12 @@ impl WhitespaceWorkspace {
             return;
         }
         self.display_epoch = epoch;
-        match self.session.evaluation() {
-            WhitespaceEvaluation::Valid { output } => {
-                self.result.assign_text(output.clone(), window, cx);
-            }
-            _ => self.result.assign_text("", window, cx),
-        }
+        let value = match self.session.evaluation() {
+            WhitespaceEvaluation::Valid { output } => output.clone(),
+            _ => String::new(),
+        };
+        self.result
+            .update(cx, |state, cx| state.set_value(value, window, cx));
     }
 
     fn set_action(
@@ -204,21 +234,37 @@ impl WhitespaceWorkspace {
         self.schedule(window, cx);
     }
 
-    fn adjust_tab_width(&mut self, delta: i32, window: &mut Window, cx: &mut Context<Self>) {
-        let next = NumericStepper::stepped(
-            i32::from(self.tab_width),
-            delta,
-            i32::from(MIN_TAB_WIDTH),
-            i32::from(MAX_TAB_WIDTH),
-        );
-        self.tab_width = next as u8;
+    /// Reads the tab width from the number input, clamps it to the Utility
+    /// bounds and reschedules with the clamped value.
+    fn commit_tab_width(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let raw = self.tab_width_input.read(cx).value().to_string();
+        let parsed = raw.trim().parse::<u8>().unwrap_or(self.tab_width);
+        let clamped = parsed.clamp(MIN_TAB_WIDTH, MAX_TAB_WIDTH);
+        if clamped == self.tab_width {
+            return;
+        }
+        self.tab_width = clamped;
+        self.schedule(window, cx);
+    }
+
+    /// Sets the tab width, reflects it in the number input and reschedules.
+    ///
+    /// Used by restore, which must not let the input's own change listener
+    /// record an incomplete edit; `apply_restore` runs it under
+    /// `suppress_changes`.
+    fn set_tab_width(&mut self, tab_width: u8, window: &mut Window, cx: &mut Context<Self>) {
+        self.tab_width = tab_width;
+        self.tab_width_input.update(cx, |state, cx| {
+            state.set_value(tab_width.to_string(), window, cx)
+        });
         self.schedule(window, cx);
     }
 
     fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.clipboard.read_text(cx) {
             self.copied = false;
-            self.input.edit_text(text, window, cx);
+            self.input
+                .update(cx, |state, cx| state.replace_all(text, window, cx));
         }
     }
 
@@ -233,7 +279,8 @@ impl WhitespaceWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.copied = false;
-        self.input.edit_text("", window, cx);
+        self.input
+            .update(cx, |state, cx| state.replace_all("", window, cx));
     }
 
     fn request_restore(
@@ -248,9 +295,30 @@ impl WhitespaceWorkspace {
             cx.notify();
             return;
         };
-        let current = self.input.text(cx);
+        let current = self.input.read(cx).value().to_string();
         if !current.is_empty() && current != snapshot.request.input {
             self.history_view.pending_restore = Some(entry);
+            let weak = cx.weak_entity();
+            ui::confirm_dialog(
+                window,
+                cx,
+                "Restore History entry",
+                "Restoring this History entry replaces the current non-empty Whitespace session.",
+                "Restore",
+                "Cancel",
+                {
+                    let weak = weak.clone();
+                    move |window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.confirm_restore(window, cx));
+                    }
+                },
+                {
+                    let weak = weak.clone();
+                    move |_window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.cancel_restore(cx));
+                    }
+                },
+            );
             cx.notify();
         } else {
             self.apply_restore(snapshot, window, cx);
@@ -266,14 +334,16 @@ impl WhitespaceWorkspace {
         self.suppress_changes = true;
         self.action = snapshot.request.action;
         self.line_ending = snapshot.request.line_ending;
-        self.tab_width = snapshot.request.tab_width;
-        self.input
-            .assign_text(snapshot.request.input.clone(), window, cx);
+        self.set_tab_width(snapshot.request.tab_width, window, cx);
+        self.input.update(cx, |state, cx| {
+            state.set_value(snapshot.request.input.clone(), window, cx)
+        });
         self.session.restore(snapshot);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
         self.history_view.pending_restore = None;
         self.copied = false;
+        self.sync_history(cx);
         self.sync_display(window, cx);
         cx.notify();
     }
@@ -320,13 +390,13 @@ impl WhitespaceWorkspace {
         }
     }
 
-    fn history_items(&self) -> Vec<SelectableRow> {
+    fn history_items(&self) -> Vec<ui::HistoryRow> {
         self.history_view
             .entries
             .iter()
             .map(|entry| {
                 let snapshot = decode_snapshot(entry);
-                SelectableRow {
+                ui::HistoryRow {
                     id: entry.id.clone(),
                     label: entry.captured_at.clone(),
                     preview: snapshot
@@ -340,15 +410,20 @@ impl WhitespaceWorkspace {
             .collect()
     }
 
-    fn render_diagnostics(&self) -> impl IntoElement {
+    fn render_diagnostics(&self, cx: &App) -> impl IntoElement {
         let mut column = div().flex().flex_col().gap_2().w_full();
         for diagnostic in self.session.evaluation().diagnostics() {
             let severity = match diagnostic.severity {
-                sofdevtool_core::diagnostic::Severity::Error => DiagnosticSeverity::Error,
-                sofdevtool_core::diagnostic::Severity::Warning => DiagnosticSeverity::Warning,
+                sofdevtool_core::diagnostic::Severity::Error => ui::DiagnosticSeverity::Error,
+                sofdevtool_core::diagnostic::Severity::Warning => ui::DiagnosticSeverity::Warning,
             };
             let location = diagnostic.location.map(|l| (l.line, l.column));
-            column = column.child(diagnostic_banner(severity, &diagnostic.message, location));
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                severity,
+                &diagnostic.message,
+                location,
+            ));
         }
         column
     }
@@ -364,31 +439,11 @@ impl WhitespaceWorkspace {
                     .find(|entry| &entry.id == id)
             })
             .is_some_and(|entry| decode_snapshot(entry).is_some());
-        let actions = Button::with_id("whitespace.history.restore-selected", "Restore selected")
+        let restore = Button::new("whitespace.history.restore-selected")
+            .label("Restore selected")
             .disabled(!restore_enabled)
-            .focus_handle(self.focus.history_restore.clone())
-            .on_click(view_click(cx, |this, window, cx| {
-                this.restore_selected(window, cx);
-            }));
-        let weak = cx.weak_entity();
-        let list = SelectableList::new(
-            "whitespace.history",
-            "History",
-            self.history_items(),
-            selected,
-            "No retained operations yet.",
-            self.history_focus.clone(),
-        )
-        .summary(format!("{}/25", self.history_view.entries.len()))
-        .on_select(Rc::new(move |id, _window, cx| {
-            weak.update(cx, |this, cx| {
-                if this.history_view.select(id) {
-                    cx.notify();
-                }
-            })
-            .ok();
-        }))
-        .actions(actions);
+            .on_click(cx.listener(|this, _event, window, cx| this.restore_selected(window, cx)));
+        let theme = cx.theme();
         div()
             .flex()
             .flex_col()
@@ -397,33 +452,22 @@ impl WhitespaceWorkspace {
             .p_3()
             .gap_2()
             .border_l_1()
-            .border_color(ThemeTokens::active().border())
-            .bg(ThemeTokens::active().surface())
-            .child(list)
-    }
-
-    fn render_restore_confirmation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        ConfirmationBar::new(
-            "whitespace.history.restore",
-            "Restoring this History entry replaces the current non-empty Whitespace session.",
-            "Restore",
-            "Cancel",
-        )
-        .focus_handles(
-            self.focus.history_confirm.clone(),
-            self.focus.history_cancel.clone(),
-        )
-        .on_confirm(view_click(cx, |this, window, cx| {
-            this.confirm_restore(window, cx)
-        }))
-        .on_cancel(view_click(cx, |this, _window, cx| this.cancel_restore(cx)))
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .child(ui::history_panel(
+                cx,
+                &self.history_list,
+                "History",
+                format!("{}/25", self.history_view.entries.len()),
+                restore,
+            ))
     }
 }
 
 impl Render for WhitespaceWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_display(window, cx);
-        let tokens = ThemeTokens::active();
+        let theme = cx.theme().clone();
         let can_copy = self.session.evaluation().is_valid_operation();
         let pending = matches!(self.session.evaluation(), WhitespaceEvaluation::Empty)
             && self
@@ -432,74 +476,58 @@ impl Render for WhitespaceWorkspace {
                 .map(|request| !request.input.is_empty())
                 .unwrap_or(false);
 
-        let actions_row = SegmentedControl::new(
-            "whitespace.action",
-            "Whitespace action",
-            WhitespaceAction::ALL
-                .into_iter()
-                .map(|choice| SegmentedOption::new(format!("{choice:?}"), action_label(choice)))
-                .collect(),
-            Some(format!("{:?}", self.action)),
-            self.choice_focus.clone(),
-        )
-        .on_change(Rc::new({
-            let weak = cx.weak_entity();
-            move |id, window, cx| {
-                if let Some(choice) = WhitespaceAction::ALL
+        let action_index = WhitespaceAction::ALL
+            .iter()
+            .position(|choice| *choice == self.action)
+            .unwrap_or(0);
+        let actions_row = TabBar::new("whitespace.action")
+            .segmented()
+            .selected_index(action_index)
+            .children(
+                WhitespaceAction::ALL
                     .into_iter()
-                    .find(|choice| format!("{choice:?}") == id)
-                {
-                    weak.update(cx, |this, cx| this.set_action(choice, window, cx))
-                        .ok();
+                    .map(|choice| Tab::new().label(action_label(choice))),
+            )
+            .on_click(cx.listener(|this, index, window, cx| {
+                if let Some(choice) = WhitespaceAction::ALL.get(*index) {
+                    this.set_action(*choice, window, cx);
                 }
-            }
-        }));
+            }));
 
         let mut options_row = div().flex().flex_row().items_center().gap_2();
         if self.action == WhitespaceAction::NormalizeLineEndings {
-            let line_ending_control = SegmentedControl::new(
-                "whitespace.line-ending",
-                "Line ending",
-                WhitespaceLineEnding::ALL
-                    .into_iter()
-                    .map(|choice| SegmentedOption::new(format!("{choice:?}"), choice.label()))
-                    .collect(),
-                Some(format!("{:?}", self.line_ending)),
-                self.choice_focus.clone(),
-            )
-            .on_change(Rc::new({
-                let weak = cx.weak_entity();
-                move |id, window, cx| {
-                    if let Some(choice) = WhitespaceLineEnding::ALL
+            let line_ending_index = WhitespaceLineEnding::ALL
+                .iter()
+                .position(|choice| *choice == self.line_ending)
+                .unwrap_or(0);
+            let line_ending_control = TabBar::new("whitespace.line-ending")
+                .segmented()
+                .selected_index(line_ending_index)
+                .children(
+                    WhitespaceLineEnding::ALL
                         .into_iter()
-                        .find(|choice| format!("{choice:?}") == id)
-                    {
-                        weak.update(cx, |this, cx| this.set_line_ending(choice, window, cx))
-                            .ok();
+                        .map(|choice| Tab::new().label(choice.label())),
+                )
+                .on_click(cx.listener(|this, index, window, cx| {
+                    if let Some(choice) = WhitespaceLineEnding::ALL.get(*index) {
+                        this.set_line_ending(*choice, window, cx);
                     }
-                }
-            }));
+                }));
             options_row = options_row.child(line_ending_control);
         }
         if self.action.uses_tab_width() {
-            let weak = cx.weak_entity();
             options_row = options_row.child(
-                NumericStepper::new(
-                    "whitespace.tab-width",
-                    "Tab width",
-                    Some(i32::from(self.tab_width)),
-                    i32::from(MIN_TAB_WIDTH),
-                    i32::from(MAX_TAB_WIDTH),
-                    1,
-                )
-                .focus_handles(
-                    self.focus.tab_decrease.clone(),
-                    self.focus.tab_increase.clone(),
-                )
-                .on_step(move |delta, window, cx| {
-                    weak.update(cx, |this, cx| this.adjust_tab_width(delta, window, cx))
-                        .ok();
-                }),
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child("Tab width"),
+                    )
+                    .child(NumberInput::new(&self.tab_width_input)),
             );
         }
 
@@ -509,41 +537,38 @@ impl Render for WhitespaceWorkspace {
             .items_center()
             .gap_2()
             .child(div().flex_1())
-            .child(copy_feedback(self.copied, "Copied to Clipboard"))
+            .child(ui::copy_feedback(cx, self.copied, "Copied to Clipboard"))
             .child(
-                Button::with_id(
-                    "whitespace.history.toggle",
-                    if self.history_visible {
+                Button::new("whitespace.history.toggle")
+                    .label(if self.history_visible {
                         "History: on"
                     } else {
                         "History: off"
-                    },
-                )
-                .focus_handle(self.focus.history_toggle.clone())
-                .on_click(view_click(cx, |this, _window, cx| {
-                    this.history_visible = !this.history_visible;
-                    cx.notify();
-                })),
+                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.history_visible = !this.history_visible;
+                        cx.notify();
+                    })),
             )
             .child(
-                Button::with_id("whitespace.paste", "Paste")
-                    .focus_handle(self.focus.paste.clone())
-                    .on_click(view_click(cx, |this, window, cx| {
+                Button::new("whitespace.paste")
+                    .label("Paste")
+                    .on_click(cx.listener(|this, _event, window, cx| {
                         this.paste(window, cx);
                     })),
             )
             .child(
-                Button::with_id("whitespace.copy-result", "Copy Result")
+                Button::new("whitespace.copy-result")
+                    .label("Copy Result")
                     .disabled(!can_copy)
-                    .focus_handle(self.focus.copy.clone())
-                    .on_click(view_click(cx, |this, _window, cx| {
+                    .on_click(cx.listener(|this, _event, _window, cx| {
                         this.copy_result(cx);
                     })),
             )
             .child(
-                Button::with_id("whitespace.clear", "Clear")
-                    .focus_handle(self.focus.clear.clone())
-                    .on_click(view_click(cx, |this, window, cx| {
+                Button::new("whitespace.clear")
+                    .label("Clear")
+                    .on_click(cx.listener(|this, _event, window, cx| {
                         this.clear(window, cx);
                     })),
             );
@@ -553,8 +578,8 @@ impl Render for WhitespaceWorkspace {
             .flex_col()
             .flex_1()
             .min_h_0()
-            .bg(tokens.background())
-            .text_color(tokens.text())
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .gap_3()
             .child(actions_row)
             .child(options_row)
@@ -562,29 +587,25 @@ impl Render for WhitespaceWorkspace {
             .child(
                 div()
                     .text_xs()
-                    .text_color(tokens.text_muted())
+                    .text_color(theme.muted_foreground)
                     .child("Nine explicit actions; line ending and tab width apply where shown."),
             );
 
-        if self.history_view.pending_restore.is_some() {
-            column = column.child(self.render_restore_confirmation(cx));
-        }
         if let Some(error) = self.history_view.error.clone() {
-            column = column.child(diagnostic_banner(
-                DiagnosticSeverity::Warning,
+            column = column.child(ui::diagnostic_banner(
+                cx,
+                ui::DiagnosticSeverity::Warning,
                 &format!("Whitespace Conversion History: {error}"),
                 None,
             ));
         }
 
         let result_body = if pending {
-            empty_state("Evaluating…").into_any_element()
+            ui::empty_state(cx, "Evaluating…").into_any_element()
         } else if matches!(self.session.evaluation(), WhitespaceEvaluation::Empty) {
-            empty_state("Paste or type text to begin").into_any_element()
+            ui::empty_state(cx, "Paste or type text to begin").into_any_element()
         } else {
-            self.result
-                .render(true, "whitespace.result")
-                .into_any_element()
+            ui::multiline_editor(&self.result, true, "whitespace.result").into_any_element()
         };
 
         let mut workspace = div()
@@ -593,16 +614,22 @@ impl Render for WhitespaceWorkspace {
             .gap_3()
             .flex_1()
             .min_h_0()
-            .child(panel(
+            .child(ui::panel(
+                cx,
                 "Input",
                 "exact text, endings preserved",
-                self.input.render(false, "whitespace.input"),
+                ui::multiline_editor(&self.input, false, "whitespace.input"),
             ))
-            .child(panel("Result", "read-only, selectable", result_body));
+            .child(ui::panel(
+                cx,
+                "Result",
+                "read-only, selectable",
+                result_body,
+            ));
         if self.history_visible {
             workspace = workspace.child(self.render_history(cx));
         }
-        column.child(workspace).child(self.render_diagnostics())
+        column.child(workspace).child(self.render_diagnostics(cx))
     }
 }
 
@@ -648,7 +675,8 @@ mod interaction_tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use gpui::{Entity, VisualTestContext};
+    use gpui::VisualTestContext;
+    use gpui_kit::component::Root;
 
     use crate::history::{HistoryStore, SystemClock};
 
@@ -667,17 +695,9 @@ mod interaction_tests {
         }
     }
 
-    struct TestRoot(Entity<WhitespaceWorkspace>);
-
-    impl Render for TestRoot {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            div().child(self.0.clone())
-        }
-    }
-
     #[gpui::test]
-    fn tab_stop_stepper_line_endings_copy_and_restore(cx: &mut gpui::TestAppContext) {
-        cx.update(sofui::init);
+    fn tab_width_line_endings_copy_and_restore(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_kit::init);
         let root = std::env::temp_dir().join(format!(
             "sofdevtool-whitespace-redesign-{}-{}",
             std::process::id(),
@@ -693,28 +713,30 @@ mod interaction_tests {
             let view = cx
                 .new(|cx| WhitespaceWorkspace::new(window, cx, clipboard.clone(), history.clone()));
             captured = Some(view.clone());
-            TestRoot(view)
+            Root::new(view, window, cx)
         });
         let workspace = captured.unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
-                view.input.edit_text("a\tb\n\t👩🏽\u{200D}💻", window, cx)
+                view.input.update(cx, |state, cx| {
+                    state.replace_all("a\tb\n\t👩🏽\u{200D}💻", window, cx)
+                })
             });
             window.draw(cx).clear(cx);
         });
         cx.executor().advance_clock(DEBOUNCE);
         cx.run_until_parked();
         cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.set_action(WhitespaceAction::TabsToSpaces, window, cx)
+            });
             window.draw(cx).clear(cx);
-            let choices = workspace.read(cx).choice_focus.clone();
-            window.focus(&choices.handle("whitespace.action", "TabsToSpaces", cx), cx);
         });
-        cx.simulate_keystrokes("enter");
         cx.executor().advance_clock(DEBOUNCE);
         cx.run_until_parked();
         assert_eq!(
-            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            workspace.read_with(&cx, |view, cx| view.result.read(cx).value().to_string()),
             "a   b\n    👩🏽\u{200D}💻"
         );
         let saved = history.load(Whitespace::ID).unwrap();
@@ -722,22 +744,19 @@ mod interaction_tests {
         assert_eq!(workspace.read_with(&cx, |view, _| view.tab_width), 4);
 
         cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| view.set_tab_width(5, window, cx));
             window.draw(cx).clear(cx);
-            window.focus(&workspace.read(cx).focus.tab_increase.clone(), cx);
         });
-        cx.simulate_keystrokes("enter");
         cx.executor().advance_clock(DEBOUNCE);
         cx.run_until_parked();
         assert_eq!(workspace.read_with(&cx, |view, _| view.tab_width), 5);
         assert_eq!(
-            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            workspace.read_with(&cx, |view, cx| view.result.read(cx).value().to_string()),
             "a    b\n     👩🏽\u{200D}💻"
         );
-        cx.update(|window, cx| {
-            window.draw(cx).clear(cx);
-            window.focus(&workspace.read(cx).focus.copy.clone(), cx);
+        cx.update(|_window, cx| {
+            workspace.update(cx, |view, cx| view.copy_result(cx));
         });
-        cx.simulate_keystrokes("enter");
         assert_eq!(
             clipboard.0.borrow().as_deref(),
             Some("a    b\n     👩🏽\u{200D}💻")
@@ -745,7 +764,8 @@ mod interaction_tests {
 
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
-                view.input.edit_text("other", window, cx);
+                view.input
+                    .update(cx, |state, cx| state.replace_all("other", window, cx));
                 assert!(view.history_view.select(&saved[0].id));
                 view.restore_selected(window, cx);
                 assert!(view.history_view.pending_restore.is_some());
@@ -758,7 +778,7 @@ mod interaction_tests {
         );
         assert_eq!(workspace.read_with(&cx, |view, _| view.tab_width), 4);
         assert_eq!(
-            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            workspace.read_with(&cx, |view, cx| view.result.read(cx).value().to_string()),
             "a   b\n    👩🏽\u{200D}💻"
         );
         assert_eq!(
@@ -768,25 +788,23 @@ mod interaction_tests {
         );
 
         cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.set_action(WhitespaceAction::NormalizeLineEndings, window, cx)
+            });
             window.draw(cx).clear(cx);
-            let choices = workspace.read(cx).choice_focus.clone();
-            window.focus(
-                &choices.handle("whitespace.action", "NormalizeLineEndings", cx),
-                cx,
-            );
         });
-        cx.simulate_keystrokes("enter");
         cx.update(|window, cx| {
-            workspace.update(cx, |view, cx| view.input.edit_text("a\r\nb", window, cx));
+            workspace.update(cx, |view, cx| {
+                view.input
+                    .update(cx, |state, cx| state.replace_all("a\r\nb", window, cx));
+                view.set_line_ending(WhitespaceLineEnding::Cr, window, cx);
+            });
             window.draw(cx).clear(cx);
-            let choices = workspace.read(cx).choice_focus.clone();
-            window.focus(&choices.handle("whitespace.line-ending", "Cr", cx), cx);
         });
-        cx.simulate_keystrokes("enter");
         cx.executor().advance_clock(DEBOUNCE);
         cx.run_until_parked();
         assert_eq!(
-            workspace.read_with(&cx, |view, cx| view.result.text(cx)),
+            workspace.read_with(&cx, |view, cx| view.result.read(cx).value().to_string()),
             "a\rb"
         );
         fs::remove_dir_all(root).unwrap();

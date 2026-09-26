@@ -8,13 +8,13 @@ use gpui::{
     AnyWindowHandle, App, Entity, Menu, MenuItem, OsAction, TitlebarOptions, WindowBounds,
     WindowOptions,
 };
+use gpui_kit::component::Root;
 use sofdevtool_app::clipboard::{Clipboard, GpuiClipboard};
 use sofdevtool_app::history::{HistoryPolicy, HistoryRecorder, HistoryStore, SystemClock};
 use sofdevtool_app::identity;
 use sofdevtool_app::preferences::{HistoryPreferences, ShortcutPreferences, StartupShortcut};
 use sofdevtool_app::registry::UtilityRegistry;
 use sofdevtool_app::workbench::Workbench;
-use sofui::{apply_theme, init, mount, ThemeVariant};
 
 gpui::actions!(
     application_actions,
@@ -92,7 +92,7 @@ fn main() {
     let reopen_visible = visible.clone();
     let reopen_native_window = native_window.clone();
     let launch_preferences = preferences.clone();
-    let application = gpui_platform::application();
+    let application = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
     {
         // Closing the Workbench hides its retained native window. Dock
         // reopen orders that same window front, preserving its bounds,
@@ -114,9 +114,9 @@ fn main() {
         });
     }
     application.run(move |cx: &mut App| {
-        init(cx);
+        gpui_kit::init(cx);
+        sofdevtool_app::appearance::install(cx);
         sofdevtool_app::launcher::init(cx);
-        apply_theme(ThemeVariant::Graphite, cx);
         // `MenuItem::os_action` gives macOS the responder-chain selector,
         // while these bindings give its menu item the standard key
         // equivalent. The selector is therefore delivered to a focused
@@ -190,7 +190,7 @@ fn main() {
             });
             *initial_native_window.borrow_mut() = Some(window.window_handle());
             *initial_workbench.borrow_mut() = Some(view.clone());
-            mount(view, window, cx)
+            cx.new(|cx| Root::new(view, window, cx))
         })
         .expect("open the workbench window");
     });

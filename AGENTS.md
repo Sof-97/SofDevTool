@@ -4,19 +4,18 @@ Read `CONTEXT.md` before changing product behavior. Inspect the owning module an
 
 ## Rust component ownership
 
-`crates/ui` is **sofui 0.1.0**, an independently versioned GPUI component library intended for a later separate release. Keep it limited to reusable UI components and component interaction logic, including its text-editing engine. The application and core own Utility execution, domain validation, persistence, History policy and lifecycle. Initialize and mount sofui in each consumer; start GPUI and configure process hooks in the consumer's entry point. Verify the public component interface from an independent consumer when changing it.
+The application consumes [GPUI Kit](https://docs.rs/crate/gpui-kit/0.6.6) directly: controls, appearance and text editing come from the kit, initialized and mounted by the consumer. `crates/app` owns Utility execution, domain validation, persistence, History policy and lifecycle; `crates/core` owns the Utility domain engines. Keep app-specific Utility compositions and the specialised Text Diff renderer as explicit boundaries, not as a replacement component library. There is no `sofui` crate, gallery or independent component release.
 
 ## Source map
 
 - `crates/app`: lifecycle, Workbench, Launcher, Settings, Registry, History coordination, Clipboard, native adapters and Utility workspaces.
 - `crates/core`: domain evaluation, validation, snapshots and independent Utility contract tests.
-- `crates/ui`: reusable sofui controls, themes and component interaction only.
 - `platform/macos`: icons and application notices; `scripts/rust`: root packaging, install and verification scripts.
 - `crates/app/src/text_diff/assets-source`: editable embedded renderer, lockfile, verification and provenance.
 
 ## Commands
 
-- `make help` lists supported root workflows. `make run` opens Debug; `make gallery` opens sofui's component gallery.
+- `make help` lists supported root workflows. `make run` opens Debug.
 - `make format` applies Rust formatting; `make verify` runs the default gate.
 - `make verify-full` adds Release and renderer/bundle verification; `make release` packages Release and `make install` installs it, with `INSTALL_DESTINATION` for a temporary destination.
 

@@ -1,10 +1,13 @@
 # Application notices
 
-## Catppuccin Frappé palette
+## Catppuccin palettes (Latte and Frappé)
 
-SofDevTool uses values from Catppuccin Palette 1.8.0, upstream revision
-`07d02aa110ef9eb7e7427afca5c73ba9cf7f8ebd`. No Catppuccin package
-or runtime resource is bundled.
+SofDevTool bundles the unmodified official GPUI Kit Catppuccin theme set
+(`themes/catppuccin.json`, revision `v0.6.6`) as a local application asset. Light
+appearance selects Catppuccin Latte and Dark appearance selects Catppuccin
+Frappé; the values trace to Catppuccin Palette 1.8.0, upstream revision
+`07d02aa110ef9eb7e7427afca5c73ba9cf7f8ebd`. No Catppuccin runtime service is
+contacted.
 
 MIT License
 

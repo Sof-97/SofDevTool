@@ -38,7 +38,12 @@ pub struct WorkspacePreferencesData {
 impl Default for WorkspacePreferencesData {
     fn default() -> Self {
         Self {
-            theme: "graphite".to_owned(),
+            // Fresh profiles start in System appearance. The stored value is an
+            // appearance mode (`system`/`light`/`dark`); retired Graphite and
+            // Catppuccin values are mapped to Dark when read.
+            theme: crate::appearance::AppearanceMode::System
+                .stored_value()
+                .to_owned(),
             favorites: Vec::new(),
             recents: Vec::new(),
         }
@@ -66,7 +71,7 @@ impl WorkspacePreferences {
     }
 
     /// Loads the stored preferences. Missing or malformed data yields safe
-    /// defaults (Graphite, no favorites, no recents).
+    /// defaults (System appearance, no favorites, no recents).
     pub fn load(&self) -> WorkspacePreferencesData {
         let Ok(contents) = fs::read_to_string(self.path()) else {
             return WorkspacePreferencesData::default();
@@ -532,7 +537,7 @@ mod tests {
         ));
         let preferences = WorkspacePreferences::new(root.clone());
 
-        // Missing data yields safe defaults (Graphite, no favorites/recents).
+        // Missing data yields safe defaults (System appearance, no favorites/recents).
         assert_eq!(preferences.load(), WorkspacePreferencesData::default());
 
         let data = WorkspacePreferencesData {
