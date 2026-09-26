@@ -26,7 +26,6 @@ use sofdevtool_core::utilities::text_diff::{
 };
 use sofdevtool_core::utility::Utility;
 
-use crate::appearance;
 use crate::clipboard::Clipboard;
 use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
 use crate::ui;
@@ -98,7 +97,7 @@ impl TextDiffWorkspace {
         let old = cx.new(|cx| TextareaState::new(window, cx));
         let new = cx.new(|cx| TextareaState::new(window, cx));
         let renderer_status_changed = Rc::new(Cell::new(false));
-        let renderer = TextDiffRenderer::new(window, renderer_status_changed.clone());
+        let renderer = TextDiffRenderer::new(window, renderer_status_changed.clone(), cx);
         let diagnostic = renderer
             .render(
                 1,
@@ -141,11 +140,6 @@ impl TextDiffWorkspace {
             Rc::new(move |id, _window, cx| {
                 weak.update(cx, |this, cx| {
                     if this.history_view.select(id) {
-                        ui::history_set_selected(
-                            &this.history_list,
-                            this.history_view.selected.clone(),
-                            cx,
-                        );
                         cx.notify();
                     }
                 })
@@ -518,8 +512,7 @@ impl Render for TextDiffWorkspace {
         // Pushed while this workspace is the active view; `appearance::apply`
         // refreshes every window, so both the first activation and later
         // Latte/Frappe or System changes reach the native child.
-        self.renderer
-            .set_appearance(appearance::effective_is_dark(cx));
+        self.renderer.set_appearance(cx);
         let mode = self.mode;
         let old = ui::multiline_editor(&self.old, false, "text-diff.original");
         let new = ui::multiline_editor(&self.new, false, "text-diff.updated");

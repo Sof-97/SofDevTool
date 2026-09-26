@@ -5,6 +5,8 @@ use gpui::{
     relative, App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
     LayoutId, Pixels, Style, Window,
 };
+use gpui_kit::component::ActiveTheme as _;
+
 use wry::{
     dpi::{LogicalPosition, LogicalSize},
     Rect, WebView, WebViewBuilder,
@@ -29,9 +31,33 @@ struct RendererState {
     webview: Option<WebView>,
     protocol: BridgeProtocol,
     changed: Rc<Cell<bool>>,
-    /// The effective Latte/Frappe appearance last pushed from the workspace.
-    /// `false` selects `pierre-light`, `true` selects `pierre-dark`.
+    appearance: RendererAppearance,
+}
+
+/// A snapshot of kit tokens for the specialized renderer, never a second palette.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RendererAppearance {
     dark: bool,
+    background: String,
+    foreground: String,
+}
+
+impl RendererAppearance {
+    fn from_app(cx: &App) -> Self {
+        Self {
+            dark: crate::appearance::effective_is_dark(cx),
+            background: cx.theme().background.to_string(),
+            foreground: cx.theme().foreground.to_string(),
+        }
+    }
+
+    fn scheme(&self) -> &'static str {
+        if self.dark {
+            "dark"
+        } else {
+            "light"
+        }
+    }
 }
 
 /// The revision gate is deliberately independent of Wry so its semantics can
@@ -96,8 +122,12 @@ impl BridgeProtocol {
     }
 }
 
-fn renderer_html() -> Result<String, &'static str> {
+fn renderer_html(appearance: &RendererAppearance) -> Result<String, &'static str> {
     Ok(include_str!("assets/diff.html")
+        .replace("__BACKGROUND__", &appearance.background)
+        .replace("__FOREGROUND__", &appearance.foreground)
+        .replace("__COLOR_SCHEME__", appearance.scheme())
+        .replace("__INITIAL_APPEARANCE__", &appearance_script(appearance))
         .replace("__THIRD_PARTY_NOTICES__", THIRD_PARTY_NOTICES)
         .replace(
             "__PIERRE_BUNDLE__",
@@ -125,15 +155,15 @@ fn render_payload(
     serde_json::json!({"revision":revision,"oldFile":{"name":"Comparison.txt","contents":old},"newFile":{"name":"Comparison.txt","contents":new},"options":{"theme":{"dark":"pierre-dark","light":"pierre-light"},"themeType":theme_type,"diffStyle":mode,"overflow":"scroll","diffIndicators":"bars","hunkSeparators":"line-info","lineDiffType":line_diff_type,"tokenizeMaxLength":500000,"tokenizeMaxLineLength":10000}})
 }
 
-/// The bridge script that switches the already-rendered diff's theme.
-///
-/// Deferred so it lands after a queued `renderDiff` setTimeout, and guarded so
-/// an early call before the bundle loads cannot throw.
-fn appearance_script(dark: bool) -> String {
-    let theme = if dark { "dark" } else { "light" };
-    format!(
-        "setTimeout(()=>{{window.pierreBridge&&window.pierreBridge.setTheme(\"{theme}\");}},0);"
-    )
+/// Updates outer chrome immediately, even before Pierre has loaded. The HTML
+/// bridge schedules Pierre's update after any pending render request.
+fn appearance_script(appearance: &RendererAppearance) -> String {
+    let args = serde_json::json!([
+        appearance.scheme(),
+        appearance.background,
+        appearance.foreground,
+    ]);
+    format!("window.setRendererAppearance(...{args});")
 }
 
 /// Re-applies the stored appearance to a live WebView, if one is attached.
@@ -141,7 +171,7 @@ fn appearance_script(dark: bool) -> String {
 /// Called after a diff render completes so an appearance pushed while the
 /// bundle was still loading is not lost.
 fn evaluate_appearance(state: &mut RendererState) {
-    let script = appearance_script(state.dark);
+    let script = appearance_script(&state.appearance);
     if let Some(webview) = &state.webview {
         let _ = webview.evaluate_script(&script);
     }
@@ -160,17 +190,16 @@ fn preserve_initialization_failure(
 }
 
 impl TextDiffRenderer {
-    pub(super) fn new(window: &Window, changed: Rc<Cell<bool>>) -> Self {
+    pub(super) fn new(window: &Window, changed: Rc<Cell<bool>>, cx: &App) -> Self {
+        let appearance = RendererAppearance::from_app(cx);
         let state = Rc::new(RefCell::new(RendererState {
             webview: None,
             protocol: BridgeProtocol::new(),
             changed,
-            // The workspace pushes the effective appearance on activation; the
-            // prior independent chrome was dark, so that remains the default.
-            dark: true,
+            appearance: appearance.clone(),
         }));
         let bridge_state = Rc::downgrade(&state);
-        let html = match renderer_html() {
+        let html = match renderer_html(&appearance) {
             Ok(html) => html,
             Err(error) => {
                 {
@@ -272,7 +301,7 @@ impl TextDiffRenderer {
     ) -> Result<(), String> {
         let mut state = self.0.borrow_mut();
         preserve_initialization_failure(state.webview.is_some(), &state.protocol.status)?;
-        let payload = render_payload(revision, &old, &new, mode, state.dark);
+        let payload = render_payload(revision, &old, &new, mode, state.appearance.dark);
         // Pierre can emit ready/error during the same JavaScript turn. Queue
         // it after evaluate_script returns so the IPC callback never re-borrows
         // this renderer while its native WebView is being submitted.
@@ -335,15 +364,16 @@ impl TextDiffRenderer {
 
     /// Sets the effective Latte/Frappe appearance of the rendered diff.
     ///
-    /// `false` selects `pierre-light`, `true` selects `pierre-dark`. The value
-    /// is remembered so the next `render` payload uses it, and a live WebView is
-    /// switched immediately.
-    pub(super) fn set_appearance(&self, dark: bool) {
+    /// Both the effective mode and outer chrome tokens come from the kit.
+    /// Remember them for the next render and update an attached document now,
+    /// including changes while its bundle or comparison is still loading.
+    pub(super) fn set_appearance(&self, cx: &App) {
+        let appearance = RendererAppearance::from_app(cx);
         let mut state = self.0.borrow_mut();
-        if state.dark == dark {
+        if state.appearance == appearance {
             return;
         }
-        state.dark = dark;
+        state.appearance = appearance;
         evaluate_appearance(&mut state);
         state.changed.set(true);
     }
@@ -424,13 +454,22 @@ impl Element for WebDiffSurface {
 #[cfg(test)]
 mod protocol_tests {
     use super::{
-        allow_navigation, preserve_initialization_failure, render_payload, renderer_html,
-        BridgeProtocol, RendererStatus,
+        allow_navigation, appearance_script, preserve_initialization_failure, render_payload,
+        renderer_html, BridgeProtocol, RendererAppearance, RendererStatus,
     };
+
+    fn test_appearance() -> RendererAppearance {
+        RendererAppearance {
+            dark: false,
+            background: "hsla(220, 23%, 95%, 1)".into(),
+            foreground: "hsla(234, 16%, 35%, 1)".into(),
+        }
+    }
 
     #[test]
     fn html_uses_only_inline_local_renderer_resources_with_network_csp() {
-        let html = renderer_html().expect("checked-in renderer resources are embedded");
+        let html =
+            renderer_html(&test_appearance()).expect("checked-in renderer resources are embedded");
         assert!(!html.contains("__PIERRE_BUNDLE__"));
         assert!(!html.contains("__THIRD_PARTY_NOTICES__"));
         assert!(html.contains("window.ipc"));
@@ -439,6 +478,35 @@ mod protocol_tests {
         assert!(html.contains("object-src 'none'"));
         assert!(!html.contains("<script src="));
         assert!(!html.contains("<link rel=\"stylesheet\" href="));
+    }
+
+    #[test]
+    fn renderer_document_and_live_appearance_include_outer_chrome() {
+        let html = renderer_html(&test_appearance()).unwrap();
+        assert!(
+            html.contains("background:var(--renderer-background)"),
+            "outer renderer must not keep a fixed dark background"
+        );
+        assert!(html.contains("color:var(--renderer-foreground)"));
+        assert!(appearance_script(&test_appearance()).contains("setRendererAppearance"));
+        assert!(html.contains(&format!(
+            "--renderer-background:{}",
+            test_appearance().background
+        )));
+        assert!(html.contains(&format!(
+            "--renderer-foreground:{}",
+            test_appearance().foreground
+        )));
+        assert!(html.contains("color-scheme:light"));
+        assert!(!html.contains("__INITIAL_APPEARANCE__"));
+        assert!(
+            html.find("window.setRendererAppearance(...").unwrap()
+                < html.find("window.PierreDiffsShared").unwrap()
+        );
+        let mut dark = test_appearance();
+        dark.dark = true;
+        assert!(renderer_html(&dark).unwrap().contains("color-scheme:dark"));
+        assert!(appearance_script(&dark).contains("dark"));
     }
 
     #[test]

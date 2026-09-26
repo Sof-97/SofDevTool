@@ -14,7 +14,7 @@ npm run verify
 
 `npm ci` installs the exact checked-in dependency graph. `npm run build` writes
 the main bundle, its esbuild dependency graph and a matching notice inventory
-to `../assets/`. `npm run verify` rebuilds into a temporary directory and
+to `../assets/`. `npm run verify` first checks the outer document appearance bridge, then rebuilds into a temporary directory and
 compares all three files with the checked-in resources. The Rust renderer
 embeds those files at compile time through `include_str!`; an installed app
 does not run Node/npm, read the checkout, or fetch renderer resources.

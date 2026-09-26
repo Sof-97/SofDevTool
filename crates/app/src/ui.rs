@@ -265,6 +265,7 @@ impl ListDelegate for HistoryListDelegate {
                 .disabled(!row.selectable)
                 .child(
                     div()
+                        .debug_selector(move || format!("history.entry.{}", row.id))
                         .flex()
                         .flex_col()
                         .gap_1()
@@ -313,6 +314,9 @@ impl ListDelegate for HistoryListDelegate {
         if self.selected != id {
             self.selected = id.clone();
             if let (Some(handler), Some(id)) = (self.on_select.clone(), id) {
+                // The delegate already owns the list selection. The owner
+                // updates its HistoryViewState only; reflecting it back into
+                // this ListState here would recursively update the entity.
                 handler(&id, _window, cx);
             }
             cx.notify();

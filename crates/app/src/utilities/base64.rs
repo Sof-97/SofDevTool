@@ -89,11 +89,6 @@ impl Base64Workspace {
             Rc::new(move |id, _window, cx| {
                 weak.update(cx, |this, cx| {
                     if this.history_view.select(id) {
-                        ui::history_set_selected(
-                            &this.history_list,
-                            this.history_view.selected.clone(),
-                            cx,
-                        );
                         cx.notify();
                     }
                 })
@@ -632,6 +627,15 @@ mod interaction_tests {
         ))
     }
 
+    // Match the Workbench's sized flex host so List hit testing uses visible bounds.
+    struct TestWorkspaceHost(Entity<Base64Workspace>);
+
+    impl Render for TestWorkspaceHost {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().flex().child(self.0.clone())
+        }
+    }
+
     #[gpui::test]
     fn keyboard_mode_copy_invalid_and_exact_history_restore(cx: &mut gpui::TestAppContext) {
         cx.update(gpui_kit::init);
@@ -646,10 +650,12 @@ mod interaction_tests {
             let view =
                 cx.new(|cx| Base64Workspace::new(window, cx, clipboard.clone(), history.clone()));
             captured = Some(view.clone());
-            Root::new(view, window, cx)
+            let host = cx.new(|_| TestWorkspaceHost(view));
+            Root::new(host, window, cx)
         });
         let workspace = captured.unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.simulate_resize(gpui::size(gpui::px(2400.), gpui::px(900.)));
 
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
@@ -747,9 +753,52 @@ mod interaction_tests {
             "one Backspace removes the whole base-and-combining grapheme"
         );
 
+        // Drive the real kit List selection path, including its delegate callback.
+        // Direct HistoryViewState::select calls miss a recursive entity update.
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let list = workspace.read(cx).history_list.clone();
+            window.focus(&list.read(cx).focus_handle(cx), cx);
+        });
+        cx.simulate_keystrokes("down");
+        let latest_id = workspace.read_with(&cx, |view, _| view.history_view.entries[0].id.clone());
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.history_view.selected.clone()),
+            Some(latest_id.clone())
+        );
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let row = cx
+            .debug_bounds(Box::leak(
+                format!("history.entry.{}", first_entry.id).into_boxed_str(),
+            ))
+            .expect("retained row is rendered");
+        cx.simulate_click(row.center(), gpui::Modifiers::none());
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.history_view.selected.clone()),
+            Some(first_entry.id.clone())
+        );
+        // A click selects without restoring; only the explicit action below restores.
+        assert_eq!(
+            workspace.read_with(&cx, |view, cx| view.input.read(cx).value().to_string()),
+            "caf"
+        );
+        cx.simulate_keystrokes("up");
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.history_view.selected.clone()),
+            Some(latest_id)
+        );
+        cx.simulate_keystrokes("down");
+        assert_eq!(
+            workspace.read_with(&cx, |view, _| view.history_view.selected.clone()),
+            Some(first_entry.id.clone())
+        );
+
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
-                assert!(view.history_view.select(&first_entry.id));
+                assert_eq!(
+                    view.history_view.selected.as_deref(),
+                    Some(first_entry.id.as_str())
+                );
                 view.sync_history(cx);
                 view.restore_selected(window, cx);
                 assert!(view.history_view.pending_restore.is_some());

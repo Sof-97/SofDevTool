@@ -1,1 +1,10 @@
-<!doctype html><meta charset=utf-8><meta http-equiv=Content-Security-Policy content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><style>html,body,#diff-container{margin:0;width:100%;height:100%;overflow:auto;background:#17191f;color:#e7e9ee}#loading{padding:12px;font:13px -apple-system}</style><div id=diff-container><span id=loading>Loading local diff renderer…</span></div><template id=third-party-notices>__THIRD_PARTY_NOTICES__</template><script>__PIERRE_BUNDLE__</script>
+<!doctype html><meta charset=utf-8><meta http-equiv=Content-Security-Policy content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><style>:root{--renderer-background:__BACKGROUND__;--renderer-foreground:__FOREGROUND__;color-scheme:__COLOR_SCHEME__}html,body,#diff-container{margin:0;width:100%;height:100%;overflow:auto;background:var(--renderer-background);color:var(--renderer-foreground)}#loading{padding:12px;font:13px -apple-system}</style><div id=diff-container><span id=loading>Loading local diff renderer…</span></div><template id=third-party-notices>__THIRD_PARTY_NOTICES__</template><script id="renderer-appearance">
+window.setRendererAppearance = (theme, background, foreground) => {
+  const style = document.documentElement.style;
+  style.setProperty('--renderer-background', background);
+  style.setProperty('--renderer-foreground', foreground);
+  style.colorScheme = theme;
+  setTimeout(() => window.pierreBridge?.setTheme(theme), 0);
+};
+__INITIAL_APPEARANCE__
+</script><script>__PIERRE_BUNDLE__</script>

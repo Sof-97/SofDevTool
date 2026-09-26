@@ -94,11 +94,6 @@ impl YamlJsonWorkspace {
             Rc::new(move |id, _window, cx| {
                 weak.update(cx, |this, cx| {
                     if this.history_view.select(id) {
-                        ui::history_set_selected(
-                            &this.history_list,
-                            this.history_view.selected.clone(),
-                            cx,
-                        );
                         cx.notify();
                     }
                 })
