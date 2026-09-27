@@ -6,11 +6,12 @@
 
 use std::rc::Rc;
 
-use gpui::{AnyView, Context, Window};
+use gpui::{AnyView, Context, Entity, Window};
 
 use crate::clipboard::Clipboard;
 use crate::history::HistoryRecorder;
 use crate::workbench::Workbench;
+use crate::workspace_layout::WorkspaceLayout;
 
 /// The stable identity of a source-defined Utility.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -33,6 +34,27 @@ pub enum UtilityId {
 }
 
 impl UtilityId {
+    pub fn from_slug(slug: &str) -> Option<Self> {
+        const ALL: [UtilityId; 15] = [
+            UtilityId::Json,
+            UtilityId::TextDiff,
+            UtilityId::Base64,
+            UtilityId::UrlEncoding,
+            UtilityId::CaseConversion,
+            UtilityId::Whitespace,
+            UtilityId::Hashes,
+            UtilityId::RandomString,
+            UtilityId::Color,
+            UtilityId::Jwt,
+            UtilityId::Identifiers,
+            UtilityId::Regex,
+            UtilityId::Timestamps,
+            UtilityId::SampleData,
+            UtilityId::YamlJson,
+        ];
+        ALL.into_iter().find(|id| id.slug() == slug)
+    }
+
     /// Stable History filename / preference key for this Utility.
     pub const fn slug(self) -> &'static str {
         match self {
@@ -61,8 +83,19 @@ pub struct OpenUtility(pub UtilityId);
 
 /// Builds a Utility's concrete workspace as a type-erased view. Only the
 /// Workbench calls this, at the heterogeneous composition boundary.
-pub type WorkspaceConstructor =
-    fn(&mut Window, &mut Context<Workbench>, Rc<dyn Clipboard>, Rc<HistoryRecorder>) -> AnyView;
+pub type WorkspaceConstructor = fn(
+    &mut Window,
+    &mut Context<Workbench>,
+    Rc<dyn Clipboard>,
+    Rc<HistoryRecorder>,
+    Entity<WorkspaceLayout>,
+) -> WorkspaceViews;
+
+#[derive(Clone)]
+pub struct WorkspaceViews {
+    pub body: AnyView,
+    pub history: AnyView,
+}
 
 /// Immutable discovery metadata. Construction of the concrete workspace stays
 /// in the Workbench so each Utility retains its strong concrete type.

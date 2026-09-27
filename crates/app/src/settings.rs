@@ -4,14 +4,17 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, size, App, Context, FocusHandle, IntoElement, KeyDownEvent, Render, Window,
-    WindowBounds, WindowKind, WindowOptions,
+    div, px, size, App, Context, FocusHandle, IntoElement, KeyDownEvent, Render, Subscription,
+    Window, WindowBounds, WindowKind, WindowOptions,
 };
 use gpui_kit::component::{
-    button::{Button, ButtonVariants as _},
+    button::Button,
+    switch::Switch,
+    tab::{Tab, TabBar},
     ActiveTheme as _,
 };
 
+use crate::appearance::AppearanceMode;
 use crate::history::{HistoryRecorder, HistorySubscription};
 use crate::preferences::ShortcutPreferences;
 use crate::shortcut::{Shortcut, COMMAND, CONTROL, OPTION, SHIFT};
@@ -80,6 +83,7 @@ pub fn show(
     history: Rc<HistoryRecorder>,
     utilities: Vec<UtilityRow>,
     current_shortcut: Shortcut,
+    appearance_mode: AppearanceMode,
     cx: &mut gpui::App,
 ) {
     let options = WindowOptions {
@@ -96,13 +100,13 @@ pub fn show(
     let _ = cx.open_window(options, move |window, cx| {
         let view = cx.new(|cx| {
             SettingsView::new(
-                window,
                 cx,
                 Some(workbench),
                 preferences,
                 history,
                 utilities,
                 current_shortcut,
+                appearance_mode,
             )
         });
         cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
@@ -119,22 +123,48 @@ pub struct SettingsView {
     diagnostic: Option<String>,
     notice: Option<String>,
     capture_focus: FocusHandle,
+    appearance_mode: AppearanceMode,
+    _workbench_subscription: Option<Subscription>,
     _history_subscription: HistorySubscription,
 }
 
 impl SettingsView {
     fn new(
-        _window: &mut Window,
         cx: &mut Context<Self>,
         workbench: Option<gpui::WeakEntity<Workbench>>,
         preferences: ShortcutPreferences,
         history: Rc<HistoryRecorder>,
         utilities: Vec<UtilityRow>,
         active_shortcut: Shortcut,
+        appearance_mode: AppearanceMode,
     ) -> Self {
+        let workbench_subscription = workbench
+            .as_ref()
+            .and_then(|workbench| workbench.upgrade())
+            .map(|workbench| {
+                let weak_view = cx.weak_entity();
+                cx.observe(&workbench, move |_, workbench, cx| {
+                    let weak_view = weak_view.clone();
+                    let workbench = workbench.clone();
+                    cx.defer(move |cx| {
+                        let mode = workbench.read(cx).appearance_mode();
+                        weak_view
+                            .update(cx, |view, cx| {
+                                if view.appearance_mode != mode {
+                                    view.appearance_mode = mode;
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
+                    });
+                })
+            });
         let weak = cx.weak_entity();
         let history_subscription = history.subscribe_status(move |cx| {
-            weak.update(cx, |_, cx| cx.notify()).ok();
+            let weak = weak.clone();
+            cx.defer(move |cx| {
+                weak.update(cx, |_, cx| cx.notify()).ok();
+            });
         });
         Self {
             workbench,
@@ -146,6 +176,8 @@ impl SettingsView {
             diagnostic: None,
             notice: None,
             capture_focus: cx.focus_handle().tab_stop(true).tab_index(0),
+            appearance_mode,
+            _workbench_subscription: workbench_subscription,
             _history_subscription: history_subscription,
         }
     }
@@ -279,6 +311,28 @@ impl SettingsView {
         cx.notify();
     }
 
+    fn set_appearance(
+        &mut self,
+        mode: AppearanceMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workbench) = self.workbench.as_ref() else {
+            self.notice = Some("The Workbench is no longer available.".into());
+            cx.notify();
+            return;
+        };
+        if workbench
+            .update(cx, |workbench, cx| {
+                workbench.set_appearance(mode, window, cx)
+            })
+            .is_ok()
+        {
+            self.appearance_mode = mode;
+            cx.notify();
+        }
+    }
+
     fn stored_ids(&self) -> Vec<String> {
         self.history
             .store()
@@ -297,7 +351,7 @@ impl Render for SettingsView {
         };
 
         let policy = self.history.policy();
-        let mut utilities = div().flex().flex_col().gap_2().w_full();
+        let mut utilities = div().flex().flex_col().w_full();
         for row in self.utilities.clone().iter() {
             let recording = policy
                 .per_utility
@@ -305,6 +359,7 @@ impl Render for SettingsView {
                 .copied()
                 .unwrap_or(row.default_enabled);
             let paused = self.history.store().is_paused(&row.id);
+            let effective = self.history.recording_state(&row.id);
             let id = row.id.clone();
             utilities = utilities.child(
                 div()
@@ -313,23 +368,28 @@ impl Render for SettingsView {
                     .items_center()
                     .gap_2()
                     .w_full()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .border_1()
+                    .min_h(px(40.))
+                    .py_2()
+                    .border_b_1()
                     .border_color(theme.border)
-                    .child(div().flex_1().text_sm().child(row.name.clone()))
+                    .child(div().flex_1().min_w_0().text_sm().child(row.name.clone()))
                     .child(
-                        Button::new(format!("history-record-{}", row.id))
-                            .label(if recording {
-                                "Recording: on"
+                        div()
+                            .text_xs()
+                            .text_color(if paused && policy.global_enabled && recording {
+                                theme.warning
                             } else {
-                                "Recording: off"
+                                theme.muted_foreground
                             })
-                            .when(recording, |button| button.primary())
-                            .when(!recording, |button| button.secondary())
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.history.set_utility_enabled(&id, !recording);
+                            .child(effective.label()),
+                    )
+                    .child(
+                        Switch::new(format!("history-record-{}", row.id))
+                            .checked(recording)
+                            .accessibility_label(format!("Record History for {}", row.name))
+                            .on_change(cx.listener(move |this, next, _window, cx| {
+                                this.history.set_utility_enabled(&id, *next);
+                                this.history.notify_status(cx);
                                 cx.notify();
                             })),
                     )
@@ -348,14 +408,13 @@ impl Render for SettingsView {
                     )
                     .when(paused, |this| {
                         let retry_id = row.id.clone();
-                        this.child(div().text_xs().text_color(theme.warning).child("paused"))
-                            .child(
-                                Button::new(format!("history-retry-{}", row.id))
-                                    .label("Retry")
-                                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                                        this.retry_recording(&retry_id, cx);
-                                    })),
-                            )
+                        this.child(
+                            Button::new(format!("history-retry-{}", row.id))
+                                .label("Retry")
+                                .on_click(cx.listener(move |this, _event, _window, cx| {
+                                    this.retry_recording(&retry_id, cx);
+                                })),
+                        )
                     }),
             );
         }
@@ -365,7 +424,7 @@ impl Render for SettingsView {
             .into_iter()
             .filter(|id| !self.utilities.iter().any(|row| &row.id == id))
             .collect();
-        let mut unknown_list = div().flex().flex_col().gap_2().w_full();
+        let mut unknown_list = div().flex().flex_col().w_full();
         for id in &unknown {
             unknown_list = unknown_list.child(
                 div()
@@ -373,6 +432,9 @@ impl Render for SettingsView {
                     .flex_row()
                     .items_center()
                     .gap_2()
+                    .min_h(px(40.))
+                    .border_b_1()
+                    .border_color(theme.border)
                     .child(
                         div()
                             .flex_1()
@@ -438,12 +500,45 @@ impl Render for SettingsView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_3()
-                    .p_3()
-                    .rounded_md()
-                    .border_1()
+                    .gap_2()
+                    .py_3()
+                    .border_t_1()
                     .border_color(theme.border)
-                    .bg(theme.popover)
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("Appearance"),
+                    )
+                    .child(
+                        TabBar::new("settings.appearance")
+                            .segmented()
+                            .selected_index(match self.appearance_mode {
+                                AppearanceMode::System => 0,
+                                AppearanceMode::Light => 1,
+                                AppearanceMode::Dark => 2,
+                            })
+                            .child(Tab::new().label("System"))
+                            .child(Tab::new().label("Light"))
+                            .child(Tab::new().label("Dark"))
+                            .on_click(cx.listener(|this, index, window, cx| {
+                                let mode = match index {
+                                    0 => AppearanceMode::System,
+                                    1 => AppearanceMode::Light,
+                                    _ => AppearanceMode::Dark,
+                                };
+                                this.set_appearance(mode, window, cx);
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .py_3()
+                    .border_t_1()
+                    .border_color(theme.border)
                     .child(
                         div()
                             .flex()
@@ -458,6 +553,7 @@ impl Render for SettingsView {
                             )
                             .child(
                                 div()
+                                    .min_w_0()
                                     .text_xs()
                                     .text_color(theme.primary)
                                     .child(capture_text.to_string()),
@@ -471,9 +567,10 @@ impl Render for SettingsView {
                             .gap_3()
                             .child(
                                 div()
+                                    .min_w_0()
                                     .text_xs()
                                     .text_color(theme.muted_foreground)
-                                    .child("Press Command, Control, or Option with a key. Escape cancels capture."),
+                                    .child("Command, Control, or Option with a key"),
                             )
                             .child(
                                 Button::new("settings.capture-shortcut")
@@ -496,12 +593,10 @@ impl Render for SettingsView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_3()
-                    .p_3()
-                    .rounded_md()
-                    .border_1()
+                    .gap_2()
+                    .py_3()
+                    .border_t_1()
                     .border_color(theme.border)
-                    .bg(theme.popover)
                     .child(
                         div()
                             .flex()
@@ -509,42 +604,26 @@ impl Render for SettingsView {
                             .justify_between()
                             .gap_3()
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .child("History"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme.muted_foreground)
-                                            .child("Recording choices do not erase retained entries."),
-                                    ),
+                                div().flex().flex_col().gap_1().child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child("History"),
+                                ),
                             )
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
                                     .gap_2()
+                                    .child(div().text_xs().child("Record operations"))
                                     .child(
-                                        Button::new("history-global-record")
-                                            .label(if policy.global_enabled {
-                                                "Recording: on"
-                                            } else {
-                                                "Recording: off"
-                                            })
-                                            .when(policy.global_enabled, |button| button.primary())
-                                            .when(!policy.global_enabled, |button| {
-                                                button.secondary()
-                                            })
-                                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                                let next = !this.history.policy().global_enabled;
-                                                this.history.set_global_enabled(next);
+                                        Switch::new("history-global-record")
+                                            .checked(policy.global_enabled)
+                                            .accessibility_label("Record History globally")
+                                            .on_change(cx.listener(|this, next, _window, cx| {
+                                                this.history.set_global_enabled(*next);
+                                                this.history.notify_status(cx);
                                                 cx.notify();
                                             })),
                                     )
@@ -559,12 +638,6 @@ impl Render for SettingsView {
                                         ),
                                     ),
                             ),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child("Clearing asks for confirmation. Cancel leaves every retained entry unchanged."),
                     )
                     .when_some(self.notice.as_ref(), |this, notice| {
                         this.child(
@@ -594,6 +667,27 @@ impl Render for SettingsView {
                             )
                             .child(unknown_list)
                     }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .py_3()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("About"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(crate::identity::build_description()),
+                    ),
             )
             .children(dialog_layer)
     }
@@ -796,7 +890,6 @@ mod tests {
         let window = cx.add_window(|window, cx| {
             let view = cx.new(|cx| {
                 SettingsView::new(
-                    window,
                     cx,
                     None,
                     ShortcutPreferences::new(root.clone()),
@@ -807,6 +900,7 @@ mod tests {
                         default_enabled: true,
                     }],
                     Shortcut::new(49, CONTROL | OPTION, "⌃⌥Space"),
+                    AppearanceMode::System,
                 )
             });
             captured = Some(view.clone());

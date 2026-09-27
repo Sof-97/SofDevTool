@@ -8,10 +8,11 @@ use gpui::{
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     input::{Input, InputEvent, InputState},
-    ActiveTheme as _, Root,
+    ActiveTheme as _, Icon, Root,
 };
 
 use crate::registry::{OpenUtility, UtilityId, UtilityRegistry};
+use crate::ui;
 use crate::workbench::Workbench;
 
 gpui::actions!(
@@ -218,7 +219,7 @@ impl Render for LauncherView {
             .id("launcher.results")
             .flex()
             .flex_col()
-            .gap_1()
+            .gap_0()
             .flex_1()
             .min_h_0()
             .track_scroll(&self.scroll)
@@ -231,33 +232,40 @@ impl Render for LauncherView {
             let selected = self.selected == Some(id);
             list = list.child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
                     .w_full()
-                    .px_1()
-                    .py_1()
+                    .h(px(36.))
                     .rounded(theme.radius)
-                    .bg(if selected {
-                        theme.secondary
-                    } else {
-                        theme.popover
-                    })
+                    .when(selected, |row| row.bg(theme.secondary))
                     .child(
-                        div().flex_1().min_w_0().child(
-                            Button::new(format!("launcher.utility.{}", id.slug()))
-                                .label(definition.name)
-                                .when(selected, |button| button.primary())
-                                .on_click(cx.listener(move |this, _event, window, cx| {
-                                    this.open(id, window, cx);
-                                })),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(definition.category),
+                        Button::new(format!("launcher.utility.{}", id.slug()))
+                            .ghost()
+                            .w_full()
+                            .accessibility_label(format!("Open {}", definition.name))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .w_full()
+                                    .min_w_0()
+                                    .child(Icon::new(ui::utility_icon(id)))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .text_ellipsis()
+                                            .child(definition.name),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child(definition.category),
+                                    ),
+                            )
+                            .on_click(cx.listener(move |this, _event, window, cx| {
+                                this.open(id, window, cx);
+                            })),
                     ),
             );
         }

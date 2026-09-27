@@ -1,5 +1,6 @@
 //! The long-lived application shell and concrete Utility workspace sessions.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{
@@ -13,23 +14,25 @@ use gpui::{
     div, px, AnyView, AnyWindowHandle, App, Context, Entity, FocusHandle, IntoElement, Render,
     ScrollHandle, Subscription, Window,
 };
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     input::{Input, InputEvent, InputState},
-    ActiveTheme as _, Root,
+    ActiveTheme as _, Icon, Root, Sizable as _, WindowExt as _,
 };
 
 use crate::appearance::{self, AppearanceMode};
 use crate::clipboard::Clipboard;
-use crate::history::HistoryRecorder;
+use crate::history::{HistoryRecorder, HistorySubscription};
 use crate::json_workspace::JsonWorkspace;
 use crate::preferences::{
     ShortcutPreferences, StartupShortcut, WorkspacePreferences, WorkspacePreferencesData,
 };
-use crate::registry::{OpenUtility, UtilityDefinition, UtilityId, UtilityRegistry};
+use crate::registry::{OpenUtility, UtilityDefinition, UtilityId, UtilityRegistry, WorkspaceViews};
 use crate::shortcut::{Shortcut, ShortcutController};
 use crate::text_diff::TextDiffWorkspace;
 use crate::ui;
+use crate::workspace_layout::WorkspaceLayout;
 
 #[cfg(target_os = "macos")]
 use crate::shortcut::macos::CarbonShortcutRegistrar;
@@ -54,9 +57,12 @@ pub struct Workbench {
     selected: UtilityId,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
+    layout: Entity<WorkspaceLayout>,
     json: Entity<JsonWorkspace>,
+    json_history: AnyView,
     text_diff: Entity<TextDiffWorkspace>,
-    others: HashMap<UtilityId, AnyView>,
+    text_diff_history: AnyView,
+    others: HashMap<UtilityId, WorkspaceViews>,
     workspace_preferences: Option<WorkspacePreferences>,
     appearance: AppearanceMode,
     favorites: Vec<String>,
@@ -66,6 +72,8 @@ pub struct Workbench {
     catalog_focus: Vec<FocusHandle>,
     catalog_scroll: ScrollHandle,
     launcher: Option<AnyWindowHandle>,
+    history_sheet_owner: Option<UtilityId>,
+    history_sheet_programmatic_close: Option<Rc<Cell<bool>>>,
     main_window: AnyWindowHandle,
     entity: gpui::WeakEntity<Self>,
     shortcut_requested: Arc<AtomicBool>,
@@ -75,6 +83,8 @@ pub struct Workbench {
     shortcut_preferences: Option<ShortcutPreferences>,
     _search_subscription: Subscription,
     _appearance_subscription: Subscription,
+    _layout_subscription: Subscription,
+    _history_status_subscription: HistorySubscription,
 }
 
 impl Workbench {
@@ -88,9 +98,49 @@ impl Workbench {
             gpui::KeyBinding::new("up", CatalogPrevious, Some(CATALOG_KEY_CONTEXT)),
             gpui::KeyBinding::new("down", CatalogNext, Some(CATALOG_KEY_CONTEXT)),
         ]);
-        let json = cx.new(|cx| JsonWorkspace::new(window, cx, clipboard.clone(), history.clone()));
-        let text_diff =
-            cx.new(|cx| TextDiffWorkspace::new(window, cx, clipboard.clone(), history.clone()));
+        let layout = cx.new(|_| WorkspaceLayout::load_from_application_support());
+        let layout_subscription = cx.observe_in(&layout, window, |_this, _, window, cx| {
+            cx.notify();
+            cx.defer_in(window, |this, window, cx| {
+                this.sync_history_sheet(window, cx)
+            });
+        });
+        let json = cx.new(|cx| {
+            JsonWorkspace::new_with_layout(
+                window,
+                cx,
+                clipboard.clone(),
+                history.clone(),
+                layout.clone(),
+            )
+        });
+        let json_history: AnyView = cx
+            .new(|cx| {
+                ui::HistoryInspector::new(
+                    json.clone(),
+                    |workspace, cx| workspace.render_history(cx).into_any_element(),
+                    cx,
+                )
+            })
+            .into();
+        let text_diff = cx.new(|cx| {
+            TextDiffWorkspace::new_with_layout(
+                window,
+                cx,
+                clipboard.clone(),
+                history.clone(),
+                layout.clone(),
+            )
+        });
+        let text_diff_history: AnyView = cx
+            .new(|cx| {
+                ui::HistoryInspector::new(
+                    text_diff.clone(),
+                    |workspace, cx| workspace.render_history(cx).into_any_element(),
+                    cx,
+                )
+            })
+            .into();
         text_diff.read(cx).set_active(false);
 
         let workspace_preferences = WorkspacePreferences::application_support().ok();
@@ -117,6 +167,13 @@ impl Workbench {
             }
         });
         let registry = UtilityRegistry::initial();
+        let weak = cx.weak_entity();
+        let history_status_subscription = history.subscribe_status(move |cx| {
+            let weak = weak.clone();
+            cx.defer(move |cx| {
+                weak.update(cx, |_this, cx| cx.notify()).ok();
+            });
+        });
 
         let shortcut_requested = Arc::new(AtomicBool::new(false));
         #[cfg(target_os = "macos")]
@@ -134,8 +191,11 @@ impl Workbench {
             selected: UtilityId::Json,
             clipboard,
             history,
+            layout,
             json,
+            json_history,
             text_diff,
+            text_diff_history,
             others: HashMap::new(),
             workspace_preferences,
             appearance,
@@ -146,6 +206,8 @@ impl Workbench {
             catalog_focus: Vec::new(),
             catalog_scroll: ScrollHandle::new(),
             launcher: None,
+            history_sheet_owner: None,
+            history_sheet_programmatic_close: None,
             main_window: window.window_handle(),
             entity: cx.weak_entity(),
             shortcut_requested,
@@ -155,6 +217,8 @@ impl Workbench {
             shortcut_preferences: None,
             _search_subscription: search_subscription,
             _appearance_subscription: appearance_subscription,
+            _layout_subscription: layout_subscription,
+            _history_status_subscription: history_status_subscription,
         };
         workbench.observe_global_shortcut(cx);
         workbench
@@ -163,6 +227,8 @@ impl Workbench {
     pub fn open(&mut self, request: OpenUtility, cx: &mut Context<Self>) -> bool {
         let opened = self.registry.open(request.0, &mut self.selected);
         if opened {
+            self.layout
+                .update(cx, |layout, cx| layout.set_active(request.0, cx));
             self.record_recent(request.0);
             self.sync_workspace_visibility(cx);
             cx.notify();
@@ -192,7 +258,7 @@ impl Workbench {
         self.favorites.iter().any(|slug| slug == id.slug())
     }
 
-    fn set_appearance(
+    pub(crate) fn set_appearance(
         &mut self,
         mode: AppearanceMode,
         window: &mut Window,
@@ -202,6 +268,10 @@ impl Workbench {
         appearance::apply(mode, Some(window), cx);
         self.persist_workspace();
         cx.notify();
+    }
+
+    pub(crate) fn appearance_mode(&self) -> AppearanceMode {
+        self.appearance
     }
 
     fn set_scope(&mut self, scope: CatalogScope, cx: &mut Context<Self>) {
@@ -307,9 +377,60 @@ impl Workbench {
     }
 
     fn sync_workspace_visibility(&self, cx: &App) {
-        self.text_diff
-            .read(cx)
-            .set_active(self.selected == UtilityId::TextDiff && self.launcher.is_none());
+        self.text_diff.read(cx).set_active(
+            self.selected == UtilityId::TextDiff
+                && self.launcher.is_none()
+                && self.history_sheet_owner.is_none(),
+        );
+    }
+
+    fn sync_history_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let desired = (self.layout.read(cx).placement(self.selected)
+            == crate::workspace_layout::HistoryPlacement::Sheet)
+            .then_some(self.selected);
+        if self.history_sheet_owner == desired {
+            return;
+        }
+        if self.history_sheet_owner.take().is_some() {
+            if let Some(closing) = self.history_sheet_programmatic_close.take() {
+                closing.set(true);
+            }
+            window.close_sheet(cx);
+        }
+        if let Some(id) = desired {
+            let history = self.workspace_views(id, window, cx).history;
+            let layout = self.layout.clone();
+            let weak = cx.weak_entity();
+            let programmatic_close = Rc::new(Cell::new(false));
+            self.history_sheet_programmatic_close = Some(programmatic_close.clone());
+            self.history_sheet_owner = Some(id);
+            self.sync_workspace_visibility(cx);
+            window.open_sheet(cx, move |sheet, _, _| {
+                let layout = layout.clone();
+                let weak = weak.clone();
+                let programmatic_close = programmatic_close.clone();
+                sheet
+                    .title("History")
+                    .size(px(340.))
+                    .resizable(true)
+                    .child(history.clone())
+                    .on_close(move |_, _, cx| {
+                        if programmatic_close.get() {
+                            return;
+                        }
+                        layout.update(cx, |layout, cx| layout.set_history_visible(id, false, cx));
+                        weak.update(cx, |this, cx| {
+                            this.history_sheet_owner = None;
+                            this.history_sheet_programmatic_close = None;
+                            this.sync_workspace_visibility(cx);
+                            cx.notify();
+                        })
+                        .ok();
+                    })
+            });
+        } else {
+            self.sync_workspace_visibility(cx);
+        }
     }
 
     fn show_launcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -436,6 +557,7 @@ impl Workbench {
                 self.history.clone(),
                 utilities,
                 self.current_shortcut(),
+                self.appearance_mode(),
                 cx,
             );
         } else {
@@ -461,27 +583,39 @@ impl Workbench {
     }
 
     /// Returns the selected Utility's view, constructing it once on first open.
-    fn workspace_view(
+    fn workspace_views(
         &mut self,
         id: UtilityId,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyView {
+    ) -> WorkspaceViews {
         match id {
-            UtilityId::Json => self.json.clone().into(),
-            UtilityId::TextDiff => self.text_diff.clone().into(),
+            UtilityId::Json => WorkspaceViews {
+                body: self.json.clone().into(),
+                history: self.json_history.clone(),
+            },
+            UtilityId::TextDiff => WorkspaceViews {
+                body: self.text_diff.clone().into(),
+                history: self.text_diff_history.clone(),
+            },
             other => {
-                if let Some(view) = self.others.get(&other) {
-                    return view.clone();
+                if let Some(views) = self.others.get(&other) {
+                    return views.clone();
                 }
                 let construct = self
                     .registry
                     .definition(other)
                     .and_then(|definition| definition.construct)
                     .expect("a catalog Utility exposes a workspace constructor");
-                let view = construct(window, cx, self.clipboard.clone(), self.history.clone());
-                self.others.insert(other, view.clone());
-                view
+                let views = construct(
+                    window,
+                    cx,
+                    self.clipboard.clone(),
+                    self.history.clone(),
+                    self.layout.clone(),
+                );
+                self.others.insert(other, views.clone());
+                views
             }
         }
     }
@@ -507,29 +641,18 @@ fn catalog_category_heading(category: &str) -> &str {
     }
 }
 
-fn catalog_glyph(id: UtilityId) -> &'static str {
-    match id {
-        UtilityId::Json => "{}",
-        UtilityId::YamlJson => "⇄",
-        UtilityId::Base64 => "64",
-        UtilityId::UrlEncoding => "%",
-        UtilityId::Color => "◐",
-        UtilityId::Hashes => "#",
-        UtilityId::Jwt => "◈",
-        UtilityId::Timestamps => "◷",
-        UtilityId::Identifiers => "ID",
-        UtilityId::RandomString => "✳",
-        UtilityId::SampleData => "▦",
-        UtilityId::Regex => ".*",
-        UtilityId::TextDiff => "±",
-        UtilityId::CaseConversion => "Aa",
-        UtilityId::Whitespace => "¶",
-    }
-}
-
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        let workspace_width = window.bounds().size.width - px(228.);
+        let crossed_history_breakpoint = self.layout.update(cx, |layout, cx| {
+            layout.set_workspace_width(workspace_width, cx)
+        });
+        if crossed_history_breakpoint {
+            cx.defer_in(window, |this, window, cx| {
+                this.sync_history_sheet(window, cx);
+            });
+        }
         let selected = self.selected;
         let scope = self.scope;
         let query = self.search.read(cx).value().to_string();
@@ -558,6 +681,8 @@ impl Render for Workbench {
             |label: &'static str, target: CatalogScope, index: usize, cx: &mut Context<Self>| {
                 Button::new(format!("catalog.scope.{index}"))
                     .label(label)
+                    .xsmall()
+                    .ghost()
                     .when(scope == target, |button| button.primary())
                     .on_click(cx.listener(move |this, _event, _window, cx| {
                         this.set_scope(target, cx);
@@ -584,7 +709,7 @@ impl Render for Workbench {
                     div()
                         .mt_3()
                         .mb_1()
-                        .px_2()
+                        .px_1()
                         .text_xs()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(theme.muted_foreground)
@@ -598,20 +723,27 @@ impl Render for Workbench {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_1()
                     .w_full()
-                    .child(
-                        div()
-                            .w_6()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(catalog_glyph(id)),
-                    )
+                    .h(px(32.))
+                    .rounded(theme.radius)
+                    .when(id == selected, |row| row.bg(theme.secondary))
                     .child(
                         div().flex_1().min_w_0().child(
                             Button::new(format!("catalog-{}", id.slug()))
-                                .label(definition.name)
-                                .when(id == selected, |button| button.primary())
+                                .ghost()
+                                .xsmall()
+                                .w_full()
+                                .accessibility_label(format!("Open {}", definition.name))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .w_full()
+                                        .min_w_0()
+                                        .child(ui::utility_icon(id))
+                                        .child(div().min_w_0().child(definition.name)),
+                                )
                                 .on_click(cx.listener(move |this, _event, _window, cx| {
                                     this.open(OpenUtility(id), cx);
                                 })),
@@ -619,7 +751,18 @@ impl Render for Workbench {
                     )
                     .child(
                         Button::new(format!("favorite-{}", id.slug()))
-                            .label(if favorite { "★" } else { "☆" })
+                            .icon(if favorite {
+                                IconName::StarFill
+                            } else {
+                                IconName::Star
+                            })
+                            .ghost()
+                            .xsmall()
+                            .tooltip(if favorite {
+                                "Remove favorite"
+                            } else {
+                                "Add favorite"
+                            })
                             .accessibility_label(format!(
                                 "{} favorite {}",
                                 if favorite { "Remove" } else { "Add" },
@@ -649,11 +792,11 @@ impl Render for Workbench {
         let sidebar = div()
             .flex()
             .flex_col()
-            .w(px(252.))
+            .w(px(228.))
             .flex_shrink_0()
             .min_h_0()
-            .p_3()
-            .gap_3()
+            .p_2()
+            .gap_2()
             .bg(theme.popover)
             .border_r_1()
             .border_color(theme.border)
@@ -702,14 +845,16 @@ impl Render for Workbench {
             .registry
             .definition(selected)
             .expect("the selected Utility is registered");
-        let view = self.workspace_view(selected, window, cx);
-        let selected_appearance = self.appearance;
+        let view = self.workspace_views(selected, window, cx).body;
+        let history_visible = self.layout.read(cx).history_visible(selected);
+        let layout_error = self.layout.read(cx).save_error().map(str::to_owned);
+        let recording = self.history.recording_state(selected.slug());
         let topbar = div()
             .flex()
             .items_center()
             .justify_between()
             .gap_3()
-            .h(px(54.))
+            .h(px(40.))
             .flex_shrink_0()
             .px_4()
             .border_b_1()
@@ -729,7 +874,7 @@ impl Render for Workbench {
                         div()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child("/ Workbench"),
+                            .child("Local"),
                     ),
             )
             .child(
@@ -738,63 +883,26 @@ impl Render for Workbench {
                     .items_center()
                     .gap_2()
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().size_2().rounded_full().bg(theme.primary))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child("LOCAL · OFFLINE"),
-                            ),
-                    )
-                    .child(
                         Button::new("workbench.launcher")
-                            .label(format!(
-                                "Launcher · {}",
+                            .icon(IconName::Command)
+                            .ghost()
+                            .tooltip(format!(
+                                "Utility Launcher · {}",
                                 self.current_shortcut().display_name
                             ))
+                            .accessibility_label("Open Utility Launcher")
                             .on_click(cx.listener(|this, _event, window, cx| {
                                 this.show_launcher(window, cx);
                             })),
                     )
                     .child(
                         Button::new("workbench.settings")
-                            .label("Settings")
+                            .icon(IconName::Settings)
+                            .ghost()
+                            .tooltip("Settings")
+                            .accessibility_label("Open Settings")
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.show_settings(cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("workbench.appearance.system")
-                            .label(AppearanceMode::System.label())
-                            .when(selected_appearance == AppearanceMode::System, |button| {
-                                button.primary()
-                            })
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.set_appearance(AppearanceMode::System, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("workbench.appearance.light")
-                            .label(AppearanceMode::Light.label())
-                            .when(selected_appearance == AppearanceMode::Light, |button| {
-                                button.primary()
-                            })
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.set_appearance(AppearanceMode::Light, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("workbench.appearance.dark")
-                            .label(AppearanceMode::Dark.label())
-                            .when(selected_appearance == AppearanceMode::Dark, |button| {
-                                button.primary()
-                            })
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.set_appearance(AppearanceMode::Dark, window, cx);
                             })),
                     ),
             );
@@ -807,33 +915,77 @@ impl Render for Workbench {
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_1()
+                    .items_center()
+                    .gap_2()
+                    .child(Icon::new(ui::utility_icon(selected)))
                     .child(
                         div()
                             .text_lg()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(definition.name),
-                    )
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
                     .child(
                         div()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child(definition.summary),
+                            .child(recording.label()),
+                    )
+                    .child(
+                        Button::new("workbench.history.toggle")
+                            .icon(IconName::ClockArrowUp)
+                            .ghost()
+                            .tooltip(if history_visible {
+                                "Hide History"
+                            } else {
+                                "Show History"
+                            })
+                            .accessibility_label(if history_visible {
+                                "Hide History"
+                            } else {
+                                "Show History"
+                            })
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                let selected = this.selected;
+                                this.layout.update(cx, |layout, cx| {
+                                    layout.set_history_visible(
+                                        selected,
+                                        !layout.history_visible(selected),
+                                        cx,
+                                    )
+                                });
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("toggle-favorite")
+                            .icon(if self.is_favorite(selected) {
+                                IconName::StarFill
+                            } else {
+                                IconName::Star
+                            })
+                            .ghost()
+                            .tooltip(if self.is_favorite(selected) {
+                                "Remove favorite"
+                            } else {
+                                "Add favorite"
+                            })
+                            .accessibility_label(if self.is_favorite(selected) {
+                                "Remove favorite"
+                            } else {
+                                "Add favorite"
+                            })
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                let selected = this.selected;
+                                this.toggle_favorite(selected);
+                                cx.notify();
+                            })),
                     ),
-            )
-            .child(
-                Button::new("toggle-favorite")
-                    .label(if self.is_favorite(selected) {
-                        "★ Saved"
-                    } else {
-                        "☆ Save"
-                    })
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        let selected = this.selected;
-                        this.toggle_favorite(selected);
-                        cx.notify();
-                    })),
             );
         let workspace = div()
             .flex()
@@ -858,20 +1010,8 @@ impl Render for Workbench {
             .border_color(theme.border)
             .text_xs()
             .text_color(theme.muted_foreground)
-            .child(format!(
-                "{} · History stays with this workspace",
-                definition.category
-            ))
-            .child(format!(
-                "{} · {} · {} · {}",
-                crate::identity::VERSION,
-                crate::identity::PROFILE.channel(),
-                crate::identity::REVISION
-                    .chars()
-                    .take(8)
-                    .collect::<String>(),
-                crate::identity::SOURCE_STATE,
-            ));
+            .child(definition.category)
+            .child(format!("v{}", crate::identity::VERSION));
 
         div()
             .flex()
@@ -900,7 +1040,18 @@ impl Render for Workbench {
                         .child(format!("Launcher: {error}")),
                 )
             })
+            .when_some(layout_error, |this, error| {
+                this.child(
+                    div()
+                        .px_4()
+                        .py_2()
+                        .text_xs()
+                        .text_color(theme.danger)
+                        .child(error),
+                )
+            })
             .child(footer)
+            .children(Root::render_sheet_layer(window, cx))
             // GPUI Kit renders modal dialogs in a separate layer that the host
             // view must include; `Root::render` does not mount it. Utility
             // restore confirmations open here.

@@ -14,12 +14,14 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{div, Context, Entity, IntoElement, Render, Subscription, Task, Window};
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    button::Button,
+    button::{Button, ButtonVariants as _},
     input::{InputEvent, TextareaState},
     list::ListState,
+    resizable::{h_resizable, resizable_panel, v_resizable, ResizableState},
     tab::{Tab, TabBar},
-    ActiveTheme as _, Disableable as _,
+    ActiveTheme as _, Disableable as _, Icon,
 };
 use sofdevtool_core::utilities::text_diff::{
     TextDiff, TextDiffMode, TextDiffRequest, TextDiffSnapshot,
@@ -28,7 +30,9 @@ use sofdevtool_core::utility::Utility;
 
 use crate::clipboard::Clipboard;
 use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::registry::UtilityId;
 use crate::ui;
+use crate::workspace_layout::{HistoryPlacement, WorkspaceLayout};
 use renderer::{RendererStatus, TextDiffRenderer, WebDiffSurface};
 
 pub const TEXT_DIFF_UTILITY_ID: &str = "text-diff";
@@ -81,21 +85,39 @@ pub struct TextDiffWorkspace {
     renderer_status_changed: Rc<Cell<bool>>,
     copied: Option<usize>,
     history_view: HistoryViewState,
-    history_visible: bool,
+    layout: Entity<WorkspaceLayout>,
+    _layout_subscription: Subscription,
     history_list: Entity<ListState<ui::HistoryListDelegate>>,
+    source_split: Entity<ResizableState>,
+    workspace_split: Entity<ResizableState>,
     _history_subscription: HistorySubscription,
     _subscriptions: Vec<Subscription>,
 }
 
 impl TextDiffWorkspace {
+    #[cfg(test)]
     pub fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
+        let layout = cx.new(|_| WorkspaceLayout::load(None));
+        Self::new_with_layout(window, cx, clipboard, history, layout)
+    }
+
+    pub fn new_with_layout(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        clipboard: Rc<dyn Clipboard>,
+        history: Rc<HistoryRecorder>,
+        layout: Entity<WorkspaceLayout>,
+    ) -> Self {
+        let layout_subscription = cx.observe(&layout, |_, _, cx| cx.notify());
         let old = cx.new(|cx| TextareaState::new(window, cx));
         let new = cx.new(|cx| TextareaState::new(window, cx));
+        let source_split = cx.new(|_| ResizableState::default());
+        let workspace_split = cx.new(|_| ResizableState::default());
         let renderer_status_changed = Rc::new(Cell::new(false));
         let renderer = TextDiffRenderer::new(window, renderer_status_changed.clone(), cx);
         let diagnostic = renderer
@@ -164,8 +186,11 @@ impl TextDiffWorkspace {
             renderer_status_changed,
             copied: None,
             history_view,
-            history_visible: true,
+            layout,
+            _layout_subscription: layout_subscription,
             history_list,
+            source_split,
+            workspace_split,
             _history_subscription: history_subscription,
             _subscriptions: subscriptions,
         };
@@ -464,7 +489,7 @@ impl TextDiffWorkspace {
             .collect()
     }
 
-    fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.history_view.selected.clone();
         let restore_enabled = selected
             .as_ref()
@@ -530,118 +555,104 @@ impl Render for TextDiffWorkspace {
                 };
                 this.set_mode(mode, window, cx);
             }));
+        let original_actions = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                Button::new("text-diff.paste-original")
+                    .icon(Icon::new(IconName::ClipboardPaste))
+                    .tooltip("Paste original text")
+                    .accessibility_label("Paste original text")
+                    .ghost()
+                    .on_click(
+                        cx.listener(|this, _event, window, cx| this.paste(&this.old, window, cx)),
+                    ),
+            )
+            .child(
+                Button::new("text-diff.copy-original")
+                    .icon(Icon::new(IconName::Copy))
+                    .tooltip("Copy original text")
+                    .accessibility_label("Copy original text")
+                    .ghost()
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        let text = this.old.read(cx).value().to_string();
+                        this.copy(0, text, cx);
+                    })),
+            );
+        let updated_actions = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                Button::new("text-diff.paste-updated")
+                    .icon(Icon::new(IconName::ClipboardPaste))
+                    .tooltip("Paste updated text")
+                    .accessibility_label("Paste updated text")
+                    .ghost()
+                    .on_click(
+                        cx.listener(|this, _event, window, cx| this.paste(&this.new, window, cx)),
+                    ),
+            )
+            .child(
+                Button::new("text-diff.copy-updated")
+                    .icon(Icon::new(IconName::Copy))
+                    .tooltip("Copy updated text")
+                    .accessibility_label("Copy updated text")
+                    .ghost()
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        let text = this.new.read(cx).value().to_string();
+                        this.copy(1, text, cx);
+                    })),
+            );
+        let sources = h_resizable("text-diff.sources")
+            .with_state(&self.source_split)
+            .child(
+                resizable_panel()
+                    .size_range(gpui::px(220.)..gpui::px(2000.))
+                    .child(ui::pane(cx, "Original", original_actions, old)),
+            )
+            .child(
+                resizable_panel()
+                    .size_range(gpui::px(220.)..gpui::px(2000.))
+                    .child(ui::pane(cx, "Updated", updated_actions, new)),
+            );
+        let comparison_actions = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(mode_control)
+            .child(ui::copy_feedback(
+                cx,
+                self.copied.is_some(),
+                "Copied to Clipboard",
+            ));
+        let panels = v_resizable("text-diff.panels")
+            .with_state(&self.workspace_split)
+            .child(
+                resizable_panel()
+                    .size_range(gpui::px(120.)..gpui::px(800.))
+                    .child(sources),
+            )
+            .child(
+                resizable_panel()
+                    .size_range(gpui::px(180.)..gpui::px(2000.))
+                    .child(ui::pane(
+                        cx,
+                        "Comparison",
+                        comparison_actions,
+                        WebDiffSurface::new(self.renderer.clone()),
+                    )),
+            );
         let mut main = div()
             .flex()
             .flex_col()
-            .gap_3()
             .flex_1()
             .min_w_0()
             .min_h_0()
             .bg(theme.background)
             .text_color(theme.foreground)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .flex_wrap()
-                    .child(mode_control)
-                    .child(
-                        Button::new("text-diff.paste-original")
-                            .label("Paste original")
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.paste(&this.old, window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("text-diff.paste-updated")
-                            .label("Paste updated")
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.paste(&this.new, window, cx)
-                            })),
-                    )
-                    .child(div().flex_1())
-                    .child(ui::copy_feedback(
-                        cx,
-                        self.copied.is_some(),
-                        "Copied to Clipboard",
-                    ))
-                    .child(
-                        Button::new("text-diff.history.toggle")
-                            .label(if self.history_visible {
-                                "History: on"
-                            } else {
-                                "History: off"
-                            })
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.history_visible = !this.history_visible;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .flex_wrap()
-                    .child(
-                        Button::new("text-diff.copy-original")
-                            .label("Copy original")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                let text = this.old.read(cx).value().to_string();
-                                this.copy(0, text, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("text-diff.copy-updated")
-                            .label("Copy updated")
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                let text = this.new.read(cx).value().to_string();
-                                this.copy(1, text, cx);
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_3()
-                    .h_40()
-                    .flex_shrink_0()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .min_h_0()
-                            .child(ui::panel(cx, "Original", "editable", old)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .min_h_0()
-                            .child(ui::panel(cx, "Updated", "editable", new)),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .child(ui::panel(
-                        cx,
-                        "Comparison",
-                        "live, selectable preview",
-                        WebDiffSurface::new(self.renderer.clone()),
-                    )),
-            );
+            .child(div().flex().flex_1().min_h_0().child(panels));
         main = match &self.renderer_status {
             RendererStatus::Loading => {
                 main.child(div().text_xs().child("Loading local diff renderer…"))
@@ -687,7 +698,7 @@ impl Render for TextDiffWorkspace {
             .min_w_0()
             .min_h_0()
             .child(main);
-        if self.history_visible {
+        if self.layout.read(cx).placement(UtilityId::TextDiff) == HistoryPlacement::Inline {
             root = root.child(self.render_history(cx));
         }
         root
