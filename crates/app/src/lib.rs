@@ -18,3 +18,4 @@ pub mod text_diff;
 pub mod ui;
 pub mod utilities;
 pub mod workbench;
+pub mod workspace_layout;

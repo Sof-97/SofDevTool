@@ -21,6 +21,8 @@ const HISTORY_FILE: &str = "history-preferences.v1.json";
 const HISTORY_SCHEMA_VERSION: u8 = 1;
 const WORKSPACE_FILE: &str = "workspace-preferences.v1.json";
 const WORKSPACE_SCHEMA_VERSION: u8 = 1;
+const HISTORY_LAYOUT_FILE: &str = "history-layout.v1.json";
+const HISTORY_LAYOUT_SCHEMA_VERSION: u8 = 1;
 const RANDOM_STRING_CONTROLS_FILE: &str = "random-string-controls.v1.json";
 const RANDOM_STRING_CONTROLS_SCHEMA_VERSION: u8 = 1;
 
@@ -109,6 +111,60 @@ impl WorkspacePreferences {
 struct WorkspaceRecord {
     version: u8,
     data: WorkspacePreferencesData,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryLayoutPreferences {
+    root: PathBuf,
+}
+
+#[derive(Deserialize, Serialize)]
+struct HistoryLayoutRecord {
+    version: u8,
+    visible: std::collections::BTreeMap<String, bool>,
+}
+
+impl HistoryLayoutPreferences {
+    pub fn application_support() -> Result<Self, PreferenceError> {
+        identity::application_support_root()
+            .map(Self::new)
+            .ok_or(PreferenceError::UnavailableRoot)
+    }
+
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    pub fn load(&self) -> std::collections::BTreeMap<String, bool> {
+        let Ok(contents) = fs::read_to_string(self.root.join(HISTORY_LAYOUT_FILE)) else {
+            return Default::default();
+        };
+        let Ok(record) = serde_json::from_str::<HistoryLayoutRecord>(&contents) else {
+            return Default::default();
+        };
+        if record.version != HISTORY_LAYOUT_SCHEMA_VERSION {
+            return Default::default();
+        }
+        record.visible
+    }
+
+    pub fn save(
+        &self,
+        visible: &std::collections::BTreeMap<String, bool>,
+    ) -> Result<(), PreferenceError> {
+        fs::create_dir_all(&self.root).map_err(PreferenceError::CreateDirectory)?;
+        let serialized = serde_json::to_vec_pretty(&HistoryLayoutRecord {
+            version: HISTORY_LAYOUT_SCHEMA_VERSION,
+            visible: visible.clone(),
+        })
+        .map_err(PreferenceError::Encode)?;
+        let temporary = self
+            .root
+            .join(format!(".{HISTORY_LAYOUT_FILE}.{}.tmp", std::process::id()));
+        fs::write(&temporary, serialized).map_err(PreferenceError::Write)?;
+        fs::rename(&temporary, self.root.join(HISTORY_LAYOUT_FILE))
+            .map_err(PreferenceError::Replace)
+    }
 }
 
 /// Fresh Rust-only persistence for History recording preferences.

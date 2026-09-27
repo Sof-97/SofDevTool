@@ -6,7 +6,7 @@
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{div, AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui::{div, App, Context, Entity, IntoElement, Render, Subscription, Window};
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     input::{Input, InputEvent, InputState, NumberInput, TextareaState},
@@ -25,8 +25,10 @@ use crate::clipboard::Clipboard;
 use crate::history::{
     HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState, RETENTION,
 };
+use crate::registry::{UtilityId, WorkspaceViews};
 use crate::ui;
 use crate::workbench::Workbench;
+use crate::workspace_layout::{HistoryPlacement, WorkspaceLayout};
 
 type SampleDataSession = Session<SampleData>;
 
@@ -36,9 +38,21 @@ pub fn construct(
     cx: &mut Context<Workbench>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
-) -> AnyView {
-    cx.new(|cx| SampleDataWorkspace::new(window, cx, clipboard, history))
-        .into()
+    layout: Entity<WorkspaceLayout>,
+) -> WorkspaceViews {
+    let workspace =
+        cx.new(|cx| SampleDataWorkspace::new_with_layout(window, cx, clipboard, history, layout));
+    let inspector = cx.new(|cx| {
+        ui::HistoryInspector::new(
+            workspace.clone(),
+            |workspace, cx| workspace.render_history(cx).into_any_element(),
+            cx,
+        )
+    });
+    WorkspaceViews {
+        body: workspace.into(),
+        history: inspector.into(),
+    }
 }
 
 /// The editable state of one field, including its own text inputs so reordering
@@ -149,18 +163,32 @@ pub struct SampleDataWorkspace {
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_list: Entity<ListState<ui::HistoryListDelegate>>,
-    history_visible: bool,
+    layout: Entity<WorkspaceLayout>,
+    _layout_subscription: Subscription,
     _history_subscription: HistorySubscription,
     _subscriptions: Vec<Subscription>,
 }
 
 impl SampleDataWorkspace {
+    #[cfg(test)]
     fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
+        let layout = cx.new(|_| WorkspaceLayout::load(None));
+        Self::new_with_layout(window, cx, clipboard, history, layout)
+    }
+
+    fn new_with_layout(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        clipboard: Rc<dyn Clipboard>,
+        history: Rc<HistoryRecorder>,
+        layout: Entity<WorkspaceLayout>,
+    ) -> Self {
+        let layout_subscription = cx.observe(&layout, |_, _, cx| cx.notify());
         let default = SampleDataRequest::default();
         let fields: Vec<FieldState> = default
             .fields
@@ -221,7 +249,8 @@ impl SampleDataWorkspace {
             suppress_changes: false,
             history_view,
             history_list,
-            history_visible: true,
+            layout,
+            _layout_subscription: layout_subscription,
             _history_subscription: history_subscription,
             _subscriptions: vec![row_count_subscription],
         };
@@ -831,18 +860,6 @@ impl Render for SampleDataWorkspace {
             .child(div().flex_1())
             .child(ui::copy_feedback(cx, self.copied, "Copied to Clipboard"))
             .child(
-                Button::new("sample-data.history.toggle")
-                    .label(if self.history_visible {
-                        "History: on"
-                    } else {
-                        "History: off"
-                    })
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.history_visible = !this.history_visible;
-                        cx.notify();
-                    })),
-            )
-            .child(
                 Button::new("sample-data.generate")
                     .label("Generate")
                     .primary()
@@ -934,7 +951,7 @@ impl Render for SampleDataWorkspace {
                 "read-only, selectable",
                 result_body,
             ));
-        if self.history_visible {
+        if self.layout.read(cx).placement(UtilityId::SampleData) == HistoryPlacement::Inline {
             workspace = workspace.child(self.render_history(cx));
         }
         column.child(workspace).child(self.render_diagnostics(cx))

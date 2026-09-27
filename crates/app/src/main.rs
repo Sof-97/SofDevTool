@@ -92,7 +92,7 @@ fn main() {
     let reopen_visible = visible.clone();
     let reopen_native_window = native_window.clone();
     let launch_preferences = preferences.clone();
-    let application = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    let application = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
     {
         // Closing the Workbench hides its retained native window. Dock
         // reopen orders that same window front, preserving its bounds,

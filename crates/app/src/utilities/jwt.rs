@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui::{div, App, Context, Entity, IntoElement, Render, Subscription, Window};
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     input::{InputEvent, TextareaState},
@@ -26,8 +26,10 @@ use sofdevtool_core::utility::Utility;
 
 use crate::clipboard::Clipboard;
 use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::registry::{UtilityId, WorkspaceViews};
 use crate::ui;
 use crate::workbench::Workbench;
+use crate::workspace_layout::{HistoryPlacement, WorkspaceLayout};
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -39,9 +41,21 @@ pub fn construct(
     cx: &mut Context<Workbench>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
-) -> AnyView {
-    cx.new(|cx| JwtWorkspace::new(window, cx, clipboard, history))
-        .into()
+    layout: Entity<WorkspaceLayout>,
+) -> WorkspaceViews {
+    let workspace =
+        cx.new(|cx| JwtWorkspace::new_with_layout(window, cx, clipboard, history, layout));
+    let inspector = cx.new(|cx| {
+        ui::HistoryInspector::new(
+            workspace.clone(),
+            |workspace, cx| workspace.render_history(cx).into_any_element(),
+            cx,
+        )
+    });
+    WorkspaceViews {
+        body: workspace.into(),
+        history: inspector.into(),
+    }
 }
 
 pub struct JwtWorkspace {
@@ -57,19 +71,33 @@ pub struct JwtWorkspace {
     /// Off by default: this Utility records nothing until the user opts in.
     recording_enabled: bool,
     history_view: HistoryViewState,
-    history_visible: bool,
+    layout: Entity<WorkspaceLayout>,
+    _layout_subscription: Subscription,
     history_list: Entity<ListState<ui::HistoryListDelegate>>,
     _history_subscription: HistorySubscription,
     _subscriptions: Vec<Subscription>,
 }
 
 impl JwtWorkspace {
+    #[cfg(test)]
     fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
+        let layout = cx.new(|_| WorkspaceLayout::load(None));
+        Self::new_with_layout(window, cx, clipboard, history, layout)
+    }
+
+    fn new_with_layout(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        clipboard: Rc<dyn Clipboard>,
+        history: Rc<HistoryRecorder>,
+        layout: Entity<WorkspaceLayout>,
+    ) -> Self {
+        let layout_subscription = cx.observe(&layout, |_, _, cx| cx.notify());
         let input = cx.new(|cx| TextareaState::new(window, cx));
         let header = cx.new(|cx| TextareaState::new(window, cx));
         let payload = cx.new(|cx| TextareaState::new(window, cx));
@@ -114,7 +142,8 @@ impl JwtWorkspace {
             suppress_changes: false,
             recording_enabled,
             history_view,
-            history_visible: true,
+            layout,
+            _layout_subscription: layout_subscription,
             history_list,
             _history_subscription: history_subscription,
             _subscriptions: subscriptions,
@@ -202,6 +231,7 @@ impl JwtWorkspace {
         self.recording_enabled = !self.recording_enabled;
         self.history
             .set_utility_enabled(Jwt::ID, self.recording_enabled);
+        self.history.notify_status(cx);
         cx.notify();
     }
 
@@ -472,18 +502,6 @@ impl Render for JwtWorkspace {
             .child(div().flex_1())
             .child(ui::copy_feedback(cx, self.copied, "Copied to Clipboard"))
             .child(
-                Button::new("jwt-decoder.history.toggle")
-                    .label(if self.history_visible {
-                        "History: on"
-                    } else {
-                        "History: off"
-                    })
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.history_visible = !this.history_visible;
-                        cx.notify();
-                    })),
-            )
-            .child(
                 Button::new("jwt-decoder.paste")
                     .label("Paste")
                     .on_click(cx.listener(|this, _event, window, cx| {
@@ -579,7 +597,7 @@ impl Render for JwtWorkspace {
                 ui::multiline_editor(&self.input, false, "jwt-decoder.input"),
             ))
             .child(results);
-        if self.history_visible {
+        if self.layout.read(cx).placement(UtilityId::Jwt) == HistoryPlacement::Inline {
             workspace = workspace.child(self.render_history(cx));
         }
 

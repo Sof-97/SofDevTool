@@ -6,9 +6,7 @@
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{
-    div, AnyElement, AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window,
-};
+use gpui::{div, AnyElement, App, Context, Entity, IntoElement, Render, Subscription, Window};
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     input::{Input, InputEvent, InputState, NumberInput},
@@ -28,8 +26,10 @@ use crate::clipboard::Clipboard;
 use crate::history::{
     HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState, RETENTION,
 };
+use crate::registry::{UtilityId, WorkspaceViews};
 use crate::ui;
 use crate::workbench::Workbench;
+use crate::workspace_layout::{HistoryPlacement, WorkspaceLayout};
 
 type IdentifiersSession = Session<Identifiers>;
 
@@ -40,9 +40,21 @@ pub fn construct(
     cx: &mut Context<Workbench>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
-) -> AnyView {
-    cx.new(|cx| IdentifiersWorkspace::new(window, cx, clipboard, history))
-        .into()
+    layout: Entity<WorkspaceLayout>,
+) -> WorkspaceViews {
+    let workspace =
+        cx.new(|cx| IdentifiersWorkspace::new_with_layout(window, cx, clipboard, history, layout));
+    let inspector = cx.new(|cx| {
+        ui::HistoryInspector::new(
+            workspace.clone(),
+            |workspace, cx| workspace.render_history(cx).into_any_element(),
+            cx,
+        )
+    });
+    WorkspaceViews {
+        body: workspace.into(),
+        history: inspector.into(),
+    }
 }
 
 pub struct IdentifiersWorkspace {
@@ -67,18 +79,32 @@ pub struct IdentifiersWorkspace {
     suppress_changes: bool,
     history_view: HistoryViewState,
     history_list: Entity<ListState<ui::HistoryListDelegate>>,
-    history_visible: bool,
+    layout: Entity<WorkspaceLayout>,
+    _layout_subscription: Subscription,
     _history_subscription: HistorySubscription,
     _subscriptions: Vec<Subscription>,
 }
 
 impl IdentifiersWorkspace {
+    #[cfg(test)]
     fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
+        let layout = cx.new(|_| WorkspaceLayout::load(None));
+        Self::new_with_layout(window, cx, clipboard, history, layout)
+    }
+
+    fn new_with_layout(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        clipboard: Rc<dyn Clipboard>,
+        history: Rc<HistoryRecorder>,
+        layout: Entity<WorkspaceLayout>,
+    ) -> Self {
+        let layout_subscription = cx.observe(&layout, |_, _, cx| cx.notify());
         let namespace = cx.new(|cx| InputState::new(window, cx));
         let name = cx.new(|cx| InputState::new(window, cx));
         let inspect = cx.new(|cx| InputState::new(window, cx));
@@ -171,7 +197,8 @@ impl IdentifiersWorkspace {
             suppress_changes: false,
             history_view,
             history_list,
-            history_visible: true,
+            layout,
+            _layout_subscription: layout_subscription,
             _history_subscription: history_subscription,
             _subscriptions: subscriptions,
         };
@@ -893,18 +920,6 @@ impl Render for IdentifiersWorkspace {
                 "Copied all to Clipboard",
             ))
             .child(
-                Button::new("identifiers.history.toggle")
-                    .label(if self.history_visible {
-                        "History: on"
-                    } else {
-                        "History: off"
-                    })
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.history_visible = !this.history_visible;
-                        cx.notify();
-                    })),
-            )
-            .child(
                 Button::new("identifiers.copy-all")
                     .label("Copy All")
                     .disabled(!can_copy)
@@ -943,7 +958,7 @@ impl Render for IdentifiersWorkspace {
                 "read-only generated values",
                 values_body,
             ));
-        if self.history_visible {
+        if self.layout.read(cx).placement(UtilityId::Identifiers) == HistoryPlacement::Inline {
             workspace = workspace.child(self.render_history(cx));
         }
         column.child(workspace).child(self.render_diagnostics(cx))

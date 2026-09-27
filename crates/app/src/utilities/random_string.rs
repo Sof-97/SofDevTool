@@ -5,14 +5,14 @@
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{
-    div, AnyElement, AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window,
-};
+use gpui::{div, AnyElement, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     input::{Input, InputEvent, InputState, NumberInput},
     list::ListState,
-    ActiveTheme as _, Disableable as _,
+    ActiveTheme as _, Disableable as _, Icon,
 };
 use serde::{Deserialize, Serialize};
 use sofdevtool_core::session::{Session, SubmitOutcome};
@@ -27,8 +27,10 @@ use crate::history::{
     HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState, RETENTION,
 };
 use crate::preferences::{RandomStringControlsPreferences, RandomStringControlsStartup};
+use crate::registry::{UtilityId, WorkspaceViews};
 use crate::ui;
 use crate::workbench::Workbench;
+use crate::workspace_layout::{HistoryPlacement, WorkspaceLayout};
 
 type RandomStringSession = Session<RandomString>;
 
@@ -172,9 +174,21 @@ pub fn construct(
     cx: &mut Context<Workbench>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
-) -> AnyView {
-    cx.new(|cx| RandomStringWorkspace::new(window, cx, clipboard, history))
-        .into()
+    layout: Entity<WorkspaceLayout>,
+) -> WorkspaceViews {
+    let workspace =
+        cx.new(|cx| RandomStringWorkspace::new_with_layout(window, cx, clipboard, history, layout));
+    let inspector = cx.new(|cx| {
+        ui::HistoryInspector::new(
+            workspace.clone(),
+            |workspace, cx| workspace.render_history(cx).into_any_element(),
+            cx,
+        )
+    });
+    WorkspaceViews {
+        body: workspace.into(),
+        history: inspector.into(),
+    }
 }
 
 pub struct RandomStringWorkspace {
@@ -196,24 +210,27 @@ pub struct RandomStringWorkspace {
     copied: Option<String>,
     history_view: HistoryViewState,
     history_list: Entity<ListState<ui::HistoryListDelegate>>,
-    history_visible: bool,
+    layout: Entity<WorkspaceLayout>,
+    _layout_subscription: Subscription,
     _history_subscription: HistorySubscription,
     _subscriptions: Vec<Subscription>,
 }
 
 impl RandomStringWorkspace {
-    fn new(
+    fn new_with_layout(
         window: &mut Window,
         cx: &mut Context<Self>,
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
+        layout: Entity<WorkspaceLayout>,
     ) -> Self {
         let controls = RandomStringControlsSession::open(
             RandomStringControlsPreferences::application_support().ok(),
         );
-        Self::new_with_controls(window, cx, clipboard, history, controls)
+        Self::new_with_controls_and_layout(window, cx, clipboard, history, controls, layout)
     }
 
+    #[cfg(test)]
     fn new_with_controls(
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -221,6 +238,19 @@ impl RandomStringWorkspace {
         history: Rc<HistoryRecorder>,
         controls: RandomStringControlsSession,
     ) -> Self {
+        let layout = cx.new(|_| WorkspaceLayout::load(None));
+        Self::new_with_controls_and_layout(window, cx, clipboard, history, controls, layout)
+    }
+
+    fn new_with_controls_and_layout(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        clipboard: Rc<dyn Clipboard>,
+        history: Rc<HistoryRecorder>,
+        controls: RandomStringControlsSession,
+        layout: Entity<WorkspaceLayout>,
+    ) -> Self {
+        let layout_subscription = cx.observe(&layout, |_, _, cx| cx.notify());
         let custom = cx.new(|cx| InputState::new(window, cx));
         // Silent assignment: loading the saved controls never emits a user
         // edit, so it cannot trigger a save, a generation or a History
@@ -310,7 +340,8 @@ impl RandomStringWorkspace {
             copied: None,
             history_view,
             history_list,
-            history_visible: true,
+            layout,
+            _layout_subscription: layout_subscription,
             _history_subscription: history_subscription,
             _subscriptions: subscriptions,
         };
@@ -615,23 +646,27 @@ impl RandomStringWorkspace {
             .collect()
     }
 
-    fn toggle_button(
+    fn class_checkbox(
         &self,
         id: &'static str,
         label: &'static str,
-        on: bool,
+        checked: bool,
         cx: &mut Context<Self>,
-        toggle: impl Fn(&mut Self) + 'static,
-    ) -> Button {
-        Button::new(id)
+        set: impl Fn(&mut Self, bool) + 'static,
+    ) -> Checkbox {
+        let weak = cx.weak_entity();
+        Checkbox::new(id)
             .label(label)
-            .when(on, |button| button.primary())
-            .on_click(cx.listener(move |this, _event, _window, cx| {
-                toggle(this);
-                this.persist_controls(cx);
-                this.copied = None;
-                cx.notify();
-            }))
+            .checked(checked)
+            .on_change(move |checked, _, cx| {
+                weak.update(cx, |this, cx| {
+                    set(this, *checked);
+                    this.persist_controls(cx);
+                    this.copied = None;
+                    cx.notify();
+                })
+                .ok();
+            })
     }
 
     fn render_diagnostics(&self, cx: &App) -> impl IntoElement {
@@ -776,63 +811,46 @@ impl Render for RandomStringWorkspace {
         };
         let has_results = !self.session.evaluation().values().is_empty();
 
-        let header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child("Random String"),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child("System randomness for test data · local and offline"),
-            );
-
         let classes = div()
             .flex()
             .flex_row()
             .items_center()
-            .gap_2()
-            .child(self.toggle_button(
+            .gap_3()
+            .flex_wrap()
+            .child(self.class_checkbox(
                 "random-string.class.uppercase",
                 "A-Z",
                 self.uppercase,
                 cx,
-                |this| this.uppercase = !this.uppercase,
+                |this, checked| this.uppercase = checked,
             ))
-            .child(self.toggle_button(
+            .child(self.class_checkbox(
                 "random-string.class.lowercase",
                 "a-z",
                 self.lowercase,
                 cx,
-                |this| this.lowercase = !this.lowercase,
+                |this, checked| this.lowercase = checked,
             ))
-            .child(self.toggle_button(
+            .child(self.class_checkbox(
                 "random-string.class.digits",
                 "0-9",
                 self.digits,
                 cx,
-                |this| this.digits = !this.digits,
+                |this, checked| this.digits = checked,
             ))
-            .child(self.toggle_button(
+            .child(self.class_checkbox(
                 "random-string.class.symbols",
                 "Symbols",
                 self.symbols,
                 cx,
-                |this| this.symbols = !this.symbols,
+                |this, checked| this.symbols = checked,
             ))
-            .child(self.toggle_button(
+            .child(self.class_checkbox(
                 "random-string.class.exclude-ambiguous",
                 "Exclude ambiguous",
                 self.exclude_ambiguous,
                 cx,
-                |this| this.exclude_ambiguous = !this.exclude_ambiguous,
+                |this, checked| this.exclude_ambiguous = checked,
             ));
 
         let numbers = div()
@@ -872,14 +890,25 @@ impl Render for RandomStringWorkspace {
         let custom = div()
             .flex()
             .flex_col()
-            .flex_1()
             .min_w_0()
             .gap_1()
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child("Custom characters"),
+                    .child("Custom characters")
+                    .child(
+                        Button::new("random-string.paste-custom")
+                            .icon(Icon::new(IconName::ClipboardPaste))
+                            .tooltip("Paste custom characters")
+                            .accessibility_label("Paste custom characters")
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.paste_custom(window, cx);
+                            })),
+                    ),
             )
             .child(
                 Input::new(&self.custom)
@@ -901,45 +930,10 @@ impl Render for RandomStringWorkspace {
                     })),
             )
             .child(
-                Button::new("random-string.paste-custom")
-                    .label("Paste custom")
-                    .on_click(cx.listener(|this, _event, window, cx| {
-                        this.paste_custom(window, cx);
-                    })),
-            )
-            .child(
-                Button::new("random-string.copy-all")
-                    .label("Copy All")
-                    .disabled(!has_results)
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.copy_all(cx);
-                    })),
-            )
-            .child(
-                Button::new("random-string.clear-results")
-                    .label("Clear results")
-                    .disabled(!has_results)
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.clear_results(cx);
-                    })),
-            )
-            .child(div().flex_1())
-            .child(ui::copy_feedback(
-                cx,
-                self.copied.is_some(),
-                self.copied.as_deref().unwrap_or(""),
-            ))
-            .child(
-                Button::new("random-string.history.toggle")
-                    .label(if self.history_visible {
-                        "History: on"
-                    } else {
-                        "History: off"
-                    })
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.history_visible = !this.history_visible;
-                        cx.notify();
-                    })),
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(summary),
             );
 
         let mut column = div()
@@ -950,17 +944,10 @@ impl Render for RandomStringWorkspace {
             .bg(theme.background)
             .text_color(theme.foreground)
             .p_3()
-            .gap_3()
-            .child(header)
+            .gap_2()
             .child(classes)
             .child(numbers)
             .child(custom)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(summary),
-            )
             .child(actions);
 
         if let Some(error) = self.history_view.error.clone() {
@@ -991,14 +978,54 @@ impl Render for RandomStringWorkspace {
             }
         );
         let results_body = self.render_results(cx);
+        let result_actions = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(caption),
+            )
+            .child(
+                Button::new("random-string.copy-all")
+                    .icon(Icon::new(IconName::Copy))
+                    .tooltip("Copy all results")
+                    .accessibility_label("Copy all results")
+                    .disabled(!has_results)
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.copy_all(cx);
+                    })),
+            )
+            .child(
+                Button::new("random-string.clear-results")
+                    .icon(Icon::new(IconName::Trash))
+                    .tooltip("Clear results")
+                    .accessibility_label("Clear results")
+                    .disabled(!has_results)
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.clear_results(cx);
+                    })),
+            )
+            .child(ui::copy_feedback(
+                cx,
+                self.copied.is_some(),
+                self.copied.as_deref().unwrap_or(""),
+            ));
         let mut workspace = div()
             .flex()
             .flex_row()
             .gap_4()
             .flex_1()
             .min_h_0()
-            .child(ui::panel(cx, "Generated Results", caption, results_body));
-        if self.history_visible {
+            .child(ui::pane(
+                cx,
+                "Generated Results",
+                result_actions,
+                results_body,
+            ));
+        if self.layout.read(cx).placement(UtilityId::RandomString) == HistoryPlacement::Inline {
             workspace = workspace.child(self.render_history(cx));
         }
         column.child(workspace)

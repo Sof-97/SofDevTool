@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, rgba, AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui::{div, rgba, App, Context, Entity, IntoElement, Render, Subscription, Window};
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     input::{Input, InputEvent, InputState, NumberInput},
@@ -21,8 +21,10 @@ use sofdevtool_core::utility::Utility;
 
 use crate::clipboard::Clipboard;
 use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::registry::{UtilityId, WorkspaceViews};
 use crate::ui;
 use crate::workbench::Workbench;
+use crate::workspace_layout::{HistoryPlacement, WorkspaceLayout};
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
 const CHANNEL_STEP: i32 = 5;
@@ -35,9 +37,21 @@ pub fn construct(
     cx: &mut Context<Workbench>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
-) -> AnyView {
-    cx.new(|cx| ColorWorkspace::new(window, cx, clipboard, history))
-        .into()
+    layout: Entity<WorkspaceLayout>,
+) -> WorkspaceViews {
+    let workspace =
+        cx.new(|cx| ColorWorkspace::new_with_layout(window, cx, clipboard, history, layout));
+    let inspector = cx.new(|cx| {
+        ui::HistoryInspector::new(
+            workspace.clone(),
+            |workspace, cx| workspace.render_history(cx).into_any_element(),
+            cx,
+        )
+    });
+    WorkspaceViews {
+        body: workspace.into(),
+        history: inspector.into(),
+    }
 }
 
 pub struct ColorWorkspace {
@@ -50,19 +64,33 @@ pub struct ColorWorkspace {
     copied: Option<usize>,
     suppress_changes: bool,
     history_view: HistoryViewState,
-    history_visible: bool,
+    layout: Entity<WorkspaceLayout>,
+    _layout_subscription: Subscription,
     history_list: Entity<ListState<ui::HistoryListDelegate>>,
     _history_subscription: HistorySubscription,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ColorWorkspace {
+    #[cfg(test)]
     fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
+        let layout = cx.new(|_| WorkspaceLayout::load(None));
+        Self::new_with_layout(window, cx, clipboard, history, layout)
+    }
+
+    fn new_with_layout(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        clipboard: Rc<dyn Clipboard>,
+        history: Rc<HistoryRecorder>,
+        layout: Entity<WorkspaceLayout>,
+    ) -> Self {
+        let layout_subscription = cx.observe(&layout, |_, _, cx| cx.notify());
         let source = cx.new(|cx| InputState::new(window, cx));
         let channels: [Entity<InputState>; 4] = std::array::from_fn(|_| {
             cx.new(|cx| {
@@ -122,7 +150,8 @@ impl ColorWorkspace {
             copied: None,
             suppress_changes: false,
             history_view,
-            history_visible: true,
+            layout,
+            _layout_subscription: layout_subscription,
             history_list,
             _history_subscription: history_subscription,
             _subscriptions: subscriptions,
@@ -563,18 +592,6 @@ impl Render for ColorWorkspace {
                 "Copied to Clipboard",
             ))
             .child(
-                Button::new("color-conversion.history.toggle")
-                    .label(if self.history_visible {
-                        "History: on"
-                    } else {
-                        "History: off"
-                    })
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.history_visible = !this.history_visible;
-                        cx.notify();
-                    })),
-            )
-            .child(
                 Button::new("color-conversion.paste")
                     .label("Paste")
                     .on_click(cx.listener(|this, _event, window, cx| {
@@ -666,7 +683,7 @@ impl Render for ColorWorkspace {
                 "read-only, copyable",
                 results,
             ));
-        if self.history_visible {
+        if self.layout.read(cx).placement(UtilityId::Color) == HistoryPlacement::Inline {
             workspace = workspace.child(self.render_history(cx));
         }
         column

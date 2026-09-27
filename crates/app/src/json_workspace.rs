@@ -9,13 +9,17 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui::{div, px, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     input::{Input, InputEvent, InputState, TextareaState},
     list::ListState,
+    resizable::{h_resizable, resizable_panel, ResizableState},
+    select::{Select, SelectEvent, SelectState},
     tab::{Tab, TabBar},
-    ActiveTheme as _, Disableable as _,
+    ActiveTheme as _, Disableable as _, Icon, IndexPath,
 };
 use sofdevtool_core::json::{
     Indentation, Json, JsonEvaluation, JsonMode, JsonRequest, JsonSession, JsonSnapshot, Severity,
@@ -25,7 +29,9 @@ use sofdevtool_core::utility::Utility;
 
 use crate::clipboard::Clipboard;
 use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::registry::UtilityId;
 use crate::ui;
+use crate::workspace_layout::{HistoryPlacement, WorkspaceLayout};
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
 
@@ -33,6 +39,8 @@ pub struct JsonWorkspace {
     input: Entity<TextareaState>,
     result: Entity<TextareaState>,
     query: Entity<InputState>,
+    indentation_select: Entity<SelectState<Vec<&'static str>>>,
+    editor_split: Entity<ResizableState>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
     mode: JsonMode,
@@ -43,22 +51,45 @@ pub struct JsonWorkspace {
     copied: bool,
     suppress_changes: bool,
     history_view: HistoryViewState,
-    history_visible: bool,
+    layout: Entity<WorkspaceLayout>,
+    _layout_subscription: Subscription,
     history_list: Entity<ListState<ui::HistoryListDelegate>>,
     _history_subscription: HistorySubscription,
     _subscriptions: Vec<Subscription>,
 }
 
 impl JsonWorkspace {
+    #[cfg(test)]
     pub fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
+        let layout = cx.new(|_| WorkspaceLayout::load(None));
+        Self::new_with_layout(window, cx, clipboard, history, layout)
+    }
+
+    pub fn new_with_layout(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        clipboard: Rc<dyn Clipboard>,
+        history: Rc<HistoryRecorder>,
+        layout: Entity<WorkspaceLayout>,
+    ) -> Self {
+        let layout_subscription = cx.observe(&layout, |_, _, cx| cx.notify());
         let input = cx.new(|cx| TextareaState::new(window, cx));
         let result = cx.new(|cx| TextareaState::new(window, cx));
         let query = cx.new(|cx| InputState::new(window, cx));
+        let indentation_select = cx.new(|cx| {
+            SelectState::new(
+                vec!["2 spaces", "4 spaces"],
+                Some(IndexPath::new(0)),
+                window,
+                cx,
+            )
+        });
+        let editor_split = cx.new(|_| ResizableState::default());
 
         let subscriptions = vec![
             cx.subscribe_in(
@@ -77,6 +108,24 @@ impl JsonWorkspace {
                     if matches!(event, InputEvent::Change) {
                         this.schedule(window, cx);
                     }
+                },
+            ),
+            cx.subscribe_in(
+                &indentation_select,
+                window,
+                |this, _, event: &SelectEvent<Vec<&'static str>>, window, cx| {
+                    let SelectEvent::Confirm(Some(value)) = event else {
+                        return;
+                    };
+                    this.set_indentation(
+                        if *value == "4 spaces" {
+                            Indentation::FourSpaces
+                        } else {
+                            Indentation::TwoSpaces
+                        },
+                        window,
+                        cx,
+                    );
                 },
             ),
         ];
@@ -105,6 +154,8 @@ impl JsonWorkspace {
             input,
             result,
             query,
+            indentation_select,
+            editor_split,
             clipboard,
             history,
             mode: JsonMode::Format,
@@ -115,7 +166,8 @@ impl JsonWorkspace {
             copied: false,
             suppress_changes: false,
             history_view,
-            history_visible: true,
+            layout,
+            _layout_subscription: layout_subscription,
             history_list,
             _history_subscription: history_subscription,
             _subscriptions: subscriptions,
@@ -208,16 +260,24 @@ impl JsonWorkspace {
         self.schedule(window, cx);
     }
 
-    fn toggle_indentation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.indentation = match self.indentation {
-            Indentation::TwoSpaces => Indentation::FourSpaces,
-            Indentation::FourSpaces => Indentation::TwoSpaces,
-        };
+    fn set_indentation(
+        &mut self,
+        indentation: Indentation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.indentation == indentation {
+            return;
+        }
+        self.indentation = indentation;
         self.schedule(window, cx);
     }
 
-    fn toggle_sort(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sort_keys = !self.sort_keys;
+    fn set_sort(&mut self, sort_keys: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sort_keys == sort_keys {
+            return;
+        }
+        self.sort_keys = sort_keys;
         self.schedule(window, cx);
     }
 
@@ -299,6 +359,16 @@ impl JsonWorkspace {
         self.suppress_changes = true;
         self.mode = snapshot.request.mode;
         self.indentation = snapshot.request.indentation;
+        self.indentation_select.update(cx, |state, cx| {
+            state.set_selected_value(
+                &match self.indentation {
+                    Indentation::TwoSpaces => "2 spaces",
+                    Indentation::FourSpaces => "4 spaces",
+                },
+                window,
+                cx,
+            )
+        });
         self.sort_keys = snapshot.request.sort_keys;
         self.input.update(cx, |state, cx| {
             state.set_value(snapshot.request.input.clone(), window, cx)
@@ -394,7 +464,7 @@ impl JsonWorkspace {
         column
     }
 
-    fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.history_view.selected.clone();
         let restore_enabled = selected
             .as_ref()
@@ -467,76 +537,35 @@ impl Render for JsonWorkspace {
                 this.set_mode(mode, window, cx);
             }));
 
-        let mut toolbar = div()
+        let sort_owner = cx.weak_entity();
+        let toolbar = div()
             .flex()
             .flex_row()
             .items_center()
             .gap_2()
             .flex_wrap()
-            .child(mode_control);
-
-        if self.mode == JsonMode::Format {
-            toolbar = toolbar.child(
-                Button::new("json.indentation")
-                    .label(match self.indentation {
-                        Indentation::TwoSpaces => "Indent: 2",
-                        Indentation::FourSpaces => "Indent: 4",
-                    })
-                    .on_click(cx.listener(|this, _event, window, cx| {
-                        this.toggle_indentation(window, cx);
-                    })),
-            );
-        }
-
-        toolbar = toolbar
+            .child(mode_control)
+            .when(self.mode == JsonMode::Format, |toolbar| {
+                toolbar.child(
+                    div().w(px(132.)).flex_shrink_0().child(
+                        Select::new(&self.indentation_select)
+                            .id("json.indentation")
+                            .cleanable(false)
+                            .accessibility_label("Indentation"),
+                    ),
+                )
+            })
             .child(
-                Button::new("json.sort-keys")
-                    .label(if self.sort_keys {
-                        "Sort keys: on"
-                    } else {
-                        "Sort keys: off"
-                    })
-                    .when(self.sort_keys, |button| button.primary())
-                    .on_click(cx.listener(|this, _event, window, cx| {
-                        this.toggle_sort(window, cx);
-                    })),
+                Checkbox::new("json.sort-keys")
+                    .label("Sort keys")
+                    .checked(self.sort_keys)
+                    .on_change(move |checked, window, cx| {
+                        sort_owner
+                            .update(cx, |this, cx| this.set_sort(*checked, window, cx))
+                            .ok();
+                    }),
             )
-            .child(div().flex_1())
-            .child(ui::copy_feedback(cx, self.copied, "Copied to Clipboard"))
-            .child(
-                Button::new("json.history.toggle")
-                    .label(if self.history_visible {
-                        "History: on"
-                    } else {
-                        "History: off"
-                    })
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.history_visible = !this.history_visible;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("json.paste")
-                    .label("Paste")
-                    .on_click(cx.listener(|this, _event, window, cx| {
-                        this.paste(window, cx);
-                    })),
-            )
-            .child(
-                Button::new("json.copy-result")
-                    .label("Copy Result")
-                    .disabled(!can_copy)
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.copy_result(cx);
-                    })),
-            )
-            .child(
-                Button::new("json.clear")
-                    .label("Clear")
-                    .on_click(cx.listener(|this, _event, window, cx| {
-                        this.clear(window, cx);
-                    })),
-            );
+            .child(div().flex_1());
 
         let mut column = div()
             .flex()
@@ -549,14 +578,15 @@ impl Render for JsonWorkspace {
             .child(toolbar);
 
         if self.mode == JsonMode::Query {
-            column = column.child(ui::labeled_field(
-                cx,
-                "Path",
-                Some("JSON Pointer (/a/b) or dot/bracket (a.b[0])"),
-                Input::new(&self.query)
-                    .accessibility_id("json.query")
-                    .w_full(),
-            ));
+            column = column.child(
+                div().flex().items_center().gap_2().child("Path").child(
+                    div().flex_1().min_w_0().child(
+                        Input::new(&self.query)
+                            .accessibility_id("json.query")
+                            .w_full(),
+                    ),
+                ),
+            );
         }
 
         if let Some(error) = self.history_view.error.clone() {
@@ -576,25 +606,65 @@ impl Render for JsonWorkspace {
             ui::multiline_editor(&self.result, true, "json.result").into_any_element()
         };
 
+        let input_actions = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                Button::new("json.paste")
+                    .icon(Icon::new(IconName::ClipboardPaste))
+                    .tooltip("Paste into input")
+                    .accessibility_label("Paste into input")
+                    .ghost()
+                    .on_click(cx.listener(|this, _event, window, cx| this.paste(window, cx))),
+            )
+            .child(
+                Button::new("json.clear")
+                    .icon(Icon::new(IconName::Trash))
+                    .tooltip("Clear input")
+                    .accessibility_label("Clear input")
+                    .ghost()
+                    .on_click(cx.listener(|this, _event, window, cx| this.clear(window, cx))),
+            );
+        let result_actions = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(ui::copy_feedback(cx, self.copied, "Copied"))
+            .child(
+                Button::new("json.copy-result")
+                    .icon(Icon::new(IconName::Copy))
+                    .tooltip("Copy result")
+                    .accessibility_label("Copy result")
+                    .ghost()
+                    .disabled(!can_copy)
+                    .on_click(cx.listener(|this, _event, _window, cx| this.copy_result(cx))),
+            );
+        let editors = h_resizable("json.editors")
+            .with_state(&self.editor_split)
+            .child(
+                resizable_panel()
+                    .size_range(px(220.)..px(2000.))
+                    .child(ui::pane(
+                        cx,
+                        "Input",
+                        input_actions,
+                        ui::multiline_editor(&self.input, false, "json.input"),
+                    )),
+            )
+            .child(
+                resizable_panel()
+                    .size_range(px(220.)..px(2000.))
+                    .child(ui::pane(cx, "Result", result_actions, result_body)),
+            );
         let mut workspace = div()
             .flex()
             .flex_row()
             .gap_3()
             .flex_1()
             .min_h_0()
-            .child(ui::panel(
-                cx,
-                "Input",
-                "live validation",
-                ui::multiline_editor(&self.input, false, "json.input"),
-            ))
-            .child(ui::panel(
-                cx,
-                "Result",
-                "read-only, selectable",
-                result_body,
-            ));
-        if self.history_visible {
+            .child(div().flex().flex_1().min_w_0().min_h_0().child(editors));
+        if self.layout.read(cx).placement(UtilityId::Json) == HistoryPlacement::Inline {
             workspace = workspace.child(self.render_history(cx));
         }
 

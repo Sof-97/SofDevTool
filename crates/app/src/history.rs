@@ -585,6 +585,25 @@ pub struct HistoryRecorder {
     subscribers: Rc<RefCell<HistorySubscribers>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecordingState {
+    GlobalDisabled,
+    UtilityDisabled,
+    Paused,
+    Enabled,
+}
+
+impl RecordingState {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::GlobalDisabled => "Recording off globally",
+            Self::UtilityDisabled => "Recording off for Utility",
+            Self::Paused => "Recording paused",
+            Self::Enabled => "Recording on",
+        }
+    }
+}
+
 /// Global and per-Utility recording preferences. Disabling recording never
 /// deletes existing entries.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -650,6 +669,19 @@ impl HistoryRecorder {
 
     pub fn is_recording(&self, utility_id: &str) -> bool {
         self.policy.borrow().is_recording(utility_id)
+    }
+
+    pub fn recording_state(&self, utility_id: &str) -> RecordingState {
+        let policy = self.policy.borrow();
+        if !policy.global_enabled {
+            RecordingState::GlobalDisabled
+        } else if !policy.is_recording(utility_id) {
+            RecordingState::UtilityDisabled
+        } else if self.store.is_paused(utility_id) {
+            RecordingState::Paused
+        } else {
+            RecordingState::Enabled
+        }
     }
 
     pub fn set_global_enabled(&self, enabled: bool) {
@@ -742,12 +774,14 @@ impl HistoryRecorder {
     pub fn clear_utility(&self, utility_id: &str, cx: &mut App) -> Result<(), HistoryError> {
         let result = self.store.clear(utility_id);
         self.notify(Some(utility_id), cx);
+        self.notify_status(cx);
         result
     }
 
     pub fn clear_all(&self, cx: &mut App) -> Result<ClearReport, HistoryError> {
         let report = self.store.clear_all_report();
         self.notify(None, cx);
+        self.notify_status(cx);
         report
     }
 
@@ -758,6 +792,7 @@ impl HistoryRecorder {
     ) -> Result<Vec<HistoryEntry>, HistoryError> {
         let result = self.store.retry(utility_id);
         self.notify(Some(utility_id), cx);
+        self.notify_status(cx);
         result
     }
 
@@ -1257,6 +1292,30 @@ mod tests {
         assert!(recorder.is_recording("jwt"));
         recorder.record("jwt", 1, serde_json::Value::Null).unwrap();
         assert_eq!(recorder.load("jwt").unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recording_state_applies_policy_before_pause() {
+        let root = temporary_root("recording-state");
+        let recorder = HistoryRecorder::new(HistoryStore::new(root.clone()), Box::new(FixedClock));
+        assert_eq!(recorder.recording_state("json"), RecordingState::Enabled);
+        recorder.store().fail_next_writes(1);
+        assert_eq!(
+            recorder.record("json", 1, serde_json::Value::Null),
+            Err(HistoryError::Unavailable)
+        );
+        assert_eq!(recorder.recording_state("json"), RecordingState::Paused);
+        recorder.set_utility_enabled("json", false);
+        assert_eq!(
+            recorder.recording_state("json"),
+            RecordingState::UtilityDisabled
+        );
+        recorder.set_global_enabled(false);
+        assert_eq!(
+            recorder.recording_state("json"),
+            RecordingState::GlobalDisabled
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -16,14 +16,18 @@
 use std::rc::Rc;
 
 use gpui::{
-    div, App, AppContext as _, Context, Entity, EntityInputHandler as _, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, SharedString, Styled as _, Window,
+    div, AnyElement, App, AppContext as _, Context, Entity, EntityInputHandler as _, FontWeight,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
+    Window,
 };
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     dialog::DialogButtonProps,
     list::{List, ListDelegate, ListItem, ListState},
     ActiveTheme as _, IndexPath, Sizable as _, Size, WindowExt as _,
 };
+
+use crate::registry::UtilityId;
 
 /// A non-color-only diagnostic severity. The banner always carries a text
 /// prefix, so the meaning never depends on color alone.
@@ -31,6 +35,57 @@ use gpui_kit::component::{
 pub enum DiagnosticSeverity {
     Error,
     Warning,
+}
+
+/// Mounts an owning Utility's typed History panel in the narrow-window sheet.
+pub struct HistoryInspector<T: 'static> {
+    workspace: Entity<T>,
+    render_panel: fn(&T, &mut Context<T>) -> AnyElement,
+    _subscription: gpui::Subscription,
+}
+
+impl<T: 'static> HistoryInspector<T> {
+    pub fn new(
+        workspace: Entity<T>,
+        render_panel: fn(&T, &mut Context<T>) -> AnyElement,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let subscription = cx.observe(&workspace, |_, _, cx| cx.notify());
+        Self {
+            workspace,
+            render_panel,
+            _subscription: subscription,
+        }
+    }
+}
+
+impl<T: 'static> Render for HistoryInspector<T> {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let panel = self
+            .workspace
+            .update(cx, |workspace, cx| (self.render_panel)(workspace, cx));
+        div().flex().flex_row().size_full().min_h_0().child(panel)
+    }
+}
+
+pub fn utility_icon(id: UtilityId) -> IconName {
+    match id {
+        UtilityId::Json => IconName::Braces,
+        UtilityId::YamlJson => IconName::ArrowLeftRight,
+        UtilityId::Base64 => IconName::Binary,
+        UtilityId::UrlEncoding => IconName::Link,
+        UtilityId::Color => IconName::Palette,
+        UtilityId::Hashes => IconName::Hash,
+        UtilityId::Jwt => IconName::KeyRound,
+        UtilityId::Timestamps => IconName::Clock,
+        UtilityId::Identifiers => IconName::IdCard,
+        UtilityId::RandomString => IconName::Dices,
+        UtilityId::SampleData => IconName::Table,
+        UtilityId::Regex => IconName::Regex,
+        UtilityId::TextDiff => IconName::Diff,
+        UtilityId::CaseConversion => IconName::CaseSensitive,
+        UtilityId::Whitespace => IconName::Pilcrow,
+    }
 }
 
 /// A labelled region with a muted caption, used to frame editors and results.
@@ -80,6 +135,44 @@ pub fn panel(
         )
         // This wrapper establishes the vertical flex context that gives editors
         // and the native WebView their remaining panel height.
+        .child(div().flex().flex_col().flex_1().min_h_0().child(content))
+}
+
+pub fn pane(
+    cx: &App,
+    title: impl Into<SharedString>,
+    actions: impl IntoElement,
+    content: impl IntoElement,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_w_0()
+        .min_h_0()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.popover)
+        .overflow_hidden()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .px_3()
+                .h_9()
+                .border_b_1()
+                .border_color(theme.border)
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title.into()),
+                )
+                .child(actions),
+        )
         .child(div().flex().flex_col().flex_1().min_h_0().child(content))
 }
 

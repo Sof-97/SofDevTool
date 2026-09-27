@@ -9,7 +9,7 @@
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{div, AnyView, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui::{div, App, Context, Entity, IntoElement, Render, Subscription, Window};
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     input::{InputEvent, TextareaState},
@@ -25,8 +25,10 @@ use sofdevtool_core::utility::Utility;
 
 use crate::clipboard::Clipboard;
 use crate::history::{HistoryEntry, HistoryRecorder, HistorySubscription, HistoryViewState};
+use crate::registry::{UtilityId, WorkspaceViews};
 use crate::ui;
 use crate::workbench::Workbench;
+use crate::workspace_layout::{HistoryPlacement, WorkspaceLayout};
 
 type HashesSession = Session<Hashes>;
 
@@ -36,9 +38,21 @@ pub fn construct(
     cx: &mut Context<Workbench>,
     clipboard: Rc<dyn Clipboard>,
     history: Rc<HistoryRecorder>,
-) -> AnyView {
-    cx.new(|cx| HashesWorkspace::new(window, cx, clipboard, history))
-        .into()
+    layout: Entity<WorkspaceLayout>,
+) -> WorkspaceViews {
+    let workspace =
+        cx.new(|cx| HashesWorkspace::new_with_layout(window, cx, clipboard, history, layout));
+    let inspector = cx.new(|cx| {
+        ui::HistoryInspector::new(
+            workspace.clone(),
+            |workspace, cx| workspace.render_history(cx).into_any_element(),
+            cx,
+        )
+    });
+    WorkspaceViews {
+        body: workspace.into(),
+        history: inspector.into(),
+    }
 }
 
 pub struct HashesWorkspace {
@@ -53,19 +67,33 @@ pub struct HashesWorkspace {
     copied: bool,
     suppress_changes: bool,
     history_view: HistoryViewState,
-    history_visible: bool,
+    layout: Entity<WorkspaceLayout>,
+    _layout_subscription: Subscription,
     history_list: Entity<ListState<ui::HistoryListDelegate>>,
     _history_subscription: HistorySubscription,
     _subscriptions: Vec<Subscription>,
 }
 
 impl HashesWorkspace {
+    #[cfg(test)]
     fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
         clipboard: Rc<dyn Clipboard>,
         history: Rc<HistoryRecorder>,
     ) -> Self {
+        let layout = cx.new(|_| WorkspaceLayout::load(None));
+        Self::new_with_layout(window, cx, clipboard, history, layout)
+    }
+
+    fn new_with_layout(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        clipboard: Rc<dyn Clipboard>,
+        history: Rc<HistoryRecorder>,
+        layout: Entity<WorkspaceLayout>,
+    ) -> Self {
+        let layout_subscription = cx.observe(&layout, |_, _, cx| cx.notify());
         let input = cx.new(|cx| TextareaState::new(window, cx));
         let result = cx.new(|cx| TextareaState::new(window, cx));
         let subscriptions = vec![cx.subscribe_in(
@@ -108,7 +136,8 @@ impl HashesWorkspace {
             copied: false,
             suppress_changes: false,
             history_view,
-            history_visible: true,
+            layout,
+            _layout_subscription: layout_subscription,
             history_list,
             _history_subscription: history_subscription,
             _subscriptions: subscriptions,
@@ -496,18 +525,6 @@ impl Render for HashesWorkspace {
             .child(div().flex_1())
             .child(ui::copy_feedback(cx, self.copied, "Copied to Clipboard"))
             .child(
-                Button::new("hashes.history.toggle")
-                    .label(if self.history_visible {
-                        "History: on"
-                    } else {
-                        "History: off"
-                    })
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.history_visible = !this.history_visible;
-                        cx.notify();
-                    })),
-            )
-            .child(
                 Button::new("hashes.paste")
                     .label("Paste")
                     .on_click(cx.listener(|this, _event, window, cx| {
@@ -586,7 +603,7 @@ impl Render for HashesWorkspace {
                 "read-only, selectable",
                 result_body,
             ));
-        if self.history_visible {
+        if self.layout.read(cx).placement(UtilityId::Hashes) == HistoryPlacement::Inline {
             workspace = workspace.child(self.render_history(cx));
         }
         column.child(workspace).child(self.render_diagnostics(cx))
