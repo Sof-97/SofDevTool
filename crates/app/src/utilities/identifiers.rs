@@ -6,13 +6,17 @@
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{div, AnyElement, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui::{
+    div, px, uniform_list, AnyElement, App, Context, Entity, IntoElement, Render, Subscription,
+    Window,
+};
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     input::{Input, InputEvent, InputState, NumberInput},
     list::ListState,
     tab::{Tab, TabBar},
-    ActiveTheme as _, Disableable as _,
+    ActiveTheme as _, Disableable as _, Icon,
 };
 use sofdevtool_core::session::{Session, SubmitOutcome};
 use sofdevtool_core::utilities::identifiers::{
@@ -370,8 +374,11 @@ impl IdentifiersWorkspace {
         }
     }
 
-    fn copy_value(&mut self, index: usize, value: String, cx: &mut Context<Self>) {
-        self.clipboard.write_text(&value, cx);
+    fn copy_value(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(value) = self.session.evaluation().values().get(index) else {
+            return;
+        };
+        self.clipboard.write_text(value, cx);
         self.copied_all = false;
         self.copied_index = Some(index);
         cx.notify();
@@ -560,60 +567,59 @@ impl IdentifiersWorkspace {
             .collect()
     }
 
-    fn render_values(&self, values: &[String], cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        if values.is_empty() {
+    fn render_values(&self, cx: &mut Context<Self>) -> AnyElement {
+        let count = self.session.evaluation().values().len();
+        if count == 0 {
             return ui::empty_state(cx, "Generate identifiers or validate one to begin")
                 .into_any_element();
         }
-        let mut list = div()
-            .id("identifiers.results")
-            .flex()
-            .flex_col()
-            .gap_1()
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll();
-        for (index, value) in values.iter().enumerate() {
-            let display = value.clone();
-            let to_copy = value.clone();
-            list = list.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .w_full()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.secondary)
-                    .child(
+
+        let workspace = cx.entity();
+        uniform_list("identifiers.results", count, move |range, _window, cx| {
+            let state = workspace.read(cx);
+            let theme = cx.theme().clone();
+            range
+                .map(|index| {
+                    let value = state.session.evaluation().values()[index].clone();
+                    let copied = state.copied_index == Some(index);
+                    let workspace = workspace.clone();
+                    div().h(px(48.)).w_full().px_2().py_1().child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_sm()
-                            .text_color(theme.foreground)
-                            .child(display),
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .size_full()
+                            .px_3()
+                            .rounded(theme.radius)
+                            .bg(theme.secondary)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_sm()
+                                    .text_color(theme.foreground)
+                                    .child(value),
+                            )
+                            .child(ui::copy_feedback(cx, copied, "Copied"))
+                            .child(
+                                Button::new(format!("identifiers.copy.{index}"))
+                                    .icon(Icon::new(IconName::Copy))
+                                    .tooltip(format!("Copy identifier {}", index + 1))
+                                    .accessibility_label(format!("Copy identifier {}", index + 1))
+                                    .ghost()
+                                    .on_click(move |_event, _window, cx| {
+                                        workspace.update(cx, |this, cx| this.copy_value(index, cx));
+                                    }),
+                            ),
                     )
-                    .child(ui::copy_feedback(
-                        cx,
-                        self.copied_index == Some(index),
-                        "Copied",
-                    ))
-                    .child(
-                        Button::new(format!("identifiers.copy.{index}"))
-                            .label(format!("Copy {}", index + 1))
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.copy_value(index, to_copy.clone(), cx);
-                            })),
-                    ),
-            );
-        }
-        list.into_any_element()
+                })
+                .collect::<Vec<_>>()
+        })
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .into_any_element()
     }
 
     fn render_diagnostics(&self, cx: &App) -> impl IntoElement {
@@ -674,8 +680,7 @@ impl IdentifiersWorkspace {
 impl Render for IdentifiersWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let values = self.session.evaluation().values().to_vec();
-        let can_copy = !values.is_empty();
+        let can_copy = !self.session.evaluation().values().is_empty();
 
         // Keep the retained count input showing the clamped batch size and the
         // active format's maximum. Programmatic setters emit no change, so this
@@ -921,7 +926,10 @@ impl Render for IdentifiersWorkspace {
             ))
             .child(
                 Button::new("identifiers.copy-all")
-                    .label("Copy All")
+                    .icon(Icon::new(IconName::Copy))
+                    .tooltip("Copy all identifiers")
+                    .accessibility_label("Copy all identifiers")
+                    .ghost()
                     .disabled(!can_copy)
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         this.copy_all(cx);
@@ -945,7 +953,7 @@ impl Render for IdentifiersWorkspace {
             ));
         }
 
-        let values_body = self.render_values(&values, cx);
+        let values_body = self.render_values(cx);
         let mut workspace = div()
             .flex()
             .flex_row()
@@ -1405,7 +1413,7 @@ mod tests {
         assert_eq!(history.load(Identifiers::ID).unwrap().len(), 2);
 
         cx.update(|_window, cx| {
-            workspace.update(cx, |view, cx| view.copy_value(0, values[0].clone(), cx));
+            workspace.update(cx, |view, cx| view.copy_value(0, cx));
         });
         assert_eq!(clipboard.0.borrow().as_deref(), Some(values[0].as_str()));
 

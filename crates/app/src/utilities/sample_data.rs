@@ -7,12 +7,13 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{div, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     input::{Input, InputEvent, InputState, NumberInput, TextareaState},
     list::ListState,
     tab::{Tab, TabBar},
-    ActiveTheme as _, Disableable as _,
+    ActiveTheme as _, Disableable as _, Icon,
 };
 use sofdevtool_core::session::{Session, SubmitOutcome};
 use sofdevtool_core::utilities::sample_data::{
@@ -153,6 +154,7 @@ pub struct SampleDataWorkspace {
     row_count: u32,
     row_count_input: Entity<InputState>,
     output_format: SampleDataFormat,
+    show_fields: bool,
     session: SampleDataSession,
     generation: u64,
     display_epoch: u64,
@@ -239,6 +241,7 @@ impl SampleDataWorkspace {
             row_count: default.row_count,
             row_count_input,
             output_format: default.output,
+            show_fields: true,
             session: SampleDataSession::new(),
             generation: 0,
             display_epoch: u64::MAX,
@@ -281,6 +284,7 @@ impl SampleDataWorkspace {
         if self.suppress_changes {
             return;
         }
+        self.show_fields = true;
         self.session.clear();
         self.copied = false;
         cx.notify();
@@ -294,6 +298,9 @@ impl SampleDataWorkspace {
         };
         self.session.resolve(revision);
         self.copied = false;
+        if self.session.evaluation().is_valid_operation() {
+            self.show_fields = false;
+        }
         self.record_settled(cx);
         self.sync_display(window, cx);
         cx.notify();
@@ -417,6 +424,7 @@ impl SampleDataWorkspace {
 
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.session.clear();
+        self.show_fields = true;
         self.copied = false;
         self.sync_display(window, cx);
         cx.notify();
@@ -504,6 +512,7 @@ impl SampleDataWorkspace {
         self.next_field_id = next_field_id;
         self.row_count = request.row_count;
         self.output_format = request.output;
+        self.show_fields = false;
         self.session.restore(snapshot);
         self.generation = self.generation.max(
             self.session
@@ -606,7 +615,7 @@ impl SampleDataWorkspace {
             .flex_row()
             .flex_wrap()
             .items_end()
-            .gap_2()
+            .gap_3()
             .w_full()
             .child(
                 div().w_40().child(ui::labeled_field(
@@ -727,10 +736,11 @@ impl SampleDataWorkspace {
             .id("sample-data.fields")
             .flex()
             .flex_col()
-            .gap_2()
+            .gap_4()
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .p_4();
         if self.fields.is_empty() {
             list = list.child(div().text_sm().child("Add a field to begin."));
         }
@@ -800,6 +810,7 @@ impl Render for SampleDataWorkspace {
         self.sync_display(window, cx);
         let theme = cx.theme().clone();
         let can_copy = self.session.evaluation().is_valid_operation();
+        let compact = f32::from(window.bounds().size.width) < 1500.;
 
         // Keep the retained row-count input showing the clamped value.
         // Programmatic `set_value` emits no change, so this cannot loop.
@@ -869,7 +880,9 @@ impl Render for SampleDataWorkspace {
             )
             .child(
                 Button::new("sample-data.copy-result")
-                    .label("Copy Result")
+                    .icon(Icon::new(IconName::Copy))
+                    .tooltip("Copy generated result")
+                    .accessibility_label("Copy generated result")
                     .disabled(!can_copy)
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         this.copy_result(cx);
@@ -883,18 +896,12 @@ impl Render for SampleDataWorkspace {
                     })),
             );
 
-        let result_body = if matches!(self.session.evaluation(), SampleDataEvaluation::Empty) {
-            ui::empty_state(cx, "Choose fields and generate fictional sample rows")
-                .into_any_element()
-        } else {
-            ui::multiline_editor(&self.result, true, "sample-data.result").into_any_element()
-        };
-
         let mut column = div()
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
+            .min_w_0()
             .bg(theme.background)
             .text_color(theme.foreground)
             .p_3()
@@ -923,6 +930,21 @@ impl Render for SampleDataWorkspace {
             ))
             .child(toolbar);
 
+        if compact {
+            column = column.child(
+                div().w(gpui::px(180.)).child(
+                    TabBar::new("sample-data.view")
+                        .segmented()
+                        .selected_index(usize::from(!self.show_fields))
+                        .children([Tab::new().label("Fields"), Tab::new().label("Result")])
+                        .on_click(cx.listener(|this, choice, _window, cx| {
+                            this.show_fields = *choice == 0;
+                            cx.notify();
+                        })),
+                ),
+            );
+        }
+
         if let Some(error) = self.history_view.error.clone() {
             column = column.child(ui::diagnostic_banner(
                 cx,
@@ -932,25 +954,36 @@ impl Render for SampleDataWorkspace {
             ));
         }
 
-        let fields_body = self.render_fields(cx);
-        let mut workspace = div()
-            .flex()
-            .flex_row()
-            .gap_4()
-            .flex_1()
-            .min_h_0()
-            .child(ui::panel(
+        let mut workspace = div().flex().flex_row().gap_4().flex_1().min_h_0().min_w_0();
+        if !compact || self.show_fields {
+            let fields_body = self.render_fields(cx);
+            workspace = workspace.child(ui::panel(
                 cx,
                 "Fields",
                 "ordered schema, up to 50",
                 fields_body,
-            ))
-            .child(ui::panel(
+            ));
+        }
+        if !compact || !self.show_fields {
+            let result_body = if matches!(self.session.evaluation(), SampleDataEvaluation::Empty) {
+                ui::empty_state(cx, "Choose fields and generate fictional sample rows")
+                    .into_any_element()
+            } else {
+                ui::multiline_editor(&self.result, true, "sample-data.result").into_any_element()
+            };
+            workspace = workspace.child(ui::panel(
                 cx,
                 format!("Generated {}", self.output_format.label()),
                 "read-only, selectable",
-                result_body,
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .p_3()
+                    .child(result_body),
             ));
+        }
         if self.layout.read(cx).placement(UtilityId::SampleData) == HistoryPlacement::Inline {
             workspace = workspace.child(self.render_history(cx));
         }
@@ -1380,9 +1413,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn segmented_schema_and_copy_result_actions_preserve_exact_output(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn compact_schema_result_transition_preserves_generated_copy(cx: &mut gpui::TestAppContext) {
         cx.update(gpui_kit::init);
         let root = isolated_root();
         let history = Rc::new(HistoryRecorder::new(
@@ -1392,7 +1423,7 @@ mod tests {
         let clipboard = Rc::new(TestClipboard::default());
         let app_clipboard: Rc<dyn Clipboard> = clipboard.clone();
         let mut captured = None;
-        let window = cx.add_window(|window, cx| {
+        let window = cx.open_window(gpui::size(gpui::px(1000.), gpui::px(700.)), |window, cx| {
             let view =
                 cx.new(|cx| SampleDataWorkspace::new(window, cx, app_clipboard, history.clone()));
             captured = Some(view.clone());
@@ -1400,6 +1431,7 @@ mod tests {
         });
         let workspace = captured.unwrap();
         let mut cx = VisualTestContext::from_window(window.into(), cx);
+        assert!(workspace.read_with(&cx, |view, _| view.show_fields));
 
         cx.update(|window, cx| {
             workspace.update(cx, |view, cx| {
@@ -1416,6 +1448,8 @@ mod tests {
                 view.generate(window, cx);
                 view.generate(window, cx);
             });
+            assert!(!workspace.read(cx).show_fields);
+            window.draw(cx).clear(cx);
         });
         let output = workspace.read_with(&cx, |view, _| {
             view.session.evaluation().output().unwrap().to_owned()
@@ -1426,8 +1460,11 @@ mod tests {
         );
         assert_eq!(history.load(SampleData::ID).unwrap().len(), 2);
 
-        cx.update(|_window, cx| {
+        cx.update(|window, cx| {
             workspace.update(cx, |view, cx| view.copy_result(cx));
+            workspace.update(cx, |view, cx| view.clear(window, cx));
+            assert!(workspace.read(cx).show_fields);
+            window.draw(cx).clear(cx);
         });
         assert_eq!(clipboard.0.borrow().as_deref(), Some(output.as_str()));
         assert_eq!(history.load(SampleData::ID).unwrap().len(), 2);

@@ -856,7 +856,8 @@ impl Render for Workbench {
             .gap_3()
             .h(px(40.))
             .flex_shrink_0()
-            .px_4()
+            .pl_20()
+            .pr_4()
             .border_b_1()
             .border_color(theme.border)
             .child(

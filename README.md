@@ -4,6 +4,8 @@ SofDevTool 0.2.0 is a local native macOS Developer Toolbox built with Rust and G
 
 The root Cargo workspace is the sole maintained product. [`crates/app`](crates/app) owns the Workbench, Launcher, application lifecycle, Clipboard, preferences, and History policy; [`crates/core`](crates/core) owns Utility behavior and validation. The application consumes [GPUI Kit](https://docs.rs/crate/gpui-kit/0.6.6) directly for its controls and appearance; there is no separate component library. Appearance offers System, Light and Dark over the kit's official Catppuccin Latte and Frappé presets, bundled offline under `crates/app/assets/themes`.
 
+The Workbench uses a transparent native titlebar above its controls and consistently rounded result panels. Random String and Identifier Generator show large batches in scrollable, virtualized rows with per-row copy icons. In narrower windows, Sample Data switches between its editable field schema and full-height generated JSON/CSV; output stays selectable in the read-only GPUI Kit editor. Its padded field list is not virtualized because field controls have variable heights.
+
 ## Development
 
 Use an Apple Silicon Mac with macOS 14 or newer, the pinned Rust toolchain in `rust-toolchain.toml`, Xcode Command Line Tools and Python 3. The full renderer asset check also needs Node.js 20 or newer and npm. Run commands from this repository root:
