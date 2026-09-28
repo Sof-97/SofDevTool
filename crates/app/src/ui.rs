@@ -151,6 +151,7 @@ pub fn pane(
         .flex_1()
         .min_w_0()
         .min_h_0()
+        .rounded(theme.radius)
         .border_1()
         .border_color(theme.border)
         .bg(theme.popover)

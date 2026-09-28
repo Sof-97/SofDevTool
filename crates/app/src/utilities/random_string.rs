@@ -5,7 +5,10 @@
 use std::rc::Rc;
 
 use gpui::prelude::*;
-use gpui::{div, AnyElement, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui::{
+    div, px, uniform_list, AnyElement, App, Context, Entity, IntoElement, Render, Subscription,
+    Window,
+};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
@@ -485,10 +488,10 @@ impl RandomStringWorkspace {
     }
 
     fn copy_item(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(value) = self.session.evaluation().values().get(index).cloned() else {
+        let Some(value) = self.session.evaluation().values().get(index) else {
             return;
         };
-        self.clipboard.write_text(&value, cx);
+        self.clipboard.write_text(value, cx);
         self.copied = Some(format!("Copied result {}", index + 1));
         cx.notify();
     }
@@ -688,59 +691,63 @@ impl RandomStringWorkspace {
     }
 
     fn render_results(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        let values = self.session.evaluation().values();
-        if values.is_empty() {
+        let count = self.session.evaluation().values().len();
+        if count == 0 {
             return ui::empty_state(cx, "Configure an alphabet, then choose Generate")
                 .into_any_element();
         }
-        let mut list = div()
-            .id("random-results")
-            .role(gpui::Role::ListBox)
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .gap_1()
-            .overflow_y_scroll();
-        for (index, value) in values.iter().enumerate() {
-            let row = div()
-                .flex()
-                .flex_row()
-                .items_start()
-                .gap_2()
-                .w_full()
-                .px_2()
-                .py_2()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.border)
-                .bg(theme.popover)
-                .child(
-                    div()
-                        .w_6()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(format!("{}", index + 1)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_sm()
-                        .text_color(theme.foreground)
-                        .child(value.clone()),
-                )
-                .child(
-                    Button::new(format!("random-string.copy.{index}"))
-                        .label(format!("Copy {}", index + 1))
-                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                            this.copy_item(index, cx);
-                        })),
-                );
-            list = list.child(row);
-        }
-        list.into_any_element()
+
+        let workspace = cx.entity();
+        uniform_list("random-results", count, move |range, _window, cx| {
+            let state = workspace.read(cx);
+            let theme = cx.theme().clone();
+            range
+                .map(|index| {
+                    let value = state.session.evaluation().values()[index].clone();
+                    let workspace = workspace.clone();
+                    div().h(px(52.)).w_full().px_2().py_1().child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .size_full()
+                            .px_3()
+                            .rounded(theme.radius)
+                            .bg(theme.secondary)
+                            .child(
+                                div()
+                                    .w_6()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(format!("{}", index + 1)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_sm()
+                                    .text_color(theme.foreground)
+                                    .child(value),
+                            )
+                            .child(
+                                Button::new(format!("random-string.copy.{index}"))
+                                    .icon(Icon::new(IconName::Copy))
+                                    .ghost()
+                                    .tooltip(format!("Copy result {}", index + 1))
+                                    .accessibility_label(format!("Copy result {}", index + 1))
+                                    .on_click(move |_event, _window, cx| {
+                                        workspace.update(cx, |this, cx| this.copy_item(index, cx));
+                                    }),
+                            ),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .into_any_element()
     }
 
     fn render_history(&self, cx: &mut Context<Self>) -> impl IntoElement {

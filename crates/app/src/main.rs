@@ -26,6 +26,7 @@ fn window_options(bounds: Option<WindowBounds>) -> WindowOptions {
         window_bounds: bounds,
         titlebar: Some(TitlebarOptions {
             title: Some(identity::build_description().into()),
+            appears_transparent: true,
             ..Default::default()
         }),
         app_id: Some(identity::BUNDLE_IDENTIFIER.to_string()),
