@@ -4,15 +4,15 @@
 //! GPUI Kit's [`ThemeMode`] only distinguishes light and dark. The owner-facing
 //! choice adds `System`, which resolves to the current macOS appearance and is
 //! re-resolved while the application runs. The bundled
-//! [`catppuccin.json`](../assets/themes/catppuccin.json) is the unmodified
-//! official GPUI Kit theme set; Light selects Catppuccin Latte and Dark selects
-//! Catppuccin Frappe. This module owns only the mode and its application to the
-//! kit; it never maintains a competing palette.
+//! [`catppuccin.json`](../assets/themes/catppuccin.json) derives from GPUI Kit's
+//! theme set, with syntax colors corrected to Catppuccin's official palette
+//! and darker Latte line numbers. Light selects Latte and Dark selects Frappe.
+//! This module owns the mode and applies those presets to the kit.
 
 use gpui::{App, Window};
 use gpui_kit::component::{Theme, ThemeConfig, ThemeMode, ThemeRegistry};
 
-/// The unmodified official GPUI Kit Catppuccin theme set bundled for offline use.
+/// The GPUI Kit Catppuccin presets with local syntax corrections, bundled offline.
 const CATPPUCCIN_THEMES: &str = include_str!("../assets/themes/catppuccin.json");
 
 /// The official Light preset used for Light appearance.
@@ -77,11 +77,11 @@ fn ensure_themes(cx: &mut App) {
     }
     ThemeRegistry::global_mut(cx)
         .load_themes_from_str(CATPPUCCIN_THEMES)
-        .expect("the bundled official Catppuccin presets parse");
+        .expect("the bundled Catppuccin presets parse");
     cx.set_global(AppearanceInstalled);
 }
 
-/// Installs the bundled official themes without changing the active appearance.
+/// Installs the bundled themes without changing the active appearance.
 ///
 /// Call once at startup before applying a mode. Idempotent.
 pub fn install(cx: &mut App) {

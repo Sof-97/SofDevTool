@@ -2,7 +2,8 @@
 
 ## Catppuccin palettes (Latte and Frappé)
 
-SofDevTool bundles the unmodified official GPUI Kit Catppuccin theme set
+SofDevTool bundles the official GPUI Kit Catppuccin theme set with local syntax
+color corrections and darker Latte line numbers
 (`themes/catppuccin.json`, revision `v0.6.6`) as a local application asset. Light
 appearance selects Catppuccin Latte and Dark appearance selects Catppuccin
 Frappé; the values trace to Catppuccin Palette 1.8.0, upstream revision

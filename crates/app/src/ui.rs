@@ -631,10 +631,44 @@ pub fn multiline_editor(
         )
 }
 
-fn delete_grapheme_before(
-    state: &mut gpui_kit::component::input::TextareaState,
+/// JSON code presentation uses kit-owned syntax, gutters and folding, with the
+/// same narrow grapheme deletion adapter as the plain multiline editor.
+pub fn json_editor(
+    state: &Entity<gpui_kit::component::input::EditorState>,
+    readonly: bool,
+    accessibility_id: &'static str,
+) -> impl IntoElement {
+    use gpui::DefiniteLength;
+    use gpui_kit::component::input::{Backspace, Delete, Editor};
+
+    let before = state.clone();
+    let after = state.clone();
+    div()
+        .w_full()
+        .h(DefiniteLength::Fraction(1.0))
+        .capture_action(move |_: &Backspace, window, cx| {
+            if before.update(cx, |state, cx| delete_grapheme_before(state, window, cx)) {
+                cx.stop_propagation();
+            }
+        })
+        .capture_action(move |_: &Delete, window, cx| {
+            if after.update(cx, |state, cx| delete_grapheme_after(state, window, cx)) {
+                cx.stop_propagation();
+            }
+        })
+        .child(
+            Editor::new(state)
+                .readonly(readonly)
+                .aria_label(accessibility_id)
+                .h(DefiniteLength::Fraction(1.0))
+                .w_full(),
+        )
+}
+
+fn delete_grapheme_before<M: gpui_kit::base::input::InputModeKind>(
+    state: &mut gpui_kit::base::input::InputBaseState<M>,
     window: &mut Window,
-    cx: &mut Context<gpui_kit::component::input::TextareaState>,
+    cx: &mut Context<gpui_kit::base::input::InputBaseState<M>>,
 ) -> bool {
     if !state.is_editable() {
         return false;
@@ -649,10 +683,10 @@ fn delete_grapheme_before(
     replace_extended_grapheme(state, &text, selection, range, window, cx)
 }
 
-fn delete_grapheme_after(
-    state: &mut gpui_kit::component::input::TextareaState,
+fn delete_grapheme_after<M: gpui_kit::base::input::InputModeKind>(
+    state: &mut gpui_kit::base::input::InputBaseState<M>,
     window: &mut Window,
-    cx: &mut Context<gpui_kit::component::input::TextareaState>,
+    cx: &mut Context<gpui_kit::base::input::InputBaseState<M>>,
 ) -> bool {
     if !state.is_editable() {
         return false;
@@ -667,13 +701,13 @@ fn delete_grapheme_after(
     replace_extended_grapheme(state, &text, selection, range, window, cx)
 }
 
-fn replace_extended_grapheme(
-    state: &mut gpui_kit::component::input::TextareaState,
+fn replace_extended_grapheme<M: gpui_kit::base::input::InputModeKind>(
+    state: &mut gpui_kit::base::input::InputBaseState<M>,
     text: &str,
     selection: std::ops::Range<usize>,
     range: Option<std::ops::Range<usize>>,
     window: &mut Window,
-    cx: &mut Context<gpui_kit::component::input::TextareaState>,
+    cx: &mut Context<gpui_kit::base::input::InputBaseState<M>>,
 ) -> bool {
     let Some(range) = range else {
         return false;
