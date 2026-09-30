@@ -8,8 +8,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use sofdevtool_core::json::{
-    evaluate, Diagnostic, Indentation, JsonEvaluation, JsonMode, JsonRequest, JsonSnapshot,
-    Severity, JSON_SNAPSHOT_SCHEMA_VERSION, JSON_UTILITY_ID, MAX_NESTING_DEPTH,
+    evaluate, Diagnostic, Indentation, JsonCompletionKind, JsonEvaluation, JsonMode,
+    JsonQueryIndex, JsonRequest, JsonSnapshot, Severity, JSON_SNAPSHOT_SCHEMA_VERSION,
+    JSON_UTILITY_ID, MAX_NESTING_DEPTH,
 };
 
 fn req(input: &str, mode: JsonMode) -> JsonRequest {
@@ -20,6 +21,83 @@ fn req(input: &str, mode: JsonMode) -> JsonRequest {
         sort_keys: false,
         query: String::new(),
     }
+}
+
+#[test]
+fn completions_follow_objects_arrays_and_pointer_escaping() {
+    let source = r#"{"users":[{"name":"Ada","nickname":"A"}],"a.b":{"~key/":1},"éclair":2,"":3}"#;
+    let index = JsonQueryIndex::new(source).unwrap();
+    let complete = |path: &str| {
+        index
+            .completions(path, path.len())
+            .into_iter()
+            .map(|item| {
+                let mut completed = path.to_owned();
+                completed.replace_range(item.range, &item.text);
+                completed
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(complete("users["), vec!["users[0]"]);
+    assert_eq!(
+        complete("users[0].n"),
+        vec!["users[0].name", "users[0].nickname"]
+    );
+    assert_eq!(complete("/a.b/~0"), vec!["/a.b/~0key~1"]);
+    assert_eq!(complete("a"), vec!["/a.b"]);
+    assert!(complete("").contains(&"/".to_owned()));
+    assert_eq!(complete("é"), vec!["éclair"]);
+    for path in complete("") {
+        let mut request = req(source, JsonMode::Query);
+        request.query = path;
+        assert!(evaluate(&request).is_valid_operation());
+    }
+    assert!(complete("missing.").is_empty());
+    assert!(JsonQueryIndex::new("{invalid}").is_none());
+}
+
+#[test]
+fn completion_replaces_the_active_token_and_preserves_the_suffix() {
+    let index = JsonQueryIndex::new(r#"{"users":[{"name":{"first":"Ada"}}],"éclair":1}"#).unwrap();
+    let path = "users[0].na.first";
+    let item = index.completions(path, 11).remove(0);
+    assert_eq!(item.range, 9..11);
+    let mut completed = path.to_owned();
+    completed.replace_range(item.range, &item.text);
+    assert_eq!(completed, "users[0].name.first");
+    assert!(index.completions("é", 1).is_empty());
+    assert!(index.completions("", 1).is_empty());
+    let array = JsonQueryIndex::new(&format!("[{}]", vec!["0"; 100].join(","))).unwrap();
+    assert_eq!(array.completions("[", 1).len(), 8);
+    assert_eq!(array.completions("[99", 3)[0].text, "99]");
+    let pointer = JsonQueryIndex::new(r#"{"a]b":1}"#).unwrap();
+    assert_eq!(pointer.completions("/a]", 3)[0].text, "a]b");
+    assert!(pointer.completions("/a]b", 0).is_empty());
+}
+
+#[test]
+fn completions_describe_values_without_changing_raw_numbers_or_exposing_long_values() {
+    let long_string = "secret ".repeat(100);
+    let source = format!(
+        r#"{{"object":{{}},"array":[1,2],"string":"{long_string}","number":1234567890123456789012345678901234567890123456789012345678901234567890,"boolean":false,"nothing":null}}"#
+    );
+    let index = JsonQueryIndex::new(&source).unwrap();
+    let items = index.completions("", 0);
+    let item = |label: &str| items.iter().find(|item| item.label == label).unwrap();
+    assert_eq!(item("object").kind, JsonCompletionKind::Object);
+    assert_eq!(item("object").preview, "{0 keys}");
+    assert_eq!(item("array").kind, JsonCompletionKind::Array);
+    assert_eq!(item("array").preview, "[2 items]");
+    assert_eq!(item("string").kind, JsonCompletionKind::String);
+    assert!(item("string").preview.ends_with('…'));
+    assert!(!item("string").preview.contains("  "));
+    assert_eq!(item("number").kind, JsonCompletionKind::Number);
+    assert!(item("number").preview.starts_with("12345678901234567890"));
+    assert_eq!(item("boolean").kind, JsonCompletionKind::Boolean);
+    assert_eq!(item("boolean").preview, "false");
+    assert_eq!(item("nothing").kind, JsonCompletionKind::Null);
+    assert_eq!(item("nothing").preview, "null");
+    assert!(items.iter().all(|item| item.preview.chars().count() <= 65));
 }
 
 fn output_of(evaluation: &JsonEvaluation) -> &str {

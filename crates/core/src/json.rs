@@ -10,6 +10,9 @@
 
 use serde::{Deserialize, Serialize};
 
+mod completion;
+pub use completion::{JsonCompletion, JsonCompletionKind, JsonQueryIndex};
+
 /// Immutable catalog identity of the JSON Utility. History and snapshots carry it.
 pub const JSON_UTILITY_ID: &str = "json";
 

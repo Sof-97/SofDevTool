@@ -9,20 +9,25 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, px, App, Context, Entity, IntoElement, Render, Subscription, Window};
+use gpui::{
+    anchored, deferred, div, point, px, App, Context, Entity, Focusable, IntoElement, MouseButton,
+    Render, StatefulInteractiveElement, Subscription, Window,
+};
 use gpui_kit::assets::IconName;
+use gpui_kit::base::input::{Enter, Escape, IndentInline, MoveDown, MoveUp};
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     input::{EditorState, Input, InputEvent, InputState},
-    list::ListState,
+    list::{ListItem, ListState},
     resizable::{h_resizable, resizable_panel, ResizableState},
     select::{Select, SelectEvent, SelectState},
     tab::{Tab, TabBar},
-    ActiveTheme as _, Disableable as _, Icon, IndexPath,
+    ActiveTheme as _, Disableable as _, Icon, IndexPath, ThemeStyled as _,
 };
 use sofdevtool_core::json::{
-    Indentation, Json, JsonEvaluation, JsonMode, JsonRequest, JsonSession, JsonSnapshot, Severity,
+    Indentation, Json, JsonCompletion, JsonEvaluation, JsonMode, JsonQueryIndex, JsonRequest,
+    JsonSession, JsonSnapshot, Severity,
 };
 use sofdevtool_core::session::SubmitOutcome;
 use sofdevtool_core::utility::Utility;
@@ -40,6 +45,11 @@ pub struct JsonWorkspace {
     result: Entity<EditorState>,
     error_highlight: gpui_kit::base::input::TextDecorationCollection,
     query: Entity<InputState>,
+    query_index: Option<JsonQueryIndex>,
+    indexed_source: String,
+    completion_selected: usize,
+    completion_dismissed: Option<(String, usize)>,
+    formatted_source: Option<String>,
     indentation_select: Entity<SelectState<Vec<&'static str>>>,
     editor_split: Entity<ResizableState>,
     clipboard: Rc<dyn Clipboard>,
@@ -101,6 +111,7 @@ impl JsonWorkspace {
         let editor_split = cx.new(|_| ResizableState::default());
 
         let subscriptions = vec![
+            cx.observe(&query, |_, _, cx| cx.notify()),
             cx.subscribe_in(
                 &input,
                 window,
@@ -108,6 +119,7 @@ impl JsonWorkspace {
                     if matches!(event, InputEvent::Change) {
                         this.schedule(window, cx);
                     }
+                    cx.notify();
                 },
             ),
             cx.subscribe_in(
@@ -115,8 +127,10 @@ impl JsonWorkspace {
                 window,
                 |this, _entity, event: &InputEvent, window, cx| {
                     if matches!(event, InputEvent::Change) {
+                        this.completion_selected = 0;
                         this.schedule(window, cx);
                     }
+                    cx.notify();
                 },
             ),
             cx.subscribe_in(
@@ -164,6 +178,11 @@ impl JsonWorkspace {
             result,
             error_highlight,
             query,
+            query_index: None,
+            indexed_source: String::new(),
+            completion_selected: 0,
+            completion_dismissed: None,
+            formatted_source: None,
             indentation_select,
             editor_split,
             clipboard,
@@ -203,6 +222,7 @@ impl JsonWorkspace {
             return;
         }
         let request = self.request(cx);
+        self.refresh_query_index(&request.input);
         let SubmitOutcome::Scheduled(revision) = self.session.submit(request) else {
             return;
         };
@@ -210,13 +230,21 @@ impl JsonWorkspace {
         cx.notify();
 
         let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             executor.timer(DEBOUNCE).await;
-            this.update(cx, |this, cx| {
-                if this.session.resolve(revision).is_some() {
+            cx.update(|window, cx| {
+                this.update(cx, |this, cx| {
+                    if this.session.revision() != revision {
+                        return;
+                    }
+                    this.format_query_input(window, cx);
+                    let request = this.request(cx);
+                    this.refresh_query_index(&request.input);
+                    this.session.submit(request);
+                    this.session.resolve(this.session.revision());
                     this.record_settled(cx);
                     cx.notify();
-                }
+                })
             })
             .ok();
         })
@@ -310,8 +338,106 @@ impl JsonWorkspace {
     }
 
     fn set_mode(&mut self, mode: JsonMode, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode == mode {
+            return;
+        }
         self.mode = mode;
+        self.completion_dismissed = None;
+        if mode == JsonMode::Query {
+            self.formatted_source = None;
+            self.format_query_input(window, cx);
+            self.query.update(cx, |state, cx| state.focus(window, cx));
+        }
         self.schedule(window, cx);
+    }
+
+    fn refresh_query_index(&mut self, source: &str) {
+        if self.indexed_source != source {
+            self.indexed_source = source.to_owned();
+            self.query_index = JsonQueryIndex::new(source);
+            self.completion_selected = 0;
+            self.completion_dismissed = None;
+        }
+    }
+
+    fn format_query_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let source = self.input.read(cx).value().to_string();
+        if self.mode != JsonMode::Query
+            || source.contains('\n')
+            || self.formatted_source.as_ref() == Some(&source)
+        {
+            return;
+        }
+        let mut request = self.request(cx);
+        request.mode = JsonMode::Format;
+        let JsonEvaluation::Valid { output } = Json::evaluate(&request) else {
+            return;
+        };
+        if output == source {
+            return;
+        }
+        self.formatted_source = Some(source);
+        self.suppress_changes = true;
+        self.input
+            .update(cx, |state, cx| state.replace_all(output, window, cx));
+        self.suppress_changes = false;
+    }
+
+    fn query_completions(&self, cx: &App) -> Vec<JsonCompletion> {
+        let query = self.query.read(cx);
+        if self.completion_dismissed.as_ref() == Some(&(query.value().to_string(), query.cursor()))
+        {
+            return vec![];
+        }
+        self.query_index
+            .as_ref()
+            .map(|index| index.completions(&query.value(), query.cursor()))
+            .unwrap_or_default()
+    }
+
+    fn accept_completion(
+        &mut self,
+        completion: JsonCompletion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.query.update(cx, |state, cx| {
+            state.set_selected_range(completion.range, cx);
+            state.replace(completion.text, window, cx);
+            state.focus(window, cx);
+        });
+        self.schedule(window, cx);
+        self.dismiss_completions(cx);
+        cx.notify();
+    }
+
+    fn dismiss_completions(&mut self, cx: &App) {
+        let query = self.query.read(cx);
+        self.completion_dismissed = Some((query.value().to_string(), query.cursor()));
+    }
+
+    fn query_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.query.read(cx).focus_handle(cx).is_focused(window) {
+            cx.propagate();
+            return;
+        }
+        let completions = self.query_completions(cx);
+        if completions.is_empty() {
+            cx.propagate();
+            return;
+        }
+        let selected = self.completion_selected.min(completions.len() - 1);
+        match key {
+            "down" => self.completion_selected = (selected + 1) % completions.len(),
+            "up" => {
+                self.completion_selected = (selected + completions.len() - 1) % completions.len()
+            }
+            "tab" | "enter" => self.accept_completion(completions[selected].clone(), window, cx),
+            "escape" => self.dismiss_completions(cx),
+            _ => return,
+        }
+        cx.stop_propagation();
+        cx.notify();
     }
 
     fn set_indentation(
@@ -431,6 +557,10 @@ impl JsonWorkspace {
             state.set_value(snapshot.request.query.clone(), window, cx)
         });
         self.session.restore(snapshot);
+        let source = self.input.read(cx).value().to_string();
+        self.refresh_query_index(&source);
+        self.formatted_source = None;
+        self.dismiss_completions(cx);
         self.display_epoch = u64::MAX;
         self.suppress_changes = false;
         self.history_view.pending_restore = None;
@@ -632,15 +762,134 @@ impl Render for JsonWorkspace {
             .child(toolbar);
 
         if self.mode == JsonMode::Query {
-            column = column.child(
-                div().flex().items_center().gap_2().child("Path").child(
-                    div().flex_1().min_w_0().child(
-                        Input::new(&self.query)
-                            .accessibility_id("json.query")
-                            .w_full(),
+            let completions = if self.query.read(cx).focus_handle(cx).is_focused(window) {
+                self.query_completions(cx)
+            } else {
+                vec![]
+            };
+            let selected = self
+                .completion_selected
+                .min(completions.len().saturating_sub(1));
+            let suggestions = (!completions.is_empty()).then(|| {
+                let query = self.query.read(cx);
+                let bounds = query.input_bounds();
+                let width = (window.bounds().size.width - px(16.)).min(px(380.));
+                let origin = point(
+                    query
+                        .cursor_layout()
+                        .map_or(bounds.origin.x + px(8.), |(caret, _)| caret.origin.x),
+                    bounds.origin.y + bounds.size.height + px(4.),
+                );
+                let mut rows = div().flex().flex_col();
+                for (index, completion) in completions.into_iter().enumerate() {
+                    let owner = cx.weak_entity();
+                    let hover_owner = owner.clone();
+                    let label = completion.label.clone();
+                    let kind = completion.kind.label();
+                    let preview = completion.preview.clone();
+                    rows = rows.child(
+                        ListItem::new(("json.completion", index))
+                            .role(gpui::accesskit::Role::ListBoxOption)
+                            .accessibility_id(format!("json.completion.{index}"))
+                            .aria_label(format!("Complete path {label}, {kind}, {preview}"))
+                            .selected(index == selected)
+                            .child(
+                                div()
+                                    .flex()
+                                    .w_full()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_3()
+                                    .child(div().flex_1().min_w_0().truncate().child(label.clone()))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .text_color(theme.muted_foreground)
+                                            .child(kind)
+                                            .child(
+                                                div()
+                                                    .max_w(px(170.))
+                                                    .truncate()
+                                                    .child(preview.clone()),
+                                            ),
+                                    ),
+                            )
+                            .on_mouse_enter(move |_, _, cx| {
+                                owner
+                                    .update(cx, |this, cx| {
+                                        this.completion_selected = index;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            })
+                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                window.prevent_default();
+                                cx.stop_propagation();
+                            })
+                            .on_click(move |_, window, cx| {
+                                hover_owner
+                                    .update(cx, |this, cx| {
+                                        this.accept_completion(completion.clone(), window, cx)
+                                    })
+                                    .ok();
+                            }),
+                    );
+                }
+                deferred(
+                    anchored().position(origin).child(
+                        div()
+                            .id("json.completions")
+                            .occlude()
+                            .w(width)
+                            .max_h(px(304.))
+                            .overflow_y_scroll()
+                            .popover_style(cx)
+                            .child(rows)
+                            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                this.dismiss_completions(cx);
+                                cx.notify();
+                            })),
                     ),
-                ),
-            );
+                )
+            });
+            column =
+                column.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .capture_action(cx.listener(|this, _: &MoveDown, window, cx| {
+                            this.query_key("down", window, cx)
+                        }))
+                        .capture_action(cx.listener(|this, _: &MoveUp, window, cx| {
+                            this.query_key("up", window, cx)
+                        }))
+                        .capture_action(cx.listener(|this, _: &IndentInline, window, cx| {
+                            this.query_key("tab", window, cx)
+                        }))
+                        .capture_action(cx.listener(|this, _: &Escape, window, cx| {
+                            this.query_key("escape", window, cx)
+                        }))
+                        .capture_action(cx.listener(|this, event: &Enter, window, cx| {
+                            if event.shift || event.secondary {
+                                cx.propagate();
+                            } else {
+                                this.query_key("enter", window, cx);
+                            }
+                        }))
+                        .child(
+                            div().flex().items_center().gap_2().child("Path").child(
+                                div().flex_1().min_w_0().child(
+                                    Input::new(&self.query)
+                                        .accessibility_id("json.query")
+                                        .w_full(),
+                                ),
+                            ),
+                        )
+                        .when_some(suggestions, |this, suggestions| this.child(suggestions)),
+                );
         }
 
         if let Some(error) = self.history_view.error.clone() {
@@ -782,14 +1031,85 @@ mod tests {
     }
 
     fn isolated_root() -> PathBuf {
+        static NEXT_ROOT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         std::env::temp_dir().join(format!(
-            "sofdevtool-json-list-{}-{}",
+            "sofdevtool-json-list-{}-{}-{}",
             std::process::id(),
+            NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ))
+    }
+
+    #[gpui::test]
+    fn compact_query_input_formats_completes_and_restores_without_recording(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(gpui_kit::init);
+        let root = isolated_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| {
+                JsonWorkspace::new(window, cx, Rc::new(TestClipboard), Rc::clone(&history))
+            });
+            captured = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        let source = r#"{"users":[{"name":"Ada"}],"big":123456789012345678901234567890}"#;
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.input
+                    .update(cx, |state, cx| state.replace_all(source, window, cx));
+                view.set_mode(JsonMode::Query, window, cx);
+                assert!(view.input.read(cx).value().contains('\n'));
+                view.query
+                    .update(cx, |state, cx| state.set_value("users[0].na", window, cx));
+            })
+        });
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("tab");
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        workspace.read_with(&cx, |view, cx| {
+            assert_eq!(view.query.read(cx).value().as_ref(), "users[0].name");
+            assert_eq!(view.session.evaluation().output(), Some("Ada"));
+            assert!(view.query_completions(cx).is_empty());
+        });
+        assert_eq!(history.load(Json::ID).unwrap().len(), 1);
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                let snapshot = JsonSnapshot {
+                    request: JsonRequest {
+                        query: "big".into(),
+                        ..JsonRequest::new(source, JsonMode::Query)
+                    },
+                    output: "123456789012345678901234567890".into(),
+                };
+                view.apply_restore(snapshot, window, cx);
+                assert_eq!(view.input.read(cx).value().as_ref(), source);
+                view.input
+                    .update(cx, |state, cx| state.replace_all("{invalid}", window, cx));
+            })
+        });
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        workspace.read_with(&cx, |view, cx| {
+            assert_eq!(view.input.read(cx).value().as_ref(), "{invalid}");
+            assert!(view.query_completions(cx).is_empty());
+            assert!(!view.session.evaluation().diagnostics().is_empty());
+        });
+        assert_eq!(history.load(Json::ID).unwrap().len(), 1);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

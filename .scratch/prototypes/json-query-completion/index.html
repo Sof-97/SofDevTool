@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JSON Query · prototipi completamento</title>
+  <style>
+    :root { color-scheme: dark; --bg:#242634; --side:#1e2030; --field:#303446; --line:#414559; --text:#c6d0f5; --muted:#a5adce; --accent:#8caaee; --soft:#39445f; }
+    * { box-sizing:border-box }
+    body { margin:0; background:#171925; color:var(--text); font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
+    button,input,textarea { font:inherit }
+    button { cursor:pointer }
+    .note { max-width:1280px; margin:0 auto; padding:9px 18px; color:#b7bfdd; display:flex; gap:16px; align-items:center; min-height:40px }
+    .note strong { color:var(--accent); white-space:nowrap }
+    .app { height:calc(100vh - 96px); min-height:565px; max-width:1280px; margin:0 auto; background:var(--bg); border:1px solid #4a4e66; border-radius:10px; overflow:hidden; box-shadow:0 18px 60px #0006; display:flex; flex-direction:column }
+    .titlebar { height:49px; display:flex; align-items:center; justify-content:space-between; padding:0 20px; border-bottom:1px solid var(--line); background:#262837; flex:none }
+    .brand { font-weight:670; letter-spacing:-.02em; font-size:15px }.brand span{font-size:11px;font-weight:500;color:var(--muted);margin-left:10px;letter-spacing:0}
+    .local { color:var(--muted); font-size:11px }.local i{display:inline-block;width:6px;height:6px;background:#a6d189;border-radius:50%;margin-right:7px}
+    .body { display:flex; min-height:0; flex:1 }
+    .sidebar { width:210px; flex:none; background:var(--side); padding:18px 11px; border-right:1px solid #393d53 }
+    .side-label { color:#838ba7; text-transform:uppercase; letter-spacing:.11em; font-size:10px; margin:0 10px 12px }
+    .side-item { height:34px; display:flex; align-items:center; padding:0 11px; color:#a9b1ce; border-radius:6px; margin-bottom:3px; gap:10px }
+    .side-item.active { background:#343b55; color:#dce4ff; font-weight:600 }
+    .side-item.active::before { content:""; width:3px; height:18px; border-radius:3px; background:var(--accent); margin-left:-10px; margin-right:7px }
+    .main { min-width:0; flex:1; padding:19px 24px 20px; display:flex; flex-direction:column; gap:14px }
+    .head { display:flex; align-items:flex-start; justify-content:space-between; gap:15px }
+    h1 { font-size:19px; line-height:1.2; margin:0 0 3px; letter-spacing:-.02em }
+    .sub { color:var(--muted); font-size:12px }
+    .toolbar { display:flex; gap:5px; align-items:center; flex:none }
+    .tool { background:transparent; border:1px solid transparent; color:#aeb8d5; padding:6px 11px; border-radius:6px }
+    .tool.active { background:#3b4562; color:#dbe6ff; border-color:#53668e }
+    .query-section { border:1px solid var(--line); background:#292d3e; border-radius:8px; padding:11px 13px 10px; position:relative; z-index:4 }
+    .query-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:7px }
+    .label { font-size:11px; font-weight:650; color:#aeb8d6; text-transform:uppercase; letter-spacing:.08em }
+    .reset { border:0; background:none; color:var(--accent); font-size:11px; padding:0 }
+    .field-wrap { position:relative }
+    .query-input,.plain-input { width:100%; height:35px; outline:none; background:var(--field); border:1px solid #5a607c; border-radius:5px; padding:0 11px; color:var(--text); font:13px/35px ui-monospace,SFMono-Regular,Menlo,monospace }
+    .query-input:focus,.plain-input:focus,.token-editor:focus-within { border-color:var(--accent); box-shadow:0 0 0 2px #8caaee25 }
+    .hint { color:#939cb9; font-size:11px; margin-top:7px; min-height:16px }
+    .hint kbd,.switcher kbd { font:10px ui-monospace,monospace; color:#b9c5e8; border:1px solid #596179; padding:1px 4px; border-radius:3px }
+    .completion { position:absolute; top:39px; left:0; width:min(390px,100%); max-height:200px; overflow:auto; background:#31364b; border:1px solid #647295; border-radius:7px; box-shadow:0 13px 27px #12131ec9; padding:4px; z-index:30 }
+    .completion.right { left:auto;right:0 }
+    .option { width:100%; border:0; color:var(--text); background:none; display:flex; align-items:center; text-align:left; gap:10px; padding:7px 9px; border-radius:4px; font:12px ui-monospace,SFMono-Regular,Menlo,monospace }
+    .option.selected,.option:hover { background:#44597f }
+    .option-name { min-width:85px; color:#e0e7fc }.option-type { color:#a6bbeb; min-width:53px }.option-preview { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#aab2cd; flex:1 }
+    .ghost-wrap { position:relative }
+    .ghost-overlay { position:absolute; inset:0; pointer-events:none; padding:0 11px; white-space:pre; overflow:hidden; color:#7682a4; font:13px/35px ui-monospace,SFMono-Regular,Menlo,monospace }
+    .ghost-overlay .invisible { color:transparent }
+    .ghost-input { position:relative; background:transparent; z-index:1 }
+    .ghost-wrap::before { content:""; position:absolute;inset:0;background:var(--field);border-radius:5px }
+    .ghost-count { position:absolute; right:9px; top:8px; color:#8792b1; font-size:10px; z-index:2; pointer-events:none; background:var(--field);padding-left:7px }
+    .token-editor { min-height:35px; background:var(--field); border:1px solid #5a607c; border-radius:5px; display:flex; align-items:center; flex-wrap:wrap; gap:1px; padding:3px 6px; position:relative }
+    .token { border:1px solid #66708e; border-radius:3px; background:#3b4156; color:#dae2f9; min-height:25px; padding:2px 6px; font:12px/19px ui-monospace,SFMono-Regular,Menlo,monospace }
+    .token:hover,.token.editing { border-color:var(--accent); background:#485a7b }
+    .join { color:#838dab; font:13px ui-monospace,monospace; margin:0 1px }
+    .draft { width:90px; flex:1; min-width:35px; height:25px; background:none; border:none; outline:none; color:var(--text); font:13px ui-monospace,SFMono-Regular,Menlo,monospace; padding:0 3px }
+    .toggle { display:flex; align-items:center; gap:5px; font-size:11px; color:#aeb8d6; cursor:pointer }
+    .toggle input { accent-color:var(--accent) }
+    .panes { display:grid; grid-template-columns:1fr 1fr; gap:12px; min-height:0; flex:1 }
+    .pane { border:1px solid var(--line); border-radius:8px; overflow:hidden; display:flex; flex-direction:column; min-width:0; background:#282c3d }
+    .pane-head { height:35px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 12px; border-bottom:1px solid var(--line); color:#b5bfde; font-size:11px; font-weight:600 }
+    .pane-head span:last-child { color:#828dab; font-weight:400 }
+    pre { margin:0; padding:11px 14px; overflow:auto; flex:1; color:#c9d2ed; font:11.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; tab-size:2 }
+    .result-placeholder { color:#929bbb }
+    .footer { max-width:1280px; margin:0 auto; height:56px; padding:8px 18px 0; color:#9ea8c5; font-size:11px }
+    .state { color:#b9c7e9; font:11px ui-monospace,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+    .switcher { position:fixed; bottom:17px; left:50%; transform:translateX(-50%); z-index:100; display:flex; align-items:center; gap:9px; background:#121522; border:1px solid #657291; box-shadow:0 12px 30px #0009; border-radius:100px; padding:5px 7px; color:#dbe4fd; white-space:nowrap }
+    .switcher button { background:#313c56; color:#dce6ff; border:0; border-radius:50%; width:25px;height:25px; line-height:20px }
+    .switcher span { font-size:11px; min-width:164px; text-align:center }
+    @media(max-width:760px) { .sidebar {width:145px}.main{padding:14px}.panes{grid-template-columns:1fr}.app{height:auto;min-height:850px}.pane{min-height:205px}.note{flex-wrap:wrap;gap:2px}.switcher{bottom:8px} }
+  </style>
+</head>
+<body>
+  <!-- Throwaway UI prototype: three structural alternatives for JSON query completion. -->
+  <div class="note"><strong>Prototipo di interazione</strong><span id="explanation"></span></div>
+  <div class="app">
+    <div class="titlebar"><div class="brand">SofDevTool <span>Local</span></div><div class="local"><i></i>Solo sul Mac</div></div>
+    <div class="body">
+      <aside class="sidebar"><div class="side-label">Utilities</div><div class="side-item active">{ } &nbsp; JSON</div><div class="side-item">⇄ &nbsp; Text Diff</div><div class="side-item">↔ &nbsp; Base64</div><div class="side-item">◇ &nbsp; Identifier Generator</div></aside>
+      <main class="main">
+        <div class="head"><div><h1>JSON</h1><div class="sub">Formatta, riduci ed esplora un documento JSON</div></div><div class="toolbar"><button class="tool">Format</button><button class="tool">Minify</button><button class="tool active">Query</button></div></div>
+        <section class="query-section" id="query-section"></section>
+        <div class="panes"><section class="pane"><div class="pane-head"><span>Input</span><span>JSON</span></div><pre id="source"></pre></section><section class="pane"><div class="pane-head"><span>Result</span><span id="result-label">Query</span></div><pre id="result"></pre></section></div>
+      </main>
+    </div>
+  </div>
+  <div class="footer"><div id="state" class="state"></div><div>Simulazione HTML, non verifica GPUI. Kit 0.6.6: CompletionProvider e testo fantasma richiedono EditorState; InputState non ha LSP. C richiede Kit 0.7.0: i token inline sono disponibili in Input/Textarea, non in Editor.</div></div>
+  <div class="switcher"><button id="prev" aria-label="Variante precedente">←</button><span id="variant-label"></span><button id="next" aria-label="Variante successiva">→</button></div>
+  <script>
+  const doc = {users:[{name:'Ada',nickname:'A',email:'ada@example.test',active:true},{name:'Bruno',nickname:'B',email:'bruno@example.test',active:false}],metadata:{source:'local',count:2,updated:'2026-09-30'}};
+  const variants = ['A','B','C'];
+  const titles = {A:'Menu ancorato',B:'Suggerimento inline',C:'Segmenti atomici'};
+  const explanations = {
+    A:'A · Un menu compatto sotto il cursore mostra nome, tipo e anteprima; si sovrappone ai pannelli senza spostarli. Prima opzione da provare.',
+    B:'B · Il completamento appare come testo fantasma nella query; Tab lo accetta, Ctrl+Spazio mostra le alternative. Più leggero, meno visibile.',
+    C:'C · Il percorso è composto da segmenti indivisibili. Clicca un segmento per sostituirlo o passa al testo normale. Richiede un editor più specifico.'
+  };
+  let variant = new URLSearchParams(location.search).get('variant')?.toUpperCase();
+  if (!variants.includes(variant)) variant='A';
+  let raw='users[0].n', selected=0, popup=true, plain=false, tokens=['users','[0]'], draft='n', replaceAt=-1, caretPos=10;
+  const $ = (id)=>document.getElementById(id);
+  $('source').textContent=JSON.stringify(doc,null,2);
+  function typeOf(v){return Array.isArray(v)?'array':v===null?'null':typeof v}
+  function preview(v){const s=typeof v==='string'?JSON.stringify(v):Array.isArray(v)?`${v.length} items`:v&&typeof v==='object'?`${Object.keys(v).length} fields`:String(v);return s.length>28?s.slice(0,27)+'…':s}
+  function pathOf(parts){return parts.map((p,i)=>p.startsWith('[')?p:(i?'.':'')+p).join('')}
+  function parsePath(path){
+    if (!path) return [];
+    const out=[]; let i=0;
+    while(i<path.length){if(path[i]==='.') {i++;continue} if(path[i]==='['){const m=/^\[(\d+)\]/.exec(path.slice(i));if(!m)return null;out.push('['+m[1]+']');i+=m[0].length;continue}const m=/^[A-Za-z_$][\w$]*/.exec(path.slice(i));if(!m)return null;out.push(m[0]);i+=m[0].length}return out;
+  }
+  function resolve(path){const parts=parsePath(path);if(parts===null)return undefined;let value=doc;for(const p of parts){const key=p[0]==='['?Number(p.slice(1,-1)):p;if(value==null || !(key in Object(value)))return undefined;value=value[key]}return value}
+  function optionsFor(value,needle=''){
+    const keys=Array.isArray(value)?value.map((_,i)=>`[${i}]`):value&&typeof value==='object'?Object.keys(value):[];
+    return keys.filter(k=>k.toLowerCase().startsWith(needle.toLowerCase())).map(k=>({key:k,value:value[k[0]==='['?Number(k.slice(1,-1)):k]}));
+  }
+  function contextFor(query){
+    if(query.endsWith('.'))return {base:query.slice(0,-1),needle:'',start:query.length};
+    const bracket=/^(.*)\[(\d*)$/.exec(query);if(bracket)return {base:bracket[1],needle:'['+bracket[2],start:bracket[1].length};
+    const last=query.lastIndexOf('.');if(last>=0)return {base:query.slice(0,last),needle:query.slice(last+1),start:last+1};
+    return {base:'',needle:query,start:0};
+  }
+  function choices(){if(variant==='C'&&!plain){const base=replaceAt>=0?pathOf(tokens.slice(0,replaceAt)):pathOf(tokens);return optionsFor(resolve(base),replaceAt>=0?'':draft)}const c=contextFor(raw);return optionsFor(resolve(c.base),c.needle)}
+  function shownQuery(){return variant==='C'&&!plain?pathOf(tokens)+(draft?(tokens.length && !draft.startsWith('[')?'.':'')+draft:''):raw}
+  function resultFor(query){const value=resolve(query);return value===undefined?null:JSON.stringify(value,null,2)}
+  function updateState(){
+    const q=shownQuery(), result=resultFor(q);$('result').textContent=result??'Completa un percorso valido per vedere il risultato.';$('result').classList.toggle('result-placeholder',result===null);
+    $('result-label').textContent=result===null?'Query incompleta':typeOf(resolve(q));
+    const opts=choices();$('state').textContent=`Stato · query: ${JSON.stringify(q)}  |  selezione: ${opts[selected]?.key??'—'}  |  token: ${variant==='C'&&!plain?JSON.stringify(tokens):'—'}`;
+  }
+  function optionHTML(opts){return opts.map((o,i)=>`<button class="option ${i===selected?'selected':''}" data-option="${i}"><span class="option-name">${escapeHTML(o.key)}</span><span class="option-type">${typeOf(o.value)}</span><span class="option-preview">${escapeHTML(preview(o.value))}</span></button>`).join('')}
+  function escapeHTML(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+  function accept(i){const o=choices()[i];if(!o)return;if(variant==='C'&&!plain){if(replaceAt>=0){tokens=tokens.slice(0,replaceAt).concat(o.key);replaceAt=-1}else tokens.push(o.key);draft='';popup=false;renderQuery();$('draft').focus()}else{const c=contextFor(raw);raw=raw.slice(0,c.start)+o.key;caretPos=raw.length;selected=0;popup=false;renderQuery();$('query').focus();$('query').setSelectionRange(raw.length,raw.length)}updateState()}
+  function completionMarkup(extra=''){const opts=choices();const caretStyle=variant==='A'?`style="left:${Math.min(11+caretPos*7.8,Math.max(0,$('query-section').clientWidth-420))}px"`:'';return popup&&opts.length?`<div class="completion ${extra}" ${caretStyle}>${optionHTML(opts)}</div>`:''}
+  function bindOptions(){document.querySelectorAll('[data-option]').forEach(el=>el.addEventListener('mousedown',e=>{e.preventDefault();accept(Number(el.dataset.option))}))}
+  function keyForCompletion(e){const opts=choices();if(e.key==='Escape'){popup=false;renderQuery();return}if(e.key==='ArrowDown'&&opts.length){e.preventDefault();selected=(selected+1)%opts.length;popup=true;renderQuery(true);return}if(e.key==='ArrowUp'&&opts.length){e.preventDefault();selected=(selected+opts.length-1)%opts.length;popup=true;renderQuery(true);return}if((e.key==='Tab'||e.key==='Enter')&&opts.length&&popup){e.preventDefault();accept(selected)}}
+  function renderQuery(keepFocus=false){
+    const section=$('query-section');let focusId=keepFocus?document.activeElement?.id:null;let caret=keepFocus&&focusId&&document.activeElement?.selectionStart;
+    if(variant==='A'){
+      section.innerHTML=`<div class="query-top"><span class="label">Query</span><button class="reset">Ripristina esempio</button></div><div class="field-wrap"><input id="query" class="query-input" spellcheck="false" autocomplete="off" value="${escapeHTML(raw)}" aria-label="JSON query">${completionMarkup()}</div><div class="hint"><kbd>↑ ↓</kbd> scelta &nbsp; <kbd>Tab</kbd> o <kbd>Invio</kbd> accetta &nbsp; <kbd>Esc</kbd> chiude</div>`;
+    }else if(variant==='B'){
+      const opts=choices(), first=opts[0], c=contextFor(raw), suffix=first?.key.slice(c.needle.length)||'';
+      section.innerHTML=`<div class="query-top"><span class="label">Query</span><button class="reset">Ripristina esempio</button></div><div class="ghost-wrap"><div class="ghost-overlay"><span class="invisible">${escapeHTML(raw)}</span>${escapeHTML(suffix)}</div><input id="query" class="query-input ghost-input" spellcheck="false" autocomplete="off" value="${escapeHTML(raw)}" aria-label="JSON query"><span class="ghost-count">${opts.length>1?`${opts.length} alternative`:''}</span>${completionMarkup('right')}</div><div class="hint"><kbd>Tab</kbd> accetta testo fantasma &nbsp; <kbd>Ctrl</kbd> + <kbd>Spazio</kbd> mostra alternative</div>`;
+    }else{
+      const tokenHTML=tokens.map((t,i)=>`${i&&t[0]!=='['?'<span class="join">.</span>':''}<button class="token ${replaceAt===i?'editing':''}" data-token="${i}" title="Sostituisci segmento ${escapeHTML(t)}">${escapeHTML(t)}</button>`).join('');
+      section.innerHTML=`<div class="query-top"><span class="label">Query</span><div style="display:flex;gap:15px;align-items:center"><label class="toggle"><input id="plain-toggle" type="checkbox" ${plain?'checked':''}> Testo normale</label><button class="reset">Ripristina esempio</button></div></div>${plain?`<input id="query" class="plain-input" spellcheck="false" value="${escapeHTML(raw)}" aria-label="JSON query">`:`<div class="token-editor">${tokenHTML}${tokens.length&&draft&&!draft.startsWith('[')?'<span class="join">.</span>':''}<input id="draft" class="draft" spellcheck="false" autocomplete="off" value="${escapeHTML(draft)}" aria-label="Nuovo segmento">${completionMarkup()}</div>`}<div class="hint">${plain?'Modifica liberamente la sintassi; disattiva per tornare ai segmenti.':'Clicca un segmento per cambiarlo · <kbd>Backspace</kbd> elimina l’ultimo · <kbd>Tab</kbd> accetta'}</div>`;
+      section.querySelector('#plain-toggle').addEventListener('change',e=>{if(e.target.checked){raw=shownQuery();plain=true;popup=false}else{const parsed=parsePath(raw);tokens=parsed??[];draft='';plain=false;popup=false}selected=0;renderQuery();updateState()});
+      section.querySelectorAll('[data-token]').forEach(el=>el.addEventListener('click',()=>{replaceAt=Number(el.dataset.token);selected=0;popup=true;renderQuery();$('draft').focus();updateState()}));
+    }
+    section.querySelector('.reset').addEventListener('click',reset);
+    const input=section.querySelector('#query');if(input){input.addEventListener('input',e=>{raw=e.target.value;caretPos=e.target.selectionStart;selected=0;popup=variant!=='B';renderQuery(true);updateState()});input.addEventListener('click',e=>{caretPos=e.target.selectionStart;if(variant==='A'){popup=true;renderQuery(true)}});input.addEventListener('keydown',e=>{if(variant==='B'&&e.ctrlKey&&e.code==='Space'){e.preventDefault();popup=true;selected=0;renderQuery(true);return}if(variant==='B'&&e.key==='Tab'&&!popup){const o=choices()[0], suffix=o?.key.slice(contextFor(raw).needle.length);if(suffix){e.preventDefault();accept(0)}return}keyForCompletion(e)})}
+    const d=section.querySelector('#draft');if(d){d.addEventListener('input',e=>{draft=e.target.value;replaceAt=-1;selected=0;popup=true;renderQuery(true);updateState()});d.addEventListener('keydown',e=>{if(e.key==='Backspace'&&!draft){e.preventDefault();tokens.pop();replaceAt=-1;selected=0;popup=false;renderQuery();$('draft').focus();updateState();return}keyForCompletion(e)})}
+    bindOptions();if(focusId&&section.querySelector('#'+focusId)){const el=section.querySelector('#'+focusId);el.focus();if(caret!=null)el.setSelectionRange(Math.min(caret,el.value.length),Math.min(caret,el.value.length))}
+  }
+  function reset(){raw='users[0].n';caretPos=raw.length;tokens=['users','[0]'];draft='n';replaceAt=-1;plain=false;selected=0;popup=variant!=='B';renderQuery();updateState()}
+  function switchVariant(v){variant=v;const url=new URL(location.href);url.searchParams.set('variant',v);history.replaceState(null,'',url);reset();$('explanation').textContent=explanations[v];$('variant-label').textContent=`${v} · ${titles[v]}`;updateState()}
+  $('prev').onclick=()=>switchVariant(variants[(variants.indexOf(variant)+2)%3]);$('next').onclick=()=>switchVariant(variants[(variants.indexOf(variant)+1)%3]);
+  document.addEventListener('keydown',e=>{if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight')return;const el=document.activeElement;if(el?.matches('input,textarea,[contenteditable],button'))return;switchVariant(variants[(variants.indexOf(variant)+(e.key==='ArrowRight'?1:2))%3])});
+  document.addEventListener('mousedown',e=>{if(e.target.closest('.query-section'))return;if(popup){popup=false;renderQuery()}});
+  switchVariant(variant);
+  </script>
+</body>
+</html>
