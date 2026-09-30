@@ -14,7 +14,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
-    input::{Input, InputEvent, InputState, TextareaState},
+    input::{EditorState, Input, InputEvent, InputState},
     list::ListState,
     resizable::{h_resizable, resizable_panel, ResizableState},
     select::{Select, SelectEvent, SelectState},
@@ -36,8 +36,9 @@ use crate::workspace_layout::{HistoryPlacement, WorkspaceLayout};
 const DEBOUNCE: Duration = Duration::from_millis(250);
 
 pub struct JsonWorkspace {
-    input: Entity<TextareaState>,
-    result: Entity<TextareaState>,
+    input: Entity<EditorState>,
+    result: Entity<EditorState>,
+    error_highlight: gpui_kit::base::input::TextDecorationCollection,
     query: Entity<InputState>,
     indentation_select: Entity<SelectState<Vec<&'static str>>>,
     editor_split: Entity<ResizableState>,
@@ -78,8 +79,16 @@ impl JsonWorkspace {
         layout: Entity<WorkspaceLayout>,
     ) -> Self {
         let layout_subscription = cx.observe(&layout, |_, _, cx| cx.notify());
-        let input = cx.new(|cx| TextareaState::new(window, cx));
-        let result = cx.new(|cx| TextareaState::new(window, cx));
+        let input = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .language("json")
+                .folding(false)
+                .auto_close(false)
+        });
+        let error_highlight = input.update(cx, |state, cx| {
+            state.create_decorations_collection(vec![], cx)
+        });
+        let result = cx.new(|cx| EditorState::new(window, cx).language("json"));
         let query = cx.new(|cx| InputState::new(window, cx));
         let indentation_select = cx.new(|cx| {
             SelectState::new(
@@ -153,6 +162,7 @@ impl JsonWorkspace {
         let workspace = Self {
             input,
             result,
+            error_highlight,
             query,
             indentation_select,
             editor_split,
@@ -253,6 +263,50 @@ impl JsonWorkspace {
         };
         self.result
             .update(cx, |state, cx| state.set_value(value, window, cx));
+        let text = self.input.read(cx).value().to_string();
+        let color = cx.theme().danger.opacity(0.18);
+        let decorations = self
+            .session
+            .evaluation()
+            .diagnostics()
+            .iter()
+            .filter_map(|diagnostic| diagnostic.location)
+            .filter_map(|location| error_line_range(&text, location.line))
+            .map(|range| {
+                gpui_kit::base::input::TextDecoration::new(
+                    range,
+                    gpui::HighlightStyle {
+                        background_color: Some(color),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        self.error_highlight.set(decorations, cx);
+        self.input.update(cx, |state, cx| {
+            if let Some(markers) = state.diagnostics_mut() {
+                markers.clear();
+                for diagnostic in self.session.evaluation().diagnostics() {
+                    let Some(location) = diagnostic.location else {
+                        continue;
+                    };
+                    let Some(range) = error_line_range(&text, location.line) else {
+                        continue;
+                    };
+                    let row = location.line - 1;
+                    let end = text[range].encode_utf16().count() as u32;
+                    markers.push(
+                        gpui_kit::base::input::Diagnostic::new(
+                            gpui_kit::base::input::Position::new(row, 0)
+                                ..gpui_kit::base::input::Position::new(row, end),
+                            diagnostic.message.clone(),
+                        )
+                        .with_severity(gpui_kit::base::input::DiagnosticSeverity::Error),
+                    );
+                }
+            }
+            cx.notify();
+        });
     }
 
     fn set_mode(&mut self, mode: JsonMode, window: &mut Window, cx: &mut Context<Self>) {
@@ -603,7 +657,7 @@ impl Render for JsonWorkspace {
         } else if matches!(self.session.evaluation(), JsonEvaluation::Empty) {
             ui::empty_state(cx, "Paste JSON to begin").into_any_element()
         } else {
-            ui::multiline_editor(&self.result, true, "json.result").into_any_element()
+            ui::json_editor(&self.result, true, "json.result").into_any_element()
         };
 
         let input_actions = div()
@@ -649,7 +703,7 @@ impl Render for JsonWorkspace {
                         cx,
                         "Input",
                         input_actions,
-                        ui::multiline_editor(&self.input, false, "json.input"),
+                        ui::json_editor(&self.input, false, "json.input"),
                     )),
             )
             .child(
@@ -694,6 +748,18 @@ fn preview_line(output: &str) -> String {
     }
 }
 
+fn error_line_range(text: &str, line: u32) -> Option<std::ops::Range<usize>> {
+    let target = line.checked_sub(1)? as usize;
+    let mut start = 0;
+    for (index, content) in text.split('\n').enumerate() {
+        if index == target {
+            return Some(start..start + content.len());
+        }
+        start += content.len() + 1;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -724,6 +790,78 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
+    }
+
+    #[test]
+    fn error_lines_use_source_bytes_including_unicode_and_blank_lines() {
+        let source = "{\n  \"é\": 1,\n\n}";
+        assert_eq!(&source[error_line_range(source, 2).unwrap()], "  \"é\": 1,");
+        assert_eq!(error_line_range(source, 3), Some(13..13));
+        assert_eq!(&source[error_line_range(source, 4).unwrap()], "}");
+        assert_eq!(error_line_range(source, 0), None);
+        assert_eq!(error_line_range(source, 5), None);
+    }
+
+    #[gpui::test]
+    fn invalid_input_marks_the_parser_line_and_editing_clears_it(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_kit::init);
+        let root = isolated_root();
+        let history = Rc::new(HistoryRecorder::new(
+            HistoryStore::new(root.clone()),
+            Box::new(SystemClock::new()),
+        ));
+        let mut captured = None;
+        let window = cx.add_window(|window, cx| {
+            let view = cx.new(|cx| {
+                JsonWorkspace::new(window, cx, Rc::new(TestClipboard), Rc::clone(&history))
+            });
+            captured = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        let workspace = captured.unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        let source = "{\n  \"first\": 1\n  \"second\": 2\n}";
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.input
+                    .update(cx, |state, cx| state.replace_all(source, window, cx))
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        workspace.read_with(&cx, |view, cx| {
+            assert_eq!(
+                view.error_highlight.get_ranges(cx),
+                vec![error_line_range(source, 3).unwrap()]
+            );
+            assert_eq!(view.input.read(cx).diagnostics().unwrap().len(), 1);
+        });
+        assert!(history.load(Json::ID).unwrap().is_empty());
+        cx.update(|window, cx| {
+            workspace.update(cx, |view, cx| {
+                view.input
+                    .update(cx, |state, cx| state.replace_all("{}", window, cx))
+            });
+            window.draw(cx).clear(cx);
+        });
+        workspace.read_with(&cx, |view, cx| {
+            assert!(view.error_highlight.get_ranges(cx).is_empty());
+            assert!(view.input.read(cx).diagnostics().unwrap().is_empty());
+        });
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        workspace.read_with(&cx, |view, cx| {
+            assert_eq!(view.result.read(cx).value().as_ref(), "{}")
+        });
+        assert_eq!(history.load(Json::ID).unwrap().len(), 1);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[gpui::test]
